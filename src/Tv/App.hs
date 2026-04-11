@@ -30,7 +30,8 @@ import Tv.Render (AppState(..), Name(..), drawApp, appAttrMap, cmdLabel)
 import Tv.Key (evToKey)
 import Tv.CmdConfig (keyLookup, CmdInfo(..))
 import qualified Tv.CmdConfig as CC
-import Tv.Theme (initTheme, toAttrMap, ThemeState(..))
+import Tv.Theme (initTheme, toAttrMap, ThemeState(..), themeName, themes, applyTheme, tsStyles, tsThemeIdx)
+import qualified Tv.Theme
 import qualified Tv.Data.DuckDB as DB
 import qualified Tv.Folder as Folder
 import qualified Tv.Freq as Freq
@@ -137,8 +138,14 @@ handlerMap = Map.fromList $
   , (FreqFilter, freqFilterH)
   -- NB: TblMenu is intentionally NOT here. It must run under Brick.suspendAndResume
   -- (see handleEvent) so fzf can grab /dev/tty while the brick UI is paused.
-  -- TODO RowSearchNext, RowSearchPrev: need persistent last-search state
-  -- TODO MetaSetKey, MetaSelNull, MetaSelSingle: need meta dispatch plumbing
+  , (RowSearch, rowSearchH)
+  , (RowFilter, rowFilterH)
+  , (ColSearch, colSearchH)
+  , (RowSearchNext, rowSearchNextH)
+  , (RowSearchPrev, rowSearchPrevH)
+  , (MetaSetKey,   metaSetKeyH)
+  , (MetaSelNull,  metaSelNullH)
+  , (MetaSelSingle, metaSelSingleH)
   ]
   where pageRows = 20  -- TODO: derive from terminal size at draw time
 
@@ -375,19 +382,252 @@ sessLoadH st = do
 infoTogH :: Handler
 infoTogH st = pure (Just st { asInfoVis = not (asInfoVis st) })
 
--- Stubs for pre-existing handlers that aren't part of this task but are
--- referenced from handlerMap. They surface their names in @asMsg@ so the
--- UI doesn't appear dead when the keys are pressed.
-folderPushH, folderDelH, folderDepthIncH, folderDepthDecH :: Handler
-folderPushH      st = pure (Just st { asMsg = "folder.push: TODO" })
-folderDelH       st = pure (Just st { asMsg = "folder.del: TODO" })
-folderDepthIncH  st = pure (Just st { asMsg = "folder.depthInc: TODO" })
-folderDepthDecH  st = pure (Just st { asMsg = "folder.depthDec: TODO" })
+-- | Push a fresh folder view at the current directory. Unlike
+-- folderEnterH (which follows the row under the cursor into either
+-- a file or a subdirectory), folderPushH always opens a *new* folder
+-- view at the same path — useful for forking the browser into another
+-- stack slot. Matches Tc.Folder.dispatch FolderPush.
+folderPushH :: Handler
+folderPushH st = do
+  let ns = _vNav $ _vsHd $ asStack st
+  case _nsVkind ns of
+    VFld base depth -> do
+      ops <- Folder.listFolderDepth (T.unpack base) depth
+      case fromTbl ops base 0 V.empty 0 of
+        Nothing -> pure (Just st { asMsg = "folder.push: empty" })
+        Just v  ->
+          let v' = v { _vNav = (_vNav v) { _nsVkind = VFld base depth } }
+          in Just <$> refreshGrid st { asStack = vsPush v' (asStack st) }
+    _ -> pure (Just st { asMsg = "folder.push: not in a folder view" })
 
-rowSearchH, rowFilterH, colSearchH :: Handler
-rowSearchH st = pure (Just st { asMsg = "search: TODO (needs prompt UI)", asCmd = "" })
-rowFilterH st = pure (Just st { asMsg = "filter: TODO (needs prompt UI)", asCmd = "" })
-colSearchH st = pure (Just st { asMsg = "goto col: TODO (needs prompt UI)", asCmd = "" })
+-- | Move the current row's file to @~/.local/share/Trash/files/@
+-- (XDG trash).  Collisions get @.1@, @.2@, … suffixes. Does not write
+-- the accompanying .trashinfo metadata (matches Tc's best-effort).
+folderDelH :: Handler
+folderDelH st = do
+  let ns = _vNav $ _vsHd $ asStack st
+  case _nsVkind ns of
+    VFld base _ -> do
+      let r = _naCur (_nsRow ns)
+      name <- _tblCellStr (_nsTbl ns) r 0
+      if T.null name || name == ".." then pure (Just st { asMsg = "del: nothing to trash" })
+      else do
+        home <- getHomeDirectory
+        let trashDir = home </> ".local/share/Trash/files"
+            srcPath = T.unpack base </> T.unpack name
+        createDirectoryIfMissing True trashDir
+        -- resolve collisions: try name, name.1, name.2, ...
+        dest <- uniqueTrashPath trashDir (T.unpack name) 0
+        r1 <- try (renamePath srcPath dest)
+        case r1 of
+          Left (e :: SomeException) ->
+            pure (Just st { asMsg = "del failed: " <> T.pack (displayException e) })
+          Right _ -> do
+            -- Rebuild the current folder view so the entry disappears.
+            ops' <- Folder.listFolderDepth (T.unpack base) 1
+            let hd  = _vsHd (asStack st)
+                hd' = hd { _vNav = (_vNav hd) { _nsTbl = ops' } }
+            s' <- refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
+            pure (Just s' { asMsg = "trashed " <> name })
+    _ -> pure (Just st { asMsg = "del: not in a folder view" })
+  where
+    uniqueTrashPath dir base n = do
+      let cand = if n == 0 then dir </> base else dir </> (base <> "." <> show n)
+      ex <- doesPathExist cand
+      if ex then uniqueTrashPath dir base (n + 1) else pure cand
+
+-- | Bump the folder recursion depth by @d@ (clamped 1..5), rebuild the
+-- folder TblOps, and update the view kind. Used by Inc/Dec handlers.
+folderDepthAdjH :: Int -> Handler
+folderDepthAdjH d st = do
+  let ns = _vNav $ _vsHd $ asStack st
+  case _nsVkind ns of
+    VFld base depth -> do
+      let d' = max 1 (min 5 (depth + d))
+      ops' <- Folder.listFolderDepth (T.unpack base) d'
+      let hd  = _vsHd (asStack st)
+          hd' = hd { _vNav = (_vNav hd) { _nsTbl = ops', _nsVkind = VFld base d' } }
+      s' <- refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
+      pure (Just s' { asMsg = "depth=" <> T.pack (show d') })
+    _ -> pure (Just st { asMsg = "depth: not in a folder view" })
+
+folderDepthIncH, folderDepthDecH :: Handler
+folderDepthIncH = folderDepthAdjH 1
+folderDepthDecH = folderDepthAdjH (-1)
+
+-- | Search the current column for the buffer in @asCmd@ and jump the row
+-- cursor to the first row whose value contains it.  Uses _tblFindRow
+-- which the DuckDB ops implement as a SELECT rowid WHERE col LIKE …;
+-- fails-soft with a status message if not found.
+rowSearchH :: Handler
+rowSearchH st
+  | T.null (asCmd st) = pure (Just st { asMsg = "search: empty query", asPendingCmd = Nothing })
+  | otherwise = do
+      let ns  = _vNav $ _vsHd $ asStack st
+          ops = _nsTbl ns
+          ci  = curColIdx ns
+          startRow = _naCur (_nsRow ns)
+      mr <- _tblFindRow ops ci (asCmd st) startRow True
+      case mr of
+        Just r ->
+          let hd  = _vsHd (asStack st)
+              ns' = ns { _nsRow = (_nsRow ns) { _naCur = r }, _nsSearch = asCmd st }
+              hd' = hd { _vNav = ns' }
+          in do
+               s' <- refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
+               pure (Just s' { asMsg = "", asCmd = "", asPendingCmd = Nothing })
+        Nothing -> pure (Just st { asMsg = "not found: " <> asCmd st, asCmd = "", asPendingCmd = Nothing })
+
+-- | n / N: jump to the next / previous search match. Reuses the
+-- previously-stored query in @_nsSearch@ and calls _tblFindRow with
+-- an advanced starting row.
+rowSearchStepH :: Int -> Handler
+rowSearchStepH step st = do
+  let ns = _vNav $ _vsHd $ asStack st
+      q  = _nsSearch ns
+  if T.null q then pure (Just st { asMsg = "no prior search" })
+  else do
+    let ops = _nsTbl ns
+        ci  = curColIdx ns
+        startRow = _naCur (_nsRow ns) + step
+    mr <- _tblFindRow ops ci q startRow (step > 0)
+    case mr of
+      Just r ->
+        let hd  = _vsHd (asStack st)
+            hd' = hd { _vNav = ns { _nsRow = (_nsRow ns) { _naCur = r } } }
+        in do
+             s' <- refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
+             pure (Just s' { asMsg = "" })
+      Nothing -> pure (Just st { asMsg = "no more matches: " <> q })
+
+rowSearchNextH, rowSearchPrevH :: Handler
+rowSearchNextH = rowSearchStepH 1
+rowSearchPrevH = rowSearchStepH (-1)
+
+-- | Filter: Tc feeds the buffer into PRQL-generation which is then
+-- compiled to SQL. Our Filter module doesn't have the full PRQL
+-- pipeline yet, so we treat the buffer as a raw SQL predicate and
+-- call _tblFilter directly. Usage: @\\\\ Price > 10@ → @WHERE Price > 10@.
+rowFilterH :: Handler
+rowFilterH st
+  | T.null (asCmd st) = pure (Just st { asMsg = "filter: empty expression", asPendingCmd = Nothing })
+  | otherwise = do
+      let ops = curOps st
+      mOps <- _tblFilter ops (asCmd st)
+      let clearFields s = s { asCmd = "", asPendingCmd = Nothing }
+      case mOps of
+        Nothing -> pure (Just (clearFields st { asMsg = "filter failed: " <> asCmd st }))
+        Just ops' ->
+          case fromTbl ops' (_vPath (curView st) <> " [filter]") 0 V.empty 0 of
+            Nothing -> pure (Just (clearFields st { asMsg = "filter: empty result" }))
+            Just v  -> do
+              s' <- refreshGrid st { asStack = vsPush v (asStack st) }
+              pure (Just (clearFields s'))
+
+-- | Goto column by name prefix/substring. First case-insensitive prefix
+-- match wins; falls back to substring match so users can type partial
+-- names. Moves _nsCol cursor, no new view.
+colSearchH :: Handler
+colSearchH st
+  | T.null (asCmd st) = pure (Just st { asMsg = "goto: empty name", asPendingCmd = Nothing })
+  | otherwise = do
+      let ns = _vNav $ _vsHd $ asStack st
+          names = _tblColNames (_nsTbl ns)
+          disp  = _nsDispIdxs ns
+          q = T.toLower (asCmd st)
+          hit i =
+            let n = T.toLower (names V.! (disp V.! i))
+            in q `T.isPrefixOf` n
+          hitSub i =
+            let n = T.toLower (names V.! (disp V.! i))
+            in q `T.isInfixOf` n
+          idxRange = [0 .. V.length disp - 1]
+      case foldr (\i acc -> if hit i then Just i else acc) Nothing idxRange of
+        Just i -> moveTo i
+        Nothing -> case foldr (\i acc -> if hitSub i then Just i else acc) Nothing idxRange of
+          Just i -> moveTo i
+          Nothing -> pure (Just st { asMsg = "no column matches: " <> asCmd st, asCmd = "", asPendingCmd = Nothing })
+  where
+    moveTo i =
+      let hd = _vsHd (asStack st)
+          ns = _vNav hd
+          hd' = hd { _vNav = ns { _nsCol = (_nsCol ns) { _naCur = i } } }
+      in do
+        s' <- refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
+        pure (Just s' { asMsg = "", asCmd = "", asPendingCmd = Nothing })
+
+-- | MetaSetKey: in a colMeta view, take the row selections (which are
+-- column indices in the parent) and set them as the parent's group
+-- columns, then pop back to the parent.
+metaSetKeyH :: Handler
+metaSetKeyH st =
+  case _nsVkind (_vNav (curView st)) of
+    VColMeta -> case _vsTl (asStack st) of
+      [] -> pure (Just st { asMsg = "meta.key: no parent view" })
+      (parent:_) -> do
+        let metaNs = _vNav (curView st)
+            sels = _naSels (_nsRow metaNs)
+            parentNames = _tblColNames (_nsTbl (_vNav parent))
+            keyNames = V.mapMaybe (\i -> parentNames V.!? i) sels
+            parentNs = _vNav parent
+            parentNs' = parentNs { _nsGrp = keyNames
+                                 , _nsDispIdxs = dispOrder keyNames parentNames }
+            parent' = parent { _vNav = parentNs' }
+            newStack = (asStack st) { _vsHd = parent', _vsTl = drop 1 (_vsTl (asStack st)) }
+        Just <$> refreshGrid st { asStack = newStack }
+    _ -> pure (Just st { asMsg = "meta.key: not a meta view" })
+
+-- | Meta "select rows where nulls > 0". In a colMeta view, rows are
+-- columns and the "nulls" column contains the null-count per column;
+-- replace _naSels with the indices of rows whose nulls value > 0.
+metaSelNullH :: Handler
+metaSelNullH = metaSelByColValue "nulls" (> 0) "no null columns"
+
+-- | Meta "select rows where distinct == 1". Same shape as metaSelNullH.
+metaSelSingleH :: Handler
+metaSelSingleH = metaSelByColValue "distinct" (== 1) "no single-value columns"
+
+metaSelByColValue :: Text -> (Int -> Bool) -> Text -> Handler
+metaSelByColValue colName predFn emptyMsg st =
+  case _nsVkind (_vNav (curView st)) of
+    VColMeta -> do
+      let ns = _vNav (curView st)
+          ops = _nsTbl ns
+          names = _tblColNames ops
+      case V.elemIndex colName names of
+        Nothing -> pure (Just st { asMsg = "meta.sel: column '" <> colName <> "' missing" })
+        Just colIdx -> do
+          let nr = _tblNRows ops
+          matches <- V.filterM (\r -> do
+              cell <- _tblCellStr ops r colIdx
+              let v = case reads (T.unpack cell) of [(n,"")] -> n; _ -> (0 :: Int)
+              pure (predFn v)) (V.enumFromN 0 nr)
+          if V.null matches then pure (Just st { asMsg = emptyMsg })
+          else
+            let hd  = _vsHd (asStack st)
+                hd' = hd { _vNav = ns { _nsRow = (_nsRow ns) { _naSels = matches } } }
+            in do
+              s' <- refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
+              pure (Just s' { asMsg = tshow (V.length matches) <> " columns selected" })
+    _ -> pure (Just st { asMsg = "meta.sel: not a meta view" })
+  where tshow = T.pack . show
+
+-- | ThemeOpen: fzf picker over available themes. Must run under
+-- BM.suspendAndResume in handleEvent — but our fzf helper works when
+-- called via runCmdMenu-style wrapper too.  We keep this as a pure IO
+-- helper; wiring to handleEvent happens via runThemePicker below.
+runThemePicker :: AppState -> IO AppState
+runThemePicker st = do
+  let names = V.toList (V.imap (\i _ -> T.pack (show i) <> ": " <> Tv.Theme.themeName i)
+                               (Tv.Theme.themes :: Vector (Text, Text)))
+  mSel <- Fzf.fzf ["--prompt=theme "] (T.intercalate "\n" names)
+  case mSel of
+    Nothing -> pure st
+    Just sel -> case reads (T.unpack (T.takeWhile (/= ':') sel)) of
+      [(i, _)] -> do
+        theme' <- Tv.Theme.applyTheme (Tv.Theme.ThemeState (asStyles st) (asThemeIdx st)) i
+        pure st { asStyles = Tv.Theme.tsStyles theme', asThemeIdx = Tv.Theme.tsThemeIdx theme' }
+      _ -> pure st
 
 -- | Run a plot command: resolve cursor + group columns from the current
 -- 'NavState', hand off to 'Plot.runPlot', and surface the resulting PNG
@@ -492,30 +732,53 @@ app = Brick.App
   }
 
 handleEvent :: Brick.BrickEvent Name () -> Brick.EventM Name AppState ()
-handleEvent (Brick.VtyEvent (Vty.EvKey Vty.KEsc [])) = BM.halt
 handleEvent (Brick.VtyEvent (Vty.EvResize w h)) = do
   st <- Brick.get
   -- 4 reserved lines: header + footer + tab + status. Floor at 1 visible row.
   let visH = max 1 (h - 4)
   st' <- liftIO $ refreshGrid st { asVisH = visH, asVisW = max 1 w }
   Brick.put st'
-handleEvent (Brick.VtyEvent ev@(Vty.EvKey _ _)) = do
+handleEvent (Brick.VtyEvent ev@(Vty.EvKey k mods)) = do
   st <- Brick.get
-  let key = evToKey ev
-      ctx = vkCtxStr $ _nsVkind $ _vNav $ _vsHd $ asStack st
-  mci <- liftIO $ keyLookup key ctx
-  case mci of
-    Nothing -> pure ()
-    Just ci
-      -- TblMenu needs fzf, which takes over /dev/tty. Brick owns the
-      -- terminal; suspendAndResume releases it for the duration of the
-      -- IO action and re-grabs it afterwards.
-      | ciCmd ci == TblMenu -> BM.suspendAndResume (runCmdMenu st)
-      | otherwise -> do
-          r <- liftIO $ handleCmd (ciCmd ci) st
-          case r of
-            Nothing  -> BM.halt
-            Just st' -> Brick.put st'
+  case asPendingCmd st of
+    -- Prompt mode: route keys to the input buffer instead of dispatching.
+    Just c -> case (k, mods) of
+      (Vty.KEsc, _) -> Brick.put st { asPendingCmd = Nothing, asCmd = "" }
+      (Vty.KEnter, _) -> do
+        -- Commit: run the pending handler with asCmd as the arg, then
+        -- clear prompt mode regardless of the handler's own asCmd reset.
+        r <- liftIO $ handleCmd c st { asPendingCmd = Nothing }
+        case r of
+          Nothing -> BM.halt
+          Just st' -> Brick.put st' { asPendingCmd = Nothing }
+      (Vty.KBS, _) -> Brick.put st { asCmd = if T.null (asCmd st) then "" else T.init (asCmd st) }
+      (Vty.KChar ch, _) | ch /= '\t' -> Brick.put st { asCmd = T.snoc (asCmd st) ch }
+      _ -> pure ()
+    -- Normal mode: global Esc quits; everything else goes through keyLookup.
+    Nothing -> case (k, mods) of
+      (Vty.KEsc, []) -> BM.halt
+      _ -> do
+        let key = evToKey ev
+            ctx = vkCtxStr $ _nsVkind $ _vNav $ _vsHd $ asStack st
+        mci <- liftIO $ keyLookup key ctx
+        case mci of
+          Nothing -> pure ()
+          Just ci
+            -- Space menu: release /dev/tty so fzf can take it.
+            | ciCmd ci == TblMenu -> BM.suspendAndResume (runCmdMenu st)
+            | ciCmd ci == ThemeOpen -> BM.suspendAndResume (runThemePicker st)
+            | otherwise -> do
+                isArg <- liftIO $ CC.isArgCmd (ciCmd ci)
+                if isArg
+                  -- Switch to prompt mode; handler runs when user hits
+                  -- <ret>.  Keeps asMsg in sync so the old message
+                  -- doesn't linger behind the prompt.
+                  then Brick.put st { asPendingCmd = Just (ciCmd ci), asCmd = "", asMsg = "" }
+                  else do
+                    r <- liftIO $ handleCmd (ciCmd ci) st
+                    case r of
+                      Nothing  -> BM.halt
+                      Just st' -> Brick.put st'
 handleEvent _ = pure ()
 
 -- ============================================================================

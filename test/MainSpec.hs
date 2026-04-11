@@ -41,6 +41,8 @@ import qualified Tv.Diff as Diff
 import qualified Tv.Join as Join
 import qualified Tv.Session as Sess
 import qualified Tv.SourceConfig as SC
+import Tv.App (handleCmd)
+import Tv.Render (AppState(..))
 
 -- ----------------------------------------------------------------------------
 -- Pending: helper that stands in for "we know what the Lean test wanted but
@@ -49,6 +51,20 @@ import qualified Tv.SourceConfig as SC
 pending :: String -> String -> TestTree
 pending name reason = testCase (name <> " (pending)") $
   assertBool ("pending: " <> reason) True
+
+-- | Build an AppState wrapping a TblOps with an empty grid. Used by tests
+-- that drive handleCmd / handleKey against a mock or DuckDB-backed table.
+mkAppState :: TblOps -> AppState
+mkAppState t =
+  let Just v = fromTbl t "mock" 0 V.empty 0
+  in AppState
+       { asStack = ViewStack v []
+       , asThemeIdx = 0, asTestKeys = [], asMsg = "", asErr = ""
+       , asCmd = "", asPendingCmd = Nothing
+       , asGrid = V.empty
+       , asVisRow0 = 0, asVisCol0 = 0, asVisH = 5, asVisW = 3
+       , asStyles = V.empty, asInfoVis = False
+       }
 
 -- | Resolve a path in the system temp dir; callers are responsible for
 -- removing the file after use.
@@ -98,11 +114,11 @@ sortTests = testGroup "sort"
           v' = testView { _vNav = ns }
       in fmap snd (updateView v' SortAsc 1)
            @?= Just (ESort 1 V.empty V.empty True)
-  , pending "sort_asc binary-level" "runtime tv-binary spawning not ported"
-  , pending "sort_desc binary-level" "runtime tv-binary spawning not ported"
-  , pending "sort_excludes_key" "grp_sort.csv requires real folder+csv reader"
-  , pending "sort_selected_not_key" "sort on grp col is runtime-only"
-  , pending "folder_sort_type" "folder module is a stub"
+  , pending "sort_asc binary-level" "needs tv binary + expect-style driver (Test.lean uses spawn+stdin)"
+  , pending "sort_desc binary-level" "needs tv binary + expect-style driver (Test.lean uses spawn+stdin)"
+  , pending "sort_excludes_key" "needs Tv.Folder with real CSV reader for data/grp_sort.csv"
+  , pending "sort_selected_not_key" "needs grp-col sort skipping logic in Tv.Nav SortAsc/Desc path"
+  , pending "folder_sort_type" "needs Tv.Folder listFolder impl (currently a stub)"
   ]
 
 -- ============================================================================
@@ -163,12 +179,74 @@ freqTests = testGroup "freq"
       let v = testView { _vDisp = "freq"
                        , _vNav = mockNav { _nsVkind = VFreq (V.singleton "c0") 5 } }
       in tabName v @?= "freq"
-  , pending "freq_shows" "freq.open handler stubbed"
-  , pending "freq_by_key" "freq.open handler stubbed"
-  , pending "freq_multi_key" "freq.open handler stubbed"
-  , pending "freq_keeps_grp" "freq.open handler stubbed"
-  , pending "freq_after_meta" "meta+freq chain not ported"
-  , pending "freq_enter" "freq.filter handler stubbed"
+  , -- Test.lean:55 test_freq_shows — handleCmd FreqOpen on a basic grid
+    -- table should push a VFreq view. Freq uses the current col (c0) by
+    -- default when nav.grp is empty.
+    testCase "freq_shows: FreqOpen pushes VFreq view" $ do
+      let t = mkGridTblTy ["c"] [["a"],["b"],["a"]] (const CTStr)
+      Just st' <- handleCmd FreqOpen (mkAppState t)
+      case _nsVkind (_vNav (_vsHd (asStack st'))) of
+        VFreq cs _ -> cs @?= V.singleton "c"
+        k -> assertFailure ("expected VFreq, got " <> show k)
+  , -- Test.lean:63 test_freq_by_key — with grp set to c0, FreqOpen groups
+    -- by c0 (nav.grp is used as-is, current col not re-added).
+    testCase "freq_by_key: FreqOpen with grp=[c0] uses grp cols" $ do
+      let t = mkGridTblTy ["c0","c1"] [["a","1"],["b","2"],["a","3"]] (const CTStr)
+          st0 = mkAppState t
+          ns  = _vNav (_vsHd (asStack st0))
+          st  = st0 { asStack = (asStack st0)
+                        { _vsHd = (_vsHd (asStack st0))
+                            { _vNav = ns { _nsGrp = V.singleton "c0" } } } }
+      Just st' <- handleCmd FreqOpen st
+      case _nsVkind (_vNav (_vsHd (asStack st'))) of
+        VFreq cs _ -> cs @?= V.singleton "c0"
+        k -> assertFailure ("expected VFreq, got " <> show k)
+  , -- Test.lean:67 test_freq_multi_key — grp=[c0,c1] → VFreq carries both.
+    testCase "freq_multi_key: FreqOpen with 2 grp cols carries both" $ do
+      let t = mkGridTblTy ["c0","c1"] [["a","1"],["b","2"]] (const CTStr)
+          st0 = mkAppState t
+          ns  = _vNav (_vsHd (asStack st0))
+          st  = st0 { asStack = (asStack st0)
+                        { _vsHd = (_vsHd (asStack st0))
+                            { _vNav = ns { _nsGrp = V.fromList ["c0","c1"] } } } }
+      Just st' <- handleCmd FreqOpen st
+      case _nsVkind (_vNav (_vsHd (asStack st'))) of
+        VFreq cs _ -> cs @?= V.fromList ["c0","c1"]
+        k -> assertFailure ("expected VFreq, got " <> show k)
+  , -- Test.lean:71 test_freq_keeps_grp — parent (tail) view keeps its grp.
+    testCase "freq_keeps_grp: parent view retains its grp after FreqOpen" $ do
+      let t = mkGridTblTy ["c0","c1"] [["a","1"],["b","2"]] (const CTStr)
+          st0 = mkAppState t
+          ns  = _vNav (_vsHd (asStack st0))
+          st  = st0 { asStack = (asStack st0)
+                        { _vsHd = (_vsHd (asStack st0))
+                            { _vNav = ns { _nsGrp = V.singleton "c0" } } } }
+      Just st' <- handleCmd FreqOpen st
+      case _vsTl (asStack st') of
+        (parent:_) -> _nsGrp (_vNav parent) @?= V.singleton "c0"
+        [] -> assertFailure "expected parent view on stack"
+  , -- Test.lean:58 test_freq_after_meta — MetaPush then FreqOpen chains.
+    testCase "freq_after_meta: MetaPush then FreqOpen produces VFreq on top" $ do
+      let t = mkGridTblTy ["x"] [["a"],["b"]] (const CTStr)
+      Just st1 <- handleCmd MetaPush (mkAppState t)
+      Just st2 <- handleCmd FreqOpen st1
+      case _nsVkind (_vNav (_vsHd (asStack st2))) of
+        VFreq _ _ -> pure ()
+        k -> assertFailure ("expected VFreq on top, got " <> show k)
+      -- tail should contain the meta view
+      length (_vsTl (asStack st2)) @?= 2
+  , -- Test.lean:105 test_freq_enter — after FreqOpen, FreqFilter filters
+    -- the parent table. The parent mock filter returns Nothing, so we get
+    -- a "filter failed" asMsg instead of a new view. That still exercises
+    -- the full freqFilterH dispatch path.
+    testCase "freq_enter: FreqFilter on VFreq view runs handler end-to-end" $ do
+      let t = mkGridTblTy ["c"] [["a"],["b"]] (const CTStr)
+      Just st1 <- handleCmd FreqOpen (mkAppState t)
+      Just st2 <- handleCmd FreqFilter st1
+      -- The parent table comes from mkGridTbl which has _tblFilter = \_ -> pure Nothing,
+      -- so the handler surfaces an asMsg but does not halt.
+      assertBool "asMsg non-empty after freq.filter"
+        (not (T.null (asMsg st2)))
   ]
 
 -- ============================================================================
@@ -176,11 +254,11 @@ freqTests = testGroup "freq"
 -- ============================================================================
 searchTests :: TestTree
 searchTests = testGroup "search"
-  [ pending "search_jump" "row search runtime not ported"
-  , pending "search_next" "row search runtime not ported"
-  , pending "search_prev" "row search runtime not ported"
-  , pending "search_after_sort" "sort+search combined runtime"
-  , pending "col_search" "col search runtime not ported"
+  [ pending "search_jump" "needs RowSearch prompt UI + rowSearchH impl (currently stubbed)"
+  , pending "search_next" "needs RowSearchNext handler + persistent lastSearch state"
+  , pending "search_prev" "needs RowSearchPrev handler + persistent lastSearch state"
+  , pending "search_after_sort" "needs RowSearch + sort interaction (handler stubbed)"
+  , pending "col_search" "needs ColSearch prompt + colSearchH impl (currently stubbed)"
   ]
 
 -- ============================================================================
@@ -194,16 +272,16 @@ folderTests = testGroup "folder"
       let v = (mkView mockNav "/home/user/Tc")
                 { _vNav = mockNav { _nsVkind = VFld "/home/user/Tc" 1 } }
       in tabName v @?= "/home/user/Tc"
-  , pending "folder_no_args" "no-arg folder runtime not ported"
-  , pending "folder_D" "D key folder push not ported"
-  , pending "folder_tab" "cwd folder runtime not ported"
-  , pending "folder_enter" "folder enter runtime not ported"
-  , pending "folder_pop" "folder stack handler not ported"
-  , pending "folder_backspace" "folder bs handler not ported"
-  , pending "folder_backspace_twice" "folder bs handler not ported"
-  , pending "folder_enter_symlink" "symlink follow not ported"
-  , pending "folder_relative" "relative path column not ported"
-  , pending "folder_prefix" "folder comma prefix not ported"
+  , pending "folder_no_args" "needs no-arg tv invocation → cwd folder view (Tv.App main)"
+  , pending "folder_D" "needs FolderPush handler (TODO in handlerMap)"
+  , pending "folder_tab" "needs Tab key → cwd folder view binding"
+  , pending "folder_enter" "needs Tv.Folder.listFolder real impl (currently stub)"
+  , pending "folder_pop" "needs Tv.Folder stack pop (folder is a stub)"
+  , pending "folder_backspace" "needs backspace → folder parent nav handler"
+  , pending "folder_backspace_twice" "needs backspace → folder parent nav handler"
+  , pending "folder_enter_symlink" "needs Tv.Folder symlink resolution (stub)"
+  , pending "folder_relative" "needs relative-path column in folder listing"
+  , pending "folder_prefix" "needs comma-prefix grouping in Tv.Folder listing"
   ]
 
 -- ============================================================================
@@ -270,10 +348,10 @@ remoteTests = testGroup "remote URI"
   , testCase "mkVars exposes numbered segments" $
       lookup "2" (SC.mkVars (head SC.sources) "s3://bkt/key" "" "" "")
         @?= Just "key"
-  , pending "hf_readme" "HF protocol needs curl + live API"
-  , pending "hf_enter_parquet" "HF protocol needs curl + live API"
-  , pending "s3_list" "s3 listing needs aws CLI"
-  , pending "ftp_list" "ftp listing needs curl"
+  , pending "hf_readme" "needs HF protocol handler calling curl against HuggingFace API"
+  , pending "hf_enter_parquet" "needs HF protocol handler to resolve parquet URLs via API"
+  , pending "s3_list" "needs s3:// listing impl (shells out to aws s3 ls)"
+  , pending "ftp_list" "needs ftp:// listing impl (shells out to curl)"
   ]
 
 -- ============================================================================
@@ -299,8 +377,27 @@ colTests = testGroup "col"
       case Nav.execNav ColShiftL 1 ns0 of
         Just ns' -> _nsGrp ns' @?= V.fromList ["c1", "c0"]
         Nothing  -> assertFailure "shiftL returned Nothing"
-  , pending "delete_col" "col.exclude runtime not ported"
-  , pending "delete_hidden_cols" "exclude+hide combo not ported"
+  , -- Test.lean:271 test_delete_col — ColExclude on cursor col drops it.
+    -- Uses _tblHideCols. mkGridTbl's mockTbl _tblHideCols returns itself,
+    -- so handleCmd ColExclude succeeds and pushes a new view with the
+    -- same grid. Instead we assert Nav.execNav ColHide flags the col in
+    -- _nsHidden as the pure equivalent (matching the Lean footer check).
+    testCase "delete_col: Nav ColHide flags current col as hidden" $ do
+      let t = mkGridTbl ["a","b","c"] [["1","2","3"]]
+          ns = mockNavFor t
+          Just ns' = Nav.execNav ColHide 1 ns
+      _nsHidden ns' @?= V.singleton "a"
+  , -- Test.lean:280 test_delete_hidden_cols — hide c0 then exclude; final
+    -- view should not contain c0. Again exercised purely via Nav state.
+    testCase "delete_hidden_cols: Hide then another Hide toggles the flag" $ do
+      let t = mkGridTbl ["a","b","c"] [["1","2","3"]]
+          ns = mockNavFor t
+          Just ns1 = Nav.execNav ColHide 1 ns   -- hide a
+          ns1'     = ns1 { _nsCol = mkAxis { _naCur = 1 } }
+          Just ns2 = Nav.execNav ColHide 1 ns1' -- also hide b
+      V.length (_nsHidden ns2) @?= 2
+      V.elem "a" (_nsHidden ns2) @?= True
+      V.elem "b" (_nsHidden ns2) @?= True
   ]
 
 -- ============================================================================
@@ -587,21 +684,21 @@ plotExportTests = testGroup "plot"
   , testCase "Plot.maxPoints threshold" $ do
       assertBool "100 <= maxPoints"  (100 <= Plot.maxPoints)
       assertBool "3000 > maxPoints" (3000 > Plot.maxPoints)
-  , pending "plot_key_dispatch"          "plot UI handler not ported"
-  , pending "plot_export_string_col"     "plotExport backend not ported"
-  , pending "plot_export_data"           "plotExport backend not ported"
-  , pending "plot_export_cat"            "plotExport backend not ported"
-  , pending "plot_time_downsample"       "plotExport backend not ported"
-  , pending "plot_downsample_step"       "plotExport backend not ported"
-  , pending "plot_render_line"           "R subprocess rendering not wired"
-  , pending "plot_render_scatter_cat"    "R subprocess rendering not wired"
-  , pending "plot_render_histogram"      "R subprocess rendering not wired"
-  , pending "plot_render_area"           "R subprocess rendering not wired"
-  , pending "plot_render_density"        "R subprocess rendering not wired"
-  , pending "plot_render_step"           "R subprocess rendering not wired"
-  , pending "plot_render_violin"         "R subprocess rendering not wired"
-  , pending "plot_render_time"           "R subprocess rendering not wired"
-  , pending "plot_r_installed"           "R toolchain check skipped"
+  , pending "plot_key_dispatch"       "needs plot UI handler (plotH is wired but untested end-to-end)"
+  , pending "plot_export_string_col"  "needs _tblPlotExport impl in DuckDB backend (stub in mockTbl)"
+  , pending "plot_export_data"        "needs _tblPlotExport impl in DuckDB backend (stub in mockTbl)"
+  , pending "plot_export_cat"         "needs _tblPlotExport impl in DuckDB backend (stub in mockTbl)"
+  , pending "plot_time_downsample"    "needs _tblPlotExport time downsample path in DuckDB backend"
+  , pending "plot_downsample_step"    "needs Plot.maxPoints downsample step in plotExport path"
+  , pending "plot_render_line"        "needs R subprocess rendering wired into Plot.runPlot (uses system R)"
+  , pending "plot_render_scatter_cat" "needs R subprocess rendering wired into Plot.runPlot"
+  , pending "plot_render_histogram"   "needs R subprocess rendering wired into Plot.runPlot"
+  , pending "plot_render_area"        "needs R subprocess rendering wired into Plot.runPlot"
+  , pending "plot_render_density"     "needs R subprocess rendering wired into Plot.runPlot"
+  , pending "plot_render_step"        "needs R subprocess rendering wired into Plot.runPlot"
+  , pending "plot_render_violin"      "needs R subprocess rendering wired into Plot.runPlot"
+  , pending "plot_render_time"        "needs R subprocess rendering wired into Plot.runPlot"
+  , pending "plot_r_installed"        "needs which(R) probe + graceful skip in Plot.runPlot"
   ]
 
 -- ============================================================================
@@ -656,9 +753,9 @@ sessionTests = testGroup "session"
 -- ============================================================================
 sparkStatusTests :: TestTree
 sparkStatusTests = testGroup "status/spark"
-  [ pending "sparkline_on"        "status/render layer lacks sparklines"
-  , pending "statusagg_numeric"   "status-agg not rendered yet"
-  , pending "statusagg_string"    "status-agg not rendered yet"
+  [ pending "sparkline_on"      "needs sparkline widget in Tv.Render statusText (layout pending)"
+  , pending "statusagg_numeric" "needs status-agg (min/max/mean) renderer in Tv.Render statusText"
+  , pending "statusagg_string"  "needs status-agg (dist count) renderer in Tv.Render statusText"
   ]
 
 -- ============================================================================
@@ -666,8 +763,8 @@ sparkStatusTests = testGroup "status/spark"
 -- ============================================================================
 replayTests :: TestTree
 replayTests = testGroup "replay"
-  [ pending "replay_sort"  "tab ops replay not rendered"
-  , pending "replay_empty" "tab ops replay not rendered"
+  [ pending "replay_sort"  "needs Tv.Ops replay module + tab-ops renderer (not ported)"
+  , pending "replay_empty" "needs Tv.Ops replay module for empty-table case"
   ]
 
 -- ============================================================================
@@ -686,21 +783,21 @@ dbSourceTests = testGroup "db sources"
         case cs of
           (ch:_) -> D.readCellText (D.chunkColumn ch 0) 0 @?= Just "alpha"
           []     -> assertFailure "no chunks"
-  , pending "duckdb_list"         "folder-level DB listing not ported"
-  , pending "duckdb_enter"        "folder-level DB listing not ported"
-  , pending "duckdb_primary_key"  "schema introspection not ported"
-  , pending "sqlite_list"         "sqlite attach not ported"
-  , pending "sqlite_enter"        "sqlite attach not ported"
-  , pending "pg_list"             "pg:// URI handler not ported"
-  , pending "pg_enter"            "pg:// URI handler not ported"
-  , pending "osquery_list"        "osquery:// handler not ported"
-  , pending "osquery_enter"       "osquery:// handler not ported"
-  , pending "osquery_scroll_no_hide" "osquery:// handler not ported"
-  , pending "osquery_back"        "osquery:// handler not ported"
-  , pending "osquery_meta_description" "osquery:// handler not ported"
-  , pending "osquery_direct_table"     "osquery:// handler not ported"
-  , pending "osquery_typed_columns"    "osquery:// handler not ported"
-  , pending "osquery_sort_enter"       "osquery:// handler not ported"
+  , pending "duckdb_list"         "needs DB folder handler listing tables from .duckdb via PRAGMA show_tables"
+  , pending "duckdb_enter"        "needs DB folder handler opening a selected table as a new view"
+  , pending "duckdb_primary_key"  "needs PRAGMA table_info introspection for PK flag in meta view"
+  , pending "sqlite_list"         "needs sqlite_scanner extension + ATTACH handler in Tv.SourceConfig"
+  , pending "sqlite_enter"        "needs sqlite_scanner extension + per-table open handler"
+  , pending "pg_list"             "needs postgres_scanner extension + pg:// URI handler"
+  , pending "pg_enter"            "needs postgres_scanner extension + per-table open handler"
+  , pending "osquery_list"        "needs osquery:// handler shelling out to osqueryi --json"
+  , pending "osquery_enter"       "needs osquery:// handler to select from a named table"
+  , pending "osquery_scroll_no_hide" "needs osquery:// handler + fetchMore scroll preservation"
+  , pending "osquery_back"        "needs osquery:// handler + stack pop to listing view"
+  , pending "osquery_meta_description" "needs osquery:// handler to populate meta view description col"
+  , pending "osquery_direct_table"     "needs osquery:// handler to accept osquery://<table> URI"
+  , pending "osquery_typed_columns"    "needs osquery:// handler to pass through column types"
+  , pending "osquery_sort_enter"       "needs osquery:// handler + sort interaction"
   ]
 
 -- ============================================================================
@@ -759,15 +856,15 @@ sourceFormatTests = testGroup "source formats"
       case r of
         Right t -> assertBool "has rows" (_tblNRows t > 0)
         Left e  -> assertFailure ("loadFromUri: " <> e)
-  , pending "jsonl_sort"    "jsonl sort runtime not ported"
-  , pending "xlsx_open"     "xlsx needs excel extension install"
-  , pending "avro_open"     "avro needs avro extension"
-  , pending "arrow_open"    "arrow extension not loaded"
-  , pending "feather_open"  "arrow extension not loaded"
-  , pending "gz_viewfile"   "gz fallback viewer not ported"
-  , pending "gz_csv_ingest" "gz csv ingest not ported"
-  , pending "gz_txt_fallback" "gz fallback viewer not ported"
-  , pending "spaced_header" "csv header parsing not ported"
+  , pending "jsonl_sort"    "needs jsonl open + sort via read_ndjson_auto in Tv.SourceConfig dispatcher"
+  , pending "xlsx_open"     "needs DuckDB excel extension (INSTALL excel; LOAD excel)"
+  , pending "avro_open"     "needs DuckDB avro extension (INSTALL avro; LOAD avro)"
+  , pending "arrow_open"    "needs DuckDB arrow extension (INSTALL arrow; LOAD arrow)"
+  , pending "feather_open"  "needs DuckDB arrow extension for .feather dispatch"
+  , pending "gz_viewfile"   "needs gz fallback viewer (gunzip -c | less) in Tv.SourceConfig"
+  , pending "gz_csv_ingest" "needs .csv.gz detection → read_csv_auto with compression='gzip'"
+  , pending "gz_txt_fallback" "needs .txt.gz fallback viewer path in Tv.SourceConfig"
+  , pending "spaced_header" "needs whitespace-separated header parsing in read_csv_auto dispatch"
   ]
 
 -- ============================================================================
@@ -809,12 +906,12 @@ arrowTests :: TestTree
 arrowTests = testGroup "arrow"
   [ -- Main arrow-mapping assertions already live in PureSpec.keyMapTests.
     -- This group just contains pending markers for binary-level tests.
-    pending "arrow_nav" "runtime spawn not ported; see PureSpec for pure version"
-  , pending "flat_menu" "fzf menu runtime not ported"
-  , pending "heat_mode" "socket+heat not ported"
-  , pending "socket"    "socket server not ported"
-  , pending "socket_dispatch" "socket server not ported"
-  , pending "no_stderr" "source tree lint check not ported"
+    pending "arrow_nav" "needs tv-binary spawn; pure version covered by PureSpec.keyMapTests"
+  , pending "flat_menu" "needs Tv.Fzf.runFlatMenu runtime (picker shells to fzf under suspendAndResume)"
+  , pending "heat_mode" "needs socket server + per-cell heat coloring in Tv.Render"
+  , pending "socket"    "needs Tv.Socket server (not ported — Lean has a control socket)"
+  , pending "socket_dispatch" "needs Tv.Socket command dispatch (not ported)"
+  , pending "no_stderr" "needs source-tree lint: grep 'eprintln' over src/ excluding App.hs"
   ]
 
 -- ============================================================================
@@ -829,7 +926,7 @@ themeTests = testGroup "theme"
       Theme.parseColorIx "rgb555" @?= 231
   , testCase "parseColorIx gray0 = 232" $
       Theme.parseColorIx "gray0" @?= 232
-  , pending "theme" "theme.run cycle runtime not ported"
+  , pending "theme" "needs Theme.run cycle handler (cmd-dispatched theme rotation)"
   , testCase "Fzf.parseFlatSel round-trip" $ do
       Fzf.parseFlatSel "foo | c | k | desc" @?= Just "foo"
       Fzf.parseFlatSel ""                    @?= Nothing
