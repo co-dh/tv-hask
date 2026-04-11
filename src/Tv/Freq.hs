@@ -1,0 +1,79 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+-- | Freq: group by columns, COUNT(*), sort by count desc. Mirrors
+-- Tc.Freq (Tc/Tc/Runner.lean) + Tc.AdbcTable.freqTable.
+--
+-- The Lean version pipes a PRQL @freq@ step onto the backing query and
+-- lets DuckDB compute the aggregation in place (the source has a live
+-- query context). Here the TblOps is an already-materialized grid, so
+-- we round-trip the rows through an in-memory DuckDB table via
+-- 'Tv.Derive.rebuildWith' and wrap the outer SELECT in a GROUP BY.
+--
+-- The resulting TblOps is fully materialized (via 'Tv.Data.DuckDB.mkDbOps')
+-- with columns @[groupCol1, groupCol2, ..., count]@ and rows sorted by
+-- @count@ descending.
+module Tv.Freq
+  ( mkFreqOps
+  , filterExpr
+  ) where
+
+import Control.Exception (try, SomeException)
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Vector (Vector)
+import qualified Data.Vector as V
+
+import Tv.Types
+import qualified Tv.Derive as Derive
+
+-- | Build a frequency-table TblOps. Given a source table and the column
+-- indices to group on (from @NavState._nsGrp@ + current column), produce
+-- a new read-only TblOps with columns @[grouped cols..., "count"]@ and
+-- rows = distinct groupings sorted by count desc.
+--
+-- Returns the source table unchanged if @colIdxs@ is empty or any index
+-- is out of range; falls back to the source on any DuckDB error too (the
+-- Lean version is similarly fail-soft — AdbcTable.freqTable returns
+-- 'none' and the caller leaves the stack alone).
+mkFreqOps :: TblOps -> Vector Int -> IO TblOps
+mkFreqOps src colIdxs
+  | V.null colIdxs = pure src
+  | V.any outOfRange colIdxs = pure src
+  | otherwise = do
+      let groupNames = V.map (names V.!) colIdxs
+          groupSql   = T.intercalate ", " (V.toList (V.map Derive.quoteId groupNames))
+          -- GROUP BY + COUNT(*) over the reconstructed source. LIMIT 1000
+          -- mirrors Lean's `| take 1000`. ORDER BY count DESC makes the
+          -- high-frequency groupings appear at the top of the view.
+          wrap sub =
+            "SELECT " <> groupSql <> ", COUNT(*) AS count FROM ("
+              <> sub <> ") GROUP BY " <> groupSql
+              <> " ORDER BY count DESC LIMIT 1000"
+      r <- try (Derive.rebuildWith src wrap)
+      case r of
+        Right ops -> pure ops
+        Left (_ :: SomeException) -> pure src
+  where
+    names = _tblColNames src
+    nc    = V.length names
+    outOfRange i = i < 0 || i >= nc
+
+-- | Build a SQL WHERE-clause expression matching a freq view row. Given
+-- the parent table, the list of group column names, and a row index in
+-- the freq view, reads the group cell values and produces
+-- @"col1 = 'v1' AND col2 = 'v2'"@. Used by App.freqFilterH to filter
+-- the parent table.
+--
+-- This is the Haskell analogue of Tc.Freq.filterExprIO (Tc/Runner.lean).
+-- That version uses PRQL's @==@ and reads typed cells via TblOps.getCols;
+-- we emit SQL (@=@) and read text cells from the freq view directly,
+-- quoting empty cells as NULL checks.
+filterExpr :: TblOps -> Vector Text -> Int -> IO Text
+filterExpr freqOps cols row = do
+  let nc = V.length cols
+  parts <- V.generateM nc $ \i -> do
+    v <- _tblCellStr freqOps row i
+    let n = Derive.quoteId (cols V.! i)
+    pure $ if T.null v
+             then n <> " IS NULL"
+             else n <> " = '" <> T.replace "'" "''" v <> "'"
+  pure (T.intercalate " AND " (V.toList parts))

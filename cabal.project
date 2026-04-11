@@ -1,0 +1,41 @@
+packages: .
+
+-- Sandbox allowWrite covers ~/.cache but not ~/.local/state, so move the
+-- cabal store under ~/.cache. Clean fix; no sandbox bypass needed.
+store-dir: /home/dh/.cache/cabal/store
+
+-- Arch ships every "user" Haskell library in /usr/lib/ghc-9.6.6/site-local/
+-- with ONLY .dyn_hi files, no .hi. When cabal builds a source dep that imports
+-- one of them, ghc runs in static mode and can't find the .hi. The `source`
+-- constraint forces cabal to build a fresh copy from Hackage into the store
+-- (which produces both .hi and .dyn_hi). We list every package found in
+-- /usr/lib/ghc-9.6.6/site-local/ — that's the canonical broken set on Arch.
+library-vanilla: False
+shared: True
+executable-dynamic: True
+
+constraints:
+  async source,
+  base16-bytestring source,
+  base64-bytestring source,
+  cryptohash-sha256 source,
+  echo source,
+  ed25519 source,
+  edit-distance source,
+  hackage-security source,
+  hashable source,
+  HTTP source,
+  lukko source,
+  network source,
+  network-uri source,
+  os-string source,
+  random source,
+  regex-base source,
+  regex-posix source,
+  resolv source,
+  safe-exceptions source,
+  splitmix source,
+  tar source,
+  th-compat source,
+  unordered-containers source,
+  zlib source
