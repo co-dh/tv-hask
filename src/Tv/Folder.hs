@@ -5,7 +5,7 @@
 --
 -- Mirrors Tc.Folder.listDir in shape (same column names) so navigation
 -- tests written against the mock folder layout stay portable.
-module Tv.Folder (listFolder) where
+module Tv.Folder (listFolder, listFolderDepth) where
 
 import Data.Text (Text)
 import qualified Data.Text as T

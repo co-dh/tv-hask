@@ -19,7 +19,7 @@ import TestUtil
 import Tv.Types
 import Tv.View
 import qualified Tv.Nav as Nav
-import Tv.App (handleKey)
+import Tv.App (handleKey, handleCmd)
 import Tv.Render (AppState(..))
 import qualified Tv.CmdConfig as CC
 
@@ -39,9 +39,10 @@ mkScreen = do
       stack = ViewStack v []
   pure AppState
     { asStack = stack, asThemeIdx = 0, asTestKeys = []
-    , asMsg = "", asErr = "", asCmd = ""
+    , asMsg = "", asErr = "", asCmd = "", asPendingCmd = Nothing
     , asGrid = V.empty
     , asVisRow0 = 0, asVisCol0 = 0, asVisH = 5, asVisW = 3
+    , asStyles = V.empty, asInfoVis = False
     }
 
 -- | Replay a sequence of key tokens through the handler pipeline.
@@ -136,11 +137,31 @@ tests = testGroup "Screen (ported from TestScreen.lean)"
       let Just ns' = replayNav [ColInc, ColGrp] mockNav
       _nsDispIdxs ns' V.! 0 @?= 1
 
-    -- === Meta/Freq/Info: pure kind checks (runtime handlers not ported) ===
-  , testCase "meta_quit (pending): meta handler not wired" $
-      assertBool "pending: MetaPush not in handlerMap" True
-  , testCase "freq_quit (pending): freq handler not wired" $
-      assertBool "pending: FreqOpen not in handlerMap" True
-  , testCase "info (pending): InfoTog not wired" $
-      assertBool "pending: InfoTog not in handlerMap" True
+    -- === Meta/Freq/Info via handleCmd (now wired) ===
+    -- meta_quit (TestScreen.lean:78): MetaPush then StkPop returns to origin.
+  , testCase "meta_quit: MetaPush pushes VColMeta; StkPop restores" $ do
+      st <- mkScreen
+      Just st1 <- handleCmd MetaPush st
+      _nsVkind (_vNav (_vsHd (asStack st1))) @?= VColMeta
+      Just st2 <- handleCmd StkPop st1
+      _nsVkind (_vNav (_vsHd (asStack st2))) @?= VTbl
+    -- info (TestScreen.lean:91): InfoTog toggles the overlay flag.
+  , testCase "info: InfoTog flips asInfoVis" $ do
+      st <- mkScreen
+      asInfoVis st @?= False
+      Just st1 <- handleCmd InfoTog st
+      asInfoVis st1 @?= True
+      Just st2 <- handleCmd InfoTog st1
+      asInfoVis st2 @?= False
+    -- freq_quit (TestScreen.lean:82): FreqOpen would push a VFreq view, but
+    -- requires DuckDB rebuildWith on the underlying table. The pure mock
+    -- TblOps here can't round-trip through DuckDB, so Freq.mkFreqOps returns
+    -- the source unchanged (exception path). We verify the handler still runs
+    -- end-to-end without error and the resulting vkind is VFreq.
+  , testCase "freq_quit: FreqOpen pushes VFreq kind even on pure mock" $ do
+      st <- mkScreen
+      Just st1 <- handleCmd FreqOpen st
+      case _nsVkind (_vNav (_vsHd (asStack st1))) of
+        VFreq _ _ -> pure ()
+        k -> assertFailure ("expected VFreq, got " <> show k)
   ]

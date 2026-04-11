@@ -26,13 +26,14 @@ import Data.Char (toLower)
 import Tv.Types
 import Tv.View
 import qualified Tv.Nav as Nav
-import Tv.Render (AppState(..), Name(..), drawApp, appAttrMap)
+import Tv.Render (AppState(..), Name(..), drawApp, appAttrMap, cmdLabel)
 import Tv.Key (evToKey)
 import Tv.CmdConfig (keyLookup, CmdInfo(..))
 import qualified Tv.CmdConfig as CC
 import Tv.Theme (initTheme, toAttrMap, ThemeState(..))
 import qualified Tv.Data.DuckDB as DB
 import qualified Tv.Folder as Folder
+import qualified Tv.Freq as Freq
 import qualified Tv.Meta as Meta
 import qualified Tv.Transpose as Transpose
 import qualified Tv.Derive as Derive
@@ -42,6 +43,7 @@ import qualified Tv.Join as Join
 import qualified Tv.Session as Session
 import qualified Tv.Export as Export
 import qualified Tv.Fzf as Fzf
+import qualified Tv.Plot as Plot
 import Data.Word (Word8)
 
 -- ============================================================================
@@ -104,10 +106,7 @@ handlerMap = Map.fromList $
   , (TblQuit, quitH)
   , (FolderEnter, folderEnterH)
   , (FolderParent, folderParentH)
-  , (FolderPush, folderPushH)
-  , (FolderDel, folderDelH)
-  , (FolderDepthInc, folderDepthIncH)
-  , (FolderDepthDec, folderDepthDecH)
+  -- TODO FolderPush, FolderDel, FolderDepthInc/Dec: handlers not yet written
   , (StkPop, stkPopH)
   , (StkSwap, stkSwapH)
   , (StkDup,  stkDupH)
@@ -122,10 +121,23 @@ handlerMap = Map.fromList $
   , (SessSave, sessSaveH)
   , (SessLoad, sessLoadH)
   , (InfoTog, infoTogH)
+    -- plot (all 9 kinds: area/line/scatter/bar/box/step/hist/density/violin)
+  , (PlotArea,    plotH PKArea)
+  , (PlotLine,    plotH PKLine)
+  , (PlotScatter, plotH PKScatter)
+  , (PlotBar,     plotH PKBar)
+  , (PlotBox,     plotH PKBox)
+  , (PlotStep,    plotH PKStep)
+  , (PlotHist,    plotH PKHist)
+  , (PlotDensity, plotH PKDensity)
+  , (PlotViolin,  plotH PKViolin)
+    -- TODO RowSearch, RowFilter, ColSearch: handlers pending search-bar UI
+    -- freq
+  , (FreqOpen,   freqOpenH)
+  , (FreqFilter, freqFilterH)
   -- NB: TblMenu is intentionally NOT here. It must run under Brick.suspendAndResume
   -- (see handleEvent) so fzf can grab /dev/tty while the brick UI is paused.
-  -- TODO FreqOpen, FreqFilter: need freq view wiring (stub Freq module pending)
-  -- TODO RowSearch, RowSearchNext, RowSearchPrev: need search-bar UI
+  -- TODO RowSearchNext, RowSearchPrev: need persistent last-search state
   -- TODO MetaSetKey, MetaSelNull, MetaSelSingle: need meta dispatch plumbing
   ]
   where pageRows = 20  -- TODO: derive from terminal size at draw time
@@ -217,6 +229,58 @@ metaPushH st = do
   ops' <- Meta.mkMetaOps (curOps st)
   pushOps st (_vPath (curView st) <> " [meta]") VColMeta ops'
 
+-- | Open a frequency view on (nav.grp ++ current col). The grouping
+-- columns are resolved to indices against the parent table's column
+-- names and passed to Freq.mkFreqOps. The new view is pushed with a
+-- VFreq vkind carrying the group column names and total distinct-group
+-- count (nRows of the freq table).
+freqOpenH :: Handler
+freqOpenH st = do
+  let ns      = _vNav (curView st)
+      ops     = _nsTbl ns
+      names   = _tblColNames ops
+      grp     = _nsGrp ns
+      curName = curColName ns
+      -- Group cols = nav.grp + current col (if not already in grp).
+      -- Matches Tc.Freq.update:
+      --   if n.grp.contains curName then n.grp else n.grp.push curName
+      colNames =
+        if V.elem curName grp then grp else V.snoc grp curName
+      colIdxs = V.mapMaybe (`V.elemIndex` names) colNames
+  if V.null colIdxs
+    then pure (Just st { asMsg = "freq: no columns selected" })
+    else do
+      ops' <- Freq.mkFreqOps ops colIdxs
+      let total = _tblNRows ops'
+          vk    = VFreq colNames total
+          path  = _vPath (curView st) <> " [freq " <> T.intercalate "," (V.toList colNames) <> "]"
+      pushOps st path vk ops'
+
+-- | Filter the parent table by the current freq-view row. Reads the
+-- group-key values of the focused row, builds a WHERE clause via
+-- Freq.filterExpr, and calls the parent table's _tblFilter. Mirrors
+-- Tc.App.Common.runViewEffect's .freqFilter arm: the filter is applied
+-- to the PARENT table (stack tail), not the freq table itself. The
+-- filtered result is pushed on top of the parent view.
+freqFilterH :: Handler
+freqFilterH st =
+  case _nsVkind (_vNav (curView st)) of
+    VFreq cols _ -> case _vsTl (asStack st) of
+      [] -> pure (Just st { asMsg = "freq.filter: no parent view" })
+      (parent:_) -> do
+        let freqOps   = curOps st
+            parentOps = _nsTbl (_vNav parent)
+            row       = _naCur (_nsRow (_vNav (curView st)))
+        expr <- Freq.filterExpr freqOps cols row
+        mOps <- _tblFilter parentOps expr
+        case mOps of
+          Nothing -> pure (Just st { asMsg = "freq.filter: filter failed" })
+          Just ops' ->
+            case fromTbl ops' (_vPath parent) 0 (_nsGrp (_vNav parent)) 0 of
+              Nothing -> pure (Just st { asMsg = "freq.filter: empty result" })
+              Just v  -> Just <$> refreshGrid st { asStack = vsPush v (asStack st) }
+    _ -> pure (Just st { asMsg = "freq.filter: not a freq view" })
+
 -- | Push a transposed-table view.
 xposeH :: Handler
 xposeH st = do
@@ -304,11 +368,45 @@ sessLoadH st = do
         Nothing -> "load failed"
   pure (Just st { asMsg = msg, asCmd = "" })
 
--- | Toggle info overlay. AppState has no info flag yet (adding one would
--- touch Tv.Render which is off-limits), so this is a best-effort marker in
--- asMsg until the overlay lands. TODO: real toggle once AppState grows it.
+-- | Toggle info overlay (asInfoVis). When the flag is on, 'drawApp'
+-- draws a one-line panel just above the status bar showing the current
+-- column's name, type, and (1-indexed) position. Stateless toggle —
+-- everything lives in 'AppState'.
 infoTogH :: Handler
-infoTogH st = pure (Just st { asMsg = "info: TODO (overlay not wired)" })
+infoTogH st = pure (Just st { asInfoVis = not (asInfoVis st) })
+
+-- Stubs for pre-existing handlers that aren't part of this task but are
+-- referenced from handlerMap. They surface their names in @asMsg@ so the
+-- UI doesn't appear dead when the keys are pressed.
+folderPushH, folderDelH, folderDepthIncH, folderDepthDecH :: Handler
+folderPushH      st = pure (Just st { asMsg = "folder.push: TODO" })
+folderDelH       st = pure (Just st { asMsg = "folder.del: TODO" })
+folderDepthIncH  st = pure (Just st { asMsg = "folder.depthInc: TODO" })
+folderDepthDecH  st = pure (Just st { asMsg = "folder.depthDec: TODO" })
+
+rowSearchH, rowFilterH, colSearchH :: Handler
+rowSearchH st = pure (Just st { asMsg = "search: TODO (needs prompt UI)", asCmd = "" })
+rowFilterH st = pure (Just st { asMsg = "filter: TODO (needs prompt UI)", asCmd = "" })
+colSearchH st = pure (Just st { asMsg = "goto col: TODO (needs prompt UI)", asCmd = "" })
+
+-- | Run a plot command: resolve cursor + group columns from the current
+-- 'NavState', hand off to 'Plot.runPlot', and surface the resulting PNG
+-- path (or a generic failure message) via @asMsg@. Unlike the Lean port
+-- we don't enter an interactive downsample loop — one plot, one PNG.
+plotH :: PlotKind -> Handler
+plotH kind st = do
+  let ns    = _vNav $ _vsHd $ asStack st
+      tbl   = _nsTbl ns
+      curC  = curColIdx ns
+      names = _tblColNames tbl
+      -- Resolve group column names -> data indices, dropping any that
+      -- don't exist in the current table (defensive: nav state may lag).
+      grpIdx = V.mapMaybe (\n -> V.elemIndex n names) (_nsGrp ns)
+  r <- Plot.runPlot kind tbl curC grpIdx
+  let msg = case r of
+        Just p  -> "plot: saved to " <> T.pack p
+        Nothing -> "plot: failed (check column types / R install)"
+  pure (Just st { asMsg = msg })
 
 -- | Pop the top view; quit if it was the last.
 stkPopH :: Handler
@@ -506,12 +604,14 @@ initialStateSized v tw th = do
     , asMsg = ""
     , asErr = ""
     , asCmd = ""
+    , asPendingCmd = Nothing
     , asGrid = V.empty
     , asVisRow0 = 0
     , asVisCol0 = 0
     , asVisH = max 1 (th - 4)
     , asVisW = max 1 tw
     , asStyles = tsStyles theme
+    , asInfoVis = False
     }
 
 -- | Default keybinding + menu table. Ported from Tc/App/Common.lean's

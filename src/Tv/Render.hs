@@ -24,6 +24,21 @@ import Tv.View
 data Name = TableViewport | StatusBar | HeaderRow | CellGrid
   deriving (Eq, Ord, Show)
 
+-- | Human label for a command when it's used as a prompt heading.
+-- Falls back to cmdStr so unknown commands still render.
+cmdLabel :: Cmd -> Text
+cmdLabel = \case
+  RowSearch  -> "search"
+  RowFilter  -> "filter"
+  ColSplit   -> "split regex"
+  ColDerive  -> "derive (name = expr)"
+  ColSearch  -> "goto col"
+  TblExport  -> "export path"
+  SessSave   -> "save session"
+  SessLoad   -> "load session"
+  TblJoin    -> "join keys"
+  c          -> cmdStr c
+
 -- | Application state for brick. asGrid caches cell text for the visible
 -- window; it is rebuilt after each handler that moves the viewport or
 -- mutates the underlying table (see Tv.App.refreshGrid).
@@ -42,6 +57,7 @@ data AppState = AppState
   , asVisH     :: !Int                  -- visible row count
   , asVisW     :: !Int                  -- visible col count
   , asStyles   :: !(Vector (Maybe Vty.Color, Maybe Vty.Color))  -- theme styles keyed by index; Nothing = terminal default
+  , asInfoVis  :: !Bool                 -- info overlay on current column (name/type/index)
   } deriving (Show)
 
 -- ============================================================================
@@ -184,7 +200,8 @@ tabText st =
 --   row h-2: tab line
 --   row h-1: status line (left: colName+msg, right: stats)
 drawApp :: AppState -> [Brick.Widget Name]
-drawApp st = [C.vBox [headerW, gridW, footerW, tabW, statusW]]
+drawApp st =
+  [C.vBox ([headerW, gridW, footerW, tabW] ++ infoW ++ [statusW])]
   where
     ns = _vNav $ _vsHd $ asStack st
     tbl = _nsTbl ns
@@ -268,6 +285,23 @@ drawApp st = [C.vBox [headerW, gridW, footerW, tabW, statusW]]
     -- Tab line at h-2. bar attribute gives it its own colour.
     tabW = C.withAttr attrBar (C.txt (tabText st))
 
+    -- Optional info overlay drawn just above the status line. Enabled by
+    -- the InfoTog command. Shows current column's name/type/index so the
+    -- user can inspect metadata without opening the full colMeta view.
+    infoW
+      | asInfoVis st =
+          let nCols = V.length (_tblColNames tbl)
+              nm = if curCol < nCols then _tblColNames tbl V.! curCol else ""
+              ty = if curCol < nCols then colTypeName' (_tblColType tbl curCol) else ""
+              line = "info: " <> nm <> " : " <> ty
+                     <> "  [col " <> tshow (curCol + 1) <> "/" <> tshow nCols <> "]"
+          in [C.withAttr attrHint (C.txt line)]
+      | otherwise = []
+    colTypeName' = \case
+      CTInt -> "int"; CTFloat -> "float"; CTDecimal -> "decimal"
+      CTStr -> "str"; CTDate -> "date"; CTTime -> "time"
+      CTTimestamp -> "timestamp"; CTBool -> "bool"; CTOther -> "other"
+
     -- Status line at h-1: colName on left, stats on right, padded in between.
     statsRight =
       let c = _naCur (_nsCol ns)
@@ -288,8 +322,17 @@ drawApp st = [C.vBox [headerW, gridW, footerW, tabW, statusW]]
     leftTxt = colName <> msgPart <> cmdPart
     w = asVisW st
     gap = max 1 (w - T.length leftTxt - T.length statsRight)
-    statusW = C.withAttr attrStatus
-            $ C.txt (leftTxt <> T.replicate gap " " <> statsRight)
+    -- When asPendingCmd is Just the whole status line becomes an input
+    -- prompt: "{label}: {buffer}▌" with a block cursor so the user can
+    -- see what they're typing. Otherwise the normal colName/stats line.
+    promptLine label =
+      let body = label <> ": " <> asCmd st <> "\x258C"
+          pad  = max 0 (w - T.length body)
+      in body <> T.replicate pad " "
+    statusW = case asPendingCmd st of
+      Just c  -> C.withAttr attrStatus (C.txt (promptLine (cmdLabel c)))
+      Nothing -> C.withAttr attrStatus
+               $ C.txt (leftTxt <> T.replicate gap " " <> statsRight)
 
     tshow :: Int -> Text
     tshow = T.pack . show

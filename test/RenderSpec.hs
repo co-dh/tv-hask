@@ -52,11 +52,14 @@ mockState = do
         , asMsg = ""
         , asErr = ""
         , asCmd = ""
+        , asPendingCmd = Nothing
         , asGrid = V.empty
         , asVisRow0 = 0
         , asVisCol0 = 0
         , asVisH = 5
         , asVisW = 3
+        , asStyles = V.empty
+        , asInfoVis = False
         }
   -- prefetch the grid via the same path the App uses
   grid <- V.generateM 5 $ \r ->
