@@ -46,7 +46,7 @@ fromTbl ops path col grp row
     ns = NavState ops (mkAxis { _naCur = clamp 0 nr row })
                       (mkAxis { _naCur = clamp 0 nc col })
                       grp V.empty (dispOrder grp (_tblColNames ops))
-                      VTbl "" 0 0 1
+                      VTbl "" 0 0 0
 
 -- | Rebuild with new TblOps, preserving old view attributes
 rebuildView :: View -> TblOps -> Int -> Vector Text -> Int -> Maybe View
