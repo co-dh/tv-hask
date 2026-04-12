@@ -11,8 +11,12 @@ module Tv.Render where
 
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Read as TR
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import Data.Bits (xor, (.&.))
+import Data.Word (Word8, Word32)
 import qualified Brick
 import qualified Brick.AttrMap as A
 import qualified Brick.Widgets.Core as C
@@ -197,6 +201,76 @@ tabText st =
   in "[" <> _vPath v <> "]"
 
 -- ============================================================================
+-- Heat mode: viridis-inspired background gradient (ports Tc/c/heat.c)
+-- ============================================================================
+
+-- | Per-column heat classification after scanning visible cells.
+data HeatCol = HeatNum !Double !Double  -- min, max (mn < mx)
+             | HeatStr                   -- categorical (FNV hash)
+             | HeatNone                  -- no heat for this column
+
+-- | Viridis-inspired 17-stop ramp of xterm-256 color indices (Tc/c/heat.c:ramp[]).
+viridisRamp :: V.Vector Word8
+viridisRamp = V.fromList [53, 54, 55, 61, 25, 31, 30, 36, 42, 41, 77, 113, 149, 148, 184, 190, 226]
+
+-- | Nearest-neighbor interpolation into the viridis ramp. t ∈ [0,1].
+rampColor :: Double -> Vty.Color
+rampColor t =
+  let n = V.length viridisRamp
+      pos = max 0 (min (fromIntegral (n - 1)) (t * fromIntegral (n - 1)))
+      idx = round pos :: Int
+      xt = fromIntegral (viridisRamp V.! min (n - 1) idx)
+  in Vty.Color240 (xt - 16)  -- Color240 maps index 0 → xterm 16
+
+-- | FNV-1a hash of text to [0,1] (Tc/c/heat.c:str_hash01).
+fnvHash01 :: Text -> Double
+fnvHash01 s = fromIntegral (h Data.Bits..&. 0xFFFF) / 65535.0
+  where
+    h = T.foldl' step 2166136261 s :: Word32
+    step !acc c = (acc `xor` fromIntegral (fromEnum c)) * 16777619
+
+-- | Scan visible cells to classify each column for heat coloring.
+heatScan :: Word8 -> AppState -> Vector HeatCol
+heatScan mode st = V.generate nVis scanCol
+  where
+    ns = _vNav $ _vsHd $ asStack st
+    tbl = _nsTbl ns
+    disp = _nsDispIdxs ns
+    grid = asGrid st
+    nVis = V.length (visColNames st)
+    origIdx ci = let p = asVisCol0 st + ci
+                 in if p < V.length disp then disp V.! p else 0
+    scanCol ci
+      | isNumeric (_tblColType tbl (origIdx ci)) && (mode Data.Bits..&. 1 /= 0) = scanNum ci
+      | not (isNumeric (_tblColType tbl (origIdx ci))) && (mode Data.Bits..&. 2 /= 0) = scanStr ci
+      | otherwise = HeatNone
+    scanNum ci =
+      let vals = V.mapMaybe (\row -> parseNum (cellAt row ci)) grid
+      in if V.null vals then HeatNone
+         else let mn = V.minimum vals; mx = V.maximum vals
+              in if mx > mn then HeatNum mn mx else HeatNone
+    scanStr ci =
+      -- Only apply categorical heat if column has at least 2 distinct values
+      let vals = V.map (\row -> cellAt row ci) grid
+          first = if V.null vals then "" else V.head vals
+      in if V.any (/= first) vals then HeatStr else HeatNone
+    cellAt row ci = if ci < V.length row then row V.! ci else ""
+    parseNum t = case TR.double t of Right (d, _) -> Just d; _ -> Nothing
+
+-- | Compute heat background for a cell. Returns Nothing if heat doesn't
+-- apply (mode off, cursor cell, etc.)
+heatCellBg :: HeatCol -> Text -> Vty.Color
+heatCellBg (HeatNum mn mx) cell = case TR.double cell of
+  Right (v, _) -> rampColor ((v - mn) / (mx - mn))
+  _ -> rampColor 0  -- non-numeric cell in numeric column → min color
+heatCellBg HeatStr cell = rampColor (fnvHash01 cell)
+heatCellBg HeatNone _ = Vty.black  -- shouldn't be called
+
+-- | Foreground for heat-colored cells: black (xterm 16 = Color240 0).
+heatFg :: Vty.Color
+heatFg = Vty.Color240 0
+
+-- ============================================================================
 -- drawApp
 -- ============================================================================
 
@@ -222,6 +296,8 @@ drawApp st =
     names = visColNames st
     widths = visColWidths st
     nVis = V.length names
+    hMode = _nsHeatMode ns
+    hcols = if hMode /= 0 then heatScan hMode st else V.empty
 
     -- Translate visible column index -> absolute dispIdxs position.
     absDispPos ci = asVisCol0 st + ci
@@ -262,6 +338,8 @@ drawApp st =
 
     -- Data cell: " <value padded>[space]" within width w. Right-align for
     -- numerics. Background is chosen by (row, col) selection/cursor state.
+    -- Heat mode overrides background for non-cursor/non-selection cells
+    -- (Tc/c/heat.c: suppresses for STYLE_CURSOR/SEL_ROW/SEL_CUR).
     dataCell absRow ci cell =
       let w = widths V.! ci
           inner = max 0 (w - 2)
@@ -271,15 +349,24 @@ drawApp st =
           isCurR = absRow == curRow
           isSelC = isSelCol ci
           isCurC = isCurCol ci
-          a | isCurR && isCurC           = attrCursor
-            | isSelR                     = attrSelRow
-            | isSelC && isCurR           = attrSelColCurRow
-            | isSelC                     = attrSelCol
-            | isCurR                     = attrCurRow
-            | isCurC                     = attrCurCol
-            | isGrpCol ci                = attrGroup
-            | otherwise                  = attrDefault
-      in C.withAttr a (C.txt txt)
+          -- Style index determines whether heat applies (mirrors C enum)
+          suppressHeat = (isCurR && isCurC) || isSelR || (isSelC && isCurR)
+          hc = if ci < V.length hcols then hcols V.! ci else HeatNone
+          useHeat = hMode /= 0 && not suppressHeat && not (T.null cell)
+                  && case hc of HeatNone -> False; _ -> True
+      in if useHeat
+         then let bg = heatCellBg hc cell
+                  attr = Vty.defAttr `Vty.withForeColor` heatFg `Vty.withBackColor` bg
+              in C.raw (Vty.text attr (TL.fromStrict txt))
+         else let a | isCurR && isCurC           = attrCursor
+                    | isSelR                     = attrSelRow
+                    | isSelC && isCurR           = attrSelColCurRow
+                    | isSelC                     = attrSelCol
+                    | isCurR                     = attrCurRow
+                    | isCurC                     = attrCurCol
+                    | isGrpCol ci                = attrGroup
+                    | otherwise                  = attrDefault
+              in C.withAttr a (C.txt txt)
 
     mkRow rIdx row =
       let absRow = asVisRow0 st + rIdx
