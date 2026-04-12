@@ -387,23 +387,31 @@ readCellAny cv row = case cvType cv of
   CTStr  -> maybe "" id (readCellText cv row)
   _      -> maybe "" id (readCellText cv row)  -- fallback; TODO date/time fmt
 
--- | Materialize an entire 'Result' into a 2D text grid and wrap it as a
--- 'TblOps'. Rows are read eagerly (reasonable for the default ≤1000-row
--- limit enforced by callers). Mutation fields are no-ops — this is a
--- read-only view suitable for the MVP runtime.
+-- | Zero-copy TblOps backed by DuckDB chunks. Rows are NOT materialized;
+-- _tblCellStr indexes into the chunk vector storage on demand via readCellAny.
+-- The chunk ForeignPtrs keep the underlying DuckDB memory alive as long as
+-- the TblOps is reachable.
 mkDbOps :: Result -> IO TblOps
 mkDbOps res = do
   let names = resColNames res
       tys   = resColTypes res
       nc    = V.length names
   cs <- chunks res
-  -- force every chunk size AND every cell: build one Vector Text per row
-  let readChunk ch =
-        let sz   = chunkSize ch
-            cvs  = V.generate nc (chunkColumn ch)
-        in V.generate sz $ \r -> V.generate nc $ \c -> readCellAny (cvs V.! c) r
-      rows = V.concat (map readChunk cs)
-      nr = V.length rows
+  -- Build a vector of (chunk, cumulativeOffset) for O(log n) row lookup.
+  -- Force all chunk sizes so the total row count is known eagerly.
+  let chunkVec = V.fromList cs
+      sizes = V.map chunkSize chunkVec
+      -- offsets(i) = sum of sizes[0..i-1]; offsets(0) = 0
+      offsets = V.prescanl' (+) 0 sizes
+      nr = V.sum sizes
+      -- Binary search: find chunk containing global row r.
+      findChunk r = go 0 (V.length chunkVec - 1)
+        where
+          go lo hi
+            | lo >= hi  = (chunkVec V.! lo, r - offsets V.! lo)
+            | otherwise =
+                let mid = (lo + hi + 1) `div` 2
+                in if offsets V.! mid <= r then go mid hi else go lo (mid - 1)
   let ops = TblOps
         { _tblNRows       = nr
         , _tblColNames    = names
@@ -418,9 +426,10 @@ mkDbOps res = do
         , _tblFilterPrompt = \_ _ -> T.empty
         , _tblPlotExport  = \_ _ _ _ _ _ -> pure Nothing
         , _tblCellStr     = \r c ->
-            if r < 0 || r >= nr || c < 0 || c >= nc
+            if r < 0 || r >= nr || c < 0 || c >= nc || nr == 0
               then pure T.empty
-              else pure ((rows V.! r) V.! c)
+              else let (ch, local) = findChunk r
+                   in pure (readCellAny (chunkColumn ch c) local)
         , _tblFetchMore   = pure Nothing
         , _tblHideCols    = \_ -> pure ops
         , _tblSortBy      = \_ _ -> pure ops

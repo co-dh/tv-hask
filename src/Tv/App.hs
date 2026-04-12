@@ -815,9 +815,8 @@ loadFile p = do
   r <- try $ do
     conn <- DB.connect ":memory:"
     res <- DB.query conn (fileQuery p)
-    ops <- DB.mkDbOps res
-    DB.disconnect conn
-    pure ops
+    DB.mkDbOps res
+    -- conn stays alive via chunk ForeignPtr retention chain.
   pure $ case r of
     Left (e :: SomeException) -> Left (displayException e)
     Right ops -> Right ops

@@ -230,9 +230,9 @@ loadViaDuckDb sql = do
   r <- try $ do
     conn <- DB.connect ":memory:"
     res  <- DB.query conn sql
-    ops  <- DB.mkDbOps res
-    DB.disconnect conn
-    pure ops
+    DB.mkDbOps res
+    -- conn stays alive via chunk ForeignPtr → Result → Conn retention chain;
+    -- freed when TblOps (and its chunk refs) are GC'd.
   case r of
     Right ops -> pure (Right ops)
     Left (e :: SomeException) -> pure (Left (show e))
