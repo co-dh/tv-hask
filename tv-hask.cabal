@@ -34,6 +34,7 @@ library
     Tv.Data.DuckDB
     Tv.Data.Prql
     Tv.App
+    Tv.AppF
     Tv.Filter
     Tv.Folder
     Tv.Fzf
@@ -46,7 +47,15 @@ library
     Tv.Derive
     Tv.Session
     Tv.Diff
+    Tv.Replay
+    Tv.Runner
     Tv.SourceConfig
+    Tv.FileFormat
+    Tv.Data.Text
+    Tv.StatusAgg
+    Tv.Sparkline
+    Tv.UI.Info
+    Tv.UI.Preview
   other-modules:
     Tv.Freq
   build-depends:

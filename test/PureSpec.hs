@@ -27,6 +27,7 @@ mockTbl = TblOps
   { _tblNRows      = 5
   , _tblColNames   = V.fromList ["c0", "c1", "c2"]
   , _tblTotalRows  = 5
+  , _tblQueryOps   = V.empty
   , _tblFilter     = \_ -> pure Nothing
   , _tblDistinct   = \_ -> pure V.empty
   , _tblFindRow    = \_ _ _ _ -> pure Nothing

@@ -69,6 +69,7 @@ mkMetaRowOps rows =
         { _tblNRows       = nr
         , _tblColNames    = metaCols
         , _tblTotalRows   = nr
+        , _tblQueryOps    = V.empty
         , _tblFilter      = \_ -> pure Nothing
         , _tblDistinct    = \_ -> pure V.empty
         , _tblFindRow     = \_ _ _ _ -> pure Nothing

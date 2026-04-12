@@ -183,10 +183,12 @@ data ViewKind
   | VFreq !(Vector Text) !Int  -- cols, total distinct
   | VColMeta
   | VFld !Text !Int  -- path, find depth
+  | VViewFile          -- viewFile fallback (raw text, no table chrome)
   deriving (Eq, Show)
 
 vkCtxStr :: ViewKind -> Text
-vkCtxStr VTbl = "tbl"; vkCtxStr (VFreq _ _) = "freqV"; vkCtxStr VColMeta = "colMeta"; vkCtxStr (VFld _ _) = "fld"
+vkCtxStr VTbl = "tbl"; vkCtxStr (VFreq _ _) = "freqV"; vkCtxStr VColMeta = "colMeta"
+vkCtxStr (VFld _ _) = "fld"; vkCtxStr VViewFile = "tbl"
 
 data Effect
   = ENone | EQuit | EFetchMore
@@ -231,6 +233,7 @@ data TblOps = TblOps
   { _tblNRows       :: !Int
   , _tblColNames    :: !(Vector Text)
   , _tblTotalRows   :: !Int
+  , _tblQueryOps    :: !(Vector Op)  -- PRQL ops chain (for replay/tab display)
   , _tblFilter      :: Text -> IO (Maybe TblOps)
   , _tblDistinct    :: Int -> IO (Vector Text)
   , _tblFindRow     :: Int -> Text -> Int -> Bool -> IO (Maybe Int)

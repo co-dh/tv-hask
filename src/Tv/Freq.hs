@@ -57,23 +57,16 @@ mkFreqOps src colIdxs
     nc    = V.length names
     outOfRange i = i < 0 || i >= nc
 
--- | Build a SQL WHERE-clause expression matching a freq view row. Given
--- the parent table, the list of group column names, and a row index in
--- the freq view, reads the group cell values and produces
--- @"col1 = 'v1' AND col2 = 'v2'"@. Used by App.freqFilterH to filter
--- the parent table.
---
--- This is the Haskell analogue of Tc.Freq.filterExprIO (Tc/Runner.lean).
--- That version uses PRQL's @==@ and reads typed cells via TblOps.getCols;
--- we emit SQL (@=@) and read text cells from the freq view directly,
--- quoting empty cells as NULL checks.
+-- | Build a PRQL filter expression matching a freq view row. Given the
+-- freq table, group column names, and row index, produces
+-- @"`col1` == 'v1' && `col2` == 'v2'"@. Lean Tc.Freq.filterExprIO.
 filterExpr :: TblOps -> Vector Text -> Int -> IO Text
 filterExpr freqOps cols row = do
   let nc = V.length cols
   parts <- V.generateM nc $ \i -> do
     v <- _tblCellStr freqOps row i
-    let n = Derive.quoteId (cols V.! i)
+    let n = "`" <> (cols V.! i) <> "`"
     pure $ if T.null v
-             then n <> " IS NULL"
-             else n <> " = '" <> T.replace "'" "''" v <> "'"
-  pure (T.intercalate " AND " (V.toList parts))
+             then n <> " == null"
+             else n <> " == '" <> T.replace "'" "''" v <> "'"
+  pure (T.intercalate " && " (V.toList parts))

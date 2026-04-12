@@ -166,28 +166,35 @@ headerText :: AppState -> Text
 headerText st = T.intercalate " " (V.toList (visColNames st))
 
 -- | Status bar text: left half = view path/tab; right half = stats.
+-- | Status line matching Lean Render.lean:74 format:
+-- "colName  cI/N grp=G sel=S r{row}/{total}"
 statusText :: AppState -> Text
 statusText st =
   let ns = _vNav $ _vsHd $ asStack st
       r = _naCur (_nsRow ns)
-      n = _tblNRows (_nsTbl ns)
-      c = _naCur (_nsCol ns)
-      base = "[row " <> tshow (r + 1) <> "/" <> tshow n <> " | col " <> tshow (c + 1) <> "]"
-      cmd = asCmd st
+      tbl = _nsTbl ns
+      total = _tblTotalRows tbl
+      nc = V.length (_tblColNames tbl)
+      ci = curColIdx ns
+      colName = curColName ns
+      grpN = V.length (_nsGrp ns)
+      selN = V.length (_naSels (_nsRow ns))
+      right = "c" <> tshow ci <> "/" <> tshow nc
+              <> " grp=" <> tshow grpN <> " sel=" <> tshow selN
+              <> " r" <> tshow r <> "/" <> tshow total
       msg = asMsg st
-  in base
+      cmd = asCmd st
+  in colName <> "  " <> right
      <> (if T.null msg then "" else " " <> msg)
      <> (if T.null cmd then "" else " :" <> cmd)
   where tshow = T.pack . show
 
 -- | Tab line: source path or folder path.
+-- | Tab line matching Lean renderTabLine: [current] for single view.
 tabText :: AppState -> Text
 tabText st =
   let v = _vsHd (asStack st)
-      ns = _vNav v
-  in case _nsVkind ns of
-       VFld p _ -> p
-       _        -> _vPath v
+  in "[" <> _vPath v <> "]"
 
 -- ============================================================================
 -- drawApp

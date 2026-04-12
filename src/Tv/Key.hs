@@ -1,6 +1,6 @@
 -- | Key normalization: Vty.Event -> readable key string + tokenizer for -c mode.
 module Tv.Key
-  ( evToKey, tokenizeKeys
+  ( evToKey, tokenizeKeys, nextKeyFromQueue
   -- Test helpers: build events without exposing Vty to callers.
   , mkArrowEv, mkCharEv, mkEnterEv, mkBsEv, mkEscEv
   , KMod(..)
@@ -87,3 +87,8 @@ mkEnterEv, mkBsEv, mkEscEv :: [KMod] -> Vty.Event
 mkEnterEv ms = Vty.EvKey Vty.KEnter (map toVtyMod ms)
 mkBsEv    ms = Vty.EvKey Vty.KBS    (map toVtyMod ms)
 mkEscEv   ms = Vty.EvKey Vty.KEsc   (map toVtyMod ms)
+
+-- | Pop the first key from a queue. Matches Lean Key.nextKey.
+nextKeyFromQueue :: [Text] -> (Text, [Text])
+nextKeyFromQueue []     = ("", [])
+nextKeyFromQueue (k:ks) = (k, ks)

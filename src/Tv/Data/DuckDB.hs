@@ -34,9 +34,15 @@ module Tv.Data.DuckDB
   , readCellText
   , readCellAny
   , mkDbOps
+  , mkDbOpsQ
+  , requery
+  , queryCount
+  , prqlQuery
+  , prqlLimit
+  , stripSemi
   ) where
 
-import Control.Exception (Exception, mask_, throwIO)
+import Control.Exception (Exception, SomeException, mask_, throwIO, try)
 import Control.Monad (when)
 import Data.Bits (shiftR, (.&.))
 import qualified Data.ByteString as BS
@@ -55,6 +61,7 @@ import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
 import Foreign.Storable (Storable (..))
 import qualified System.IO.Unsafe as U
 
+import qualified Tv.Data.Prql as Prql
 import qualified Database.DuckDB.FFI as C
 import Database.DuckDB.FFI
   ( DuckDBConnection
@@ -83,7 +90,7 @@ import Database.DuckDB.FFI
   , pattern DuckDBTypeVarchar
   )
 
-import Tv.Types (ColType (..), TblOps (..), Column)
+import Tv.Types (ColType (..), TblOps (..), Column, Op(..), escSql)
 
 -- ============================================================================
 -- Handle types
@@ -393,18 +400,32 @@ readCellAny cv row = case cvType cv of
 -- the TblOps is reachable.
 mkDbOps :: Result -> IO TblOps
 mkDbOps res = do
+  -- Read chunks once here — duckdb_fetch_chunk is streaming (single-pass),
+  -- so we must avoid calling `chunks res` again in mkDbOpsQ.
+  cs <- chunks res
+  let nr = sum (map chunkSize cs)
+  conn <- connect ":memory:"
+  mkDbOpsQChunks cs res conn (Prql.Query "from df" V.empty) nr
+
+-- | Build TblOps from a Result + connection + PRQL Query (for requery chain).
+-- Matches Lean AdbcTable.ofQueryResult. The Conn is captured so sort/filter
+-- can requery on the same connection where the data lives.
+mkDbOpsQ :: Result -> Conn -> Prql.Query -> Int -> IO TblOps
+mkDbOpsQ res conn q totalRows = do
+  cs <- chunks res
+  mkDbOpsQChunks cs res conn q totalRows
+
+-- | Internal: build TblOps from pre-read chunks. Avoids double-consuming
+-- the DuckDB streaming chunk iterator.
+mkDbOpsQChunks :: [DataChunk] -> Result -> Conn -> Prql.Query -> Int -> IO TblOps
+mkDbOpsQChunks cs res conn q totalRows = do
   let names = resColNames res
       tys   = resColTypes res
       nc    = V.length names
-  cs <- chunks res
-  -- Build a vector of (chunk, cumulativeOffset) for O(log n) row lookup.
-  -- Force all chunk sizes so the total row count is known eagerly.
   let chunkVec = V.fromList cs
       sizes = V.map chunkSize chunkVec
-      -- offsets(i) = sum of sizes[0..i-1]; offsets(0) = 0
       offsets = V.prescanl' (+) 0 sizes
       nr = V.sum sizes
-      -- Binary search: find chunk containing global row r.
       findChunk r = go 0 (V.length chunkVec - 1)
         where
           go lo hi
@@ -415,15 +436,53 @@ mkDbOps res = do
   let ops = TblOps
         { _tblNRows       = nr
         , _tblColNames    = names
-        , _tblTotalRows   = nr
-        , _tblFilter      = \_ -> pure Nothing
-        , _tblDistinct    = \_ -> pure V.empty
-        , _tblFindRow     = \_ _ _ _ -> pure Nothing
+        , _tblTotalRows   = totalRows
+        , _tblQueryOps    = Prql.ops q
+        -- | Filter: append filter op, requery with new count. Lean Table.lean:341-344
+        , _tblFilter      = \expr -> do
+            let q' = Prql.pfilter q expr
+            total <- queryCount conn q'
+            requery conn q' total
+        -- | Distinct: PRQL uniq. Lean Table.lean:346-354
+        , _tblDistinct    = \col -> do
+            let colName = if col >= 0 && col < nc then names V.! col else ""
+            r <- prqlQuery conn (Prql.render q <> " | uniq " <> Prql.quote colName)
+            case r of
+              Nothing -> pure V.empty
+              Just res' -> do
+                cs' <- chunks res'
+                if null cs' then pure V.empty
+                else pure $ V.concat $ map (\ch ->
+                  let sz = chunkSize ch; cv = chunkColumn ch 0
+                  in V.generate sz (\i -> readCellAny cv i)) cs'
+        -- | FindRow: derive row_number, filter, extract. Lean Table.lean:358-370
+        , _tblFindRow     = \col val start fwd -> do
+            let colName = Prql.quote (if col >= 0 && col < nc then names V.! col else "")
+                prql = Prql.render q <> " | derive {_rn = row_number this} | filter ("
+                       <> colName <> " == '" <> escSql val <> "') | select {_rn}"
+            r <- prqlQuery conn prql
+            case r of
+              Nothing -> pure Nothing
+              Just res' -> do
+                rows <- readIntColumn res'
+                let rows0 = map (\x -> x - 1) rows  -- 1-based → 0-based
+                pure $ if null rows0 then Nothing
+                  else if fwd
+                    then case filter (>= start) rows0 of
+                           (x:_) -> Just x
+                           []    -> Just (head rows0)  -- wrap
+                    else case filter (< start) (reverse rows0) of
+                           (x:_) -> Just x
+                           []    -> Just (last rows0)  -- wrap
         , _tblRender      = \_ -> pure V.empty
         , _tblGetCols     = \_ _ _ -> pure V.empty
         , _tblColType     = \i -> if i < 0 || i >= nc then CTOther else tys V.! i
-        , _tblBuildFilter = \_ _ _ _ -> T.empty
-        , _tblFilterPrompt = \_ _ -> T.empty
+        , _tblBuildFilter = buildFilterPrql
+        , _tblFilterPrompt = \col typ ->
+            let num = typ == "int" || typ == "float" || typ == "decimal"
+                eg = if num then "e.g. " <> col <> " > 5,  " <> col <> " >= 10 && " <> col <> " < 100"
+                     else "e.g. " <> col <> " == 'USD',  " <> col <> " ~= 'pattern'"
+            in "PRQL filter on " <> col <> " (" <> typ <> "):  " <> eg
         , _tblPlotExport  = \_ _ _ _ _ _ -> pure Nothing
         , _tblCellStr     = \r c ->
             if r < 0 || r >= nr || c < 0 || c >= nc || nr == 0
@@ -431,10 +490,91 @@ mkDbOps res = do
               else let (ch, local) = findChunk r
                    in pure (readCellAny (chunkColumn ch c) local)
         , _tblFetchMore   = pure Nothing
-        , _tblHideCols    = \_ -> pure ops
-        , _tblSortBy      = \_ _ -> pure ops
+        -- | HideCols: PRQL select (keep non-hidden). Lean Table.lean:221-223
+        , _tblHideCols    = \hideIdxs -> do
+            let keep = V.ifilter (\i _ -> not (V.elem i hideIdxs)) names
+                q' = Prql.pipe q (OpSel keep)
+            r <- requery conn q' totalRows
+            pure (maybe ops id r)
+        -- | SortBy: PRQL sort op. Lean Table.lean:213-218
+        , _tblSortBy      = \idxs asc -> do
+            let sortCols = V.map (\i -> (if i >= 0 && i < nc then names V.! i else "", asc)) idxs
+                q' = Prql.pipe q (OpSort sortCols)
+            r <- requery conn q' totalRows
+            pure (maybe ops id r)
         }
   pure ops
+
+-- | Default row limit for PRQL queries (matches Lean prqlLimit = 1000)
+prqlLimit :: Int
+prqlLimit = 1000
+
+-- | Trim trailing semicolon from compiled SQL
+stripSemi :: Text -> Text
+stripSemi s = let t = T.strip s in if T.isSuffixOf ";" t then T.init t else t
+
+-- | Compile PRQL and execute on a connection. Matches Lean Prql.query.
+prqlQuery :: Conn -> Text -> IO (Maybe Result)
+prqlQuery conn prql = do
+  mSql <- Prql.compile prql
+  case mSql of
+    Nothing -> pure Nothing
+    Just sql -> do
+      r <- try (query conn (stripSemi sql))
+      case r of
+        Right res -> pure (Just res)
+        Left (_ :: SomeException) -> pure Nothing
+
+-- | Execute PRQL query on conn, return new TblOps. Lean AdbcTable.requery.
+requery :: Conn -> Prql.Query -> Int -> IO (Maybe TblOps)
+requery conn q total = do
+  let prql = Prql.render q <> " | take " <> T.pack (show prqlLimit)
+  r <- prqlQuery conn prql
+  case r of
+    Nothing -> pure Nothing
+    Just res -> Just <$> mkDbOpsQ res conn q total
+
+-- | Query total row count on conn. Lean AdbcTable.queryCount.
+queryCount :: Conn -> Prql.Query -> IO Int
+queryCount conn q = do
+  let prql = Prql.render q <> " | cnt"
+  r <- prqlQuery conn prql
+  case r of
+    Nothing -> pure 0
+    Just res -> do
+      rows <- readIntColumn res
+      pure (if null rows then 0 else head rows)
+
+-- | Read all values from a single-column integer result as [Int].
+readIntColumn :: Result -> IO [Int]
+readIntColumn res = do
+  cs <- chunks res
+  pure $ concatMap (\ch ->
+    let n = chunkSize ch; cv = chunkColumn ch 0
+    in map (\i -> case readCellInt cv i of
+              Just v -> fromIntegral v; Nothing -> 0) [0 .. n - 1]) cs
+
+-- | Get row count from Result (sum of chunk sizes).
+resNRows :: Result -> Int
+resNRows res = U.unsafePerformIO $ do
+  cs <- chunks res
+  pure (sum (map chunkSize cs))
+
+-- | Build PRQL filter expression from fzf result (Lean Types.lean:buildFilterPrql).
+-- With --print-query: line 0 = typed query, lines 1+ = selected hints.
+buildFilterPrql :: Text -> V.Vector Text -> Text -> Bool -> Text
+buildFilterPrql col vals result isNum =
+  let lns = filter (not . T.null) (T.splitOn "\n" result)
+      input = case lns of (x:_) -> x; _ -> ""
+      fromHints = filter (`V.elem` vals) (drop 1 lns)
+      selected = if V.elem input vals && notElem input fromHints
+                 then input : fromHints else fromHints
+      q v = if isNum then v else "'" <> T.replace "'" "''" v <> "'"
+  in case selected of
+    [v] -> col <> " == " <> q v
+    (_:_) -> "(" <> T.intercalate " || " (map (\v' -> col <> " == " <> q v') selected) <> ")"
+    [] | not (T.null input) -> input  -- free-form PRQL expression
+       | otherwise -> ""
 
 duckTypeToCol :: DuckDBType -> ColType
 duckTypeToCol t

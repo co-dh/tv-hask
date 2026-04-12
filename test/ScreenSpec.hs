@@ -141,17 +141,17 @@ tests = testGroup "Screen (ported from TestScreen.lean)"
     -- meta_quit (TestScreen.lean:78): MetaPush then StkPop returns to origin.
   , testCase "meta_quit: MetaPush pushes VColMeta; StkPop restores" $ do
       st <- mkScreen
-      Just st1 <- handleCmd MetaPush st
+      Just st1 <- handleCmd MetaPush "" st
       _nsVkind (_vNav (_vsHd (asStack st1))) @?= VColMeta
-      Just st2 <- handleCmd StkPop st1
+      Just st2 <- handleCmd StkPop "" st1
       _nsVkind (_vNav (_vsHd (asStack st2))) @?= VTbl
     -- info (TestScreen.lean:91): InfoTog toggles the overlay flag.
   , testCase "info: InfoTog flips asInfoVis" $ do
       st <- mkScreen
       asInfoVis st @?= False
-      Just st1 <- handleCmd InfoTog st
+      Just st1 <- handleCmd InfoTog "" st
       asInfoVis st1 @?= True
-      Just st2 <- handleCmd InfoTog st1
+      Just st2 <- handleCmd InfoTog "" st1
       asInfoVis st2 @?= False
     -- freq_quit (TestScreen.lean:82): FreqOpen would push a VFreq view, but
     -- requires DuckDB rebuildWith on the underlying table. The pure mock
@@ -160,7 +160,7 @@ tests = testGroup "Screen (ported from TestScreen.lean)"
     -- end-to-end without error and the resulting vkind is VFreq.
   , testCase "freq_quit: FreqOpen pushes VFreq kind even on pure mock" $ do
       st <- mkScreen
-      Just st1 <- handleCmd FreqOpen st
+      Just st1 <- handleCmd FreqOpen "" st
       case _nsVkind (_vNav (_vsHd (asStack st1))) of
         VFreq _ _ -> pure ()
         k -> assertFailure ("expected VFreq, got " <> show k)
