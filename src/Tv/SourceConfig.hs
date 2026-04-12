@@ -154,7 +154,7 @@ expand :: Text -> [(Text, Text)] -> Text
 expand = foldl step
   where
     step acc (k, v)
-      | T.null v  = T.replace ("/{" <> k <> "}") "" (T.replace ("{" <> k <> "}") "" acc)
+      | T.null v  = T.replace ("{" <> k <> "}") "" (T.replace ("/{" <> k <> "}") "" acc)
       | otherwise = T.replace ("{" <> k <> "}") v acc
 
 -- ============================================================================
@@ -169,7 +169,7 @@ uriToSql uri
   | ".pq"      `T.isSuffixOf` lo = Just (wrap "read_parquet")
   | ".csv"     `T.isSuffixOf` lo = Just (wrap "read_csv_auto")
   | ".csv.gz"  `T.isSuffixOf` lo = Just (wrap "read_csv_auto")
-  | ".tsv"     `T.isSuffixOf` lo = Just ("SELECT * FROM read_csv_auto('" <> esc uri <> "', delim='\t')")
+  | ".tsv"     `T.isSuffixOf` lo = Just ("SELECT * FROM read_csv_auto('" <> esc uri <> "', delim='\t') LIMIT 1000")
   | ".json"    `T.isSuffixOf` lo = Just (wrap "read_json_auto")
   | ".ndjson"  `T.isSuffixOf` lo = Just (wrap "read_ndjson_auto")
   | ".jsonl"   `T.isSuffixOf` lo = Just (wrap "read_ndjson_auto")
@@ -177,7 +177,7 @@ uriToSql uri
   where
     lo = T.toLower uri
     esc = T.replace "'" "''"
-    wrap fn = "SELECT * FROM " <> fn <> "('" <> esc uri <> "')"
+    wrap fn = "SELECT * FROM " <> fn <> "('" <> esc uri <> "') LIMIT 1000"
 
 -- ============================================================================
 -- listRemote: run list command + JSON parse → folder-like TblOps
@@ -230,7 +230,9 @@ loadViaDuckDb sql = do
   r <- try $ do
     conn <- DB.connect ":memory:"
     res  <- DB.query conn sql
-    DB.mkDbOps res
+    ops  <- DB.mkDbOps res
+    DB.disconnect conn
+    pure ops
   case r of
     Right ops -> pure (Right ops)
     Left (e :: SomeException) -> pure (Left (show e))

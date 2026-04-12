@@ -90,6 +90,7 @@ test-suite tv-hask-test
   type: exitcode-stdio-1.0
   hs-source-dirs: test
   main-is: Spec.hs
+  ghc-options: -threaded -rtsopts "-with-rtsopts=-M2G"
   other-modules:
     PureSpec
     RenderSpec

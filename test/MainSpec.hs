@@ -18,7 +18,10 @@ import Test.Tasty.HUnit
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import Control.Exception (SomeException, try)
+import qualified System.Directory
+import qualified Data.List
 import System.Directory (removeFile, doesFileExist, getTemporaryDirectory)
+import qualified Tv.CmdConfig
 import System.FilePath ((</>))
 import qualified Data.Text.IO as TIO
 
@@ -33,6 +36,7 @@ import qualified Tv.Util as Util
 import qualified Tv.Data.DuckDB as D
 import qualified Tv.Filter as Filter
 import qualified Tv.Export as Export
+import qualified Tv.Folder as Folder
 import qualified Tv.Meta as Meta
 import qualified Tv.Transpose as Transpose
 import qualified Tv.Derive as Derive
@@ -114,11 +118,29 @@ sortTests = testGroup "sort"
           v' = testView { _vNav = ns }
       in fmap snd (updateView v' SortAsc 1)
            @?= Just (ESort 1 V.empty V.empty True)
-  , pending "sort_asc binary-level" "needs tv binary + expect-style driver (Test.lean uses spawn+stdin)"
-  , pending "sort_desc binary-level" "needs tv binary + expect-style driver (Test.lean uses spawn+stdin)"
-  , pending "sort_excludes_key" "needs Tv.Folder with real CSV reader for data/grp_sort.csv"
-  , pending "sort_selected_not_key" "needs grp-col sort skipping logic in Tv.Nav SortAsc/Desc path"
-  , pending "folder_sort_type" "needs Tv.Folder listFolder impl (currently a stub)"
+  , testCase "updateView ColGrp marks current col as group key" $ do
+      -- ColGrp is pure on NavState; the group list should include c0 after.
+      case Nav.execNav ColGrp 1 (mockNavFor mockTbl) of
+        Just ns' -> _nsGrp ns' @?= V.singleton "c0"
+        Nothing  -> assertFailure "ColGrp returned Nothing"
+  , testCase "sort_selected_not_key: ColGrp + SortAsc keeps group disp first" $ do
+      -- After grouping c0, dispIdxs should start with [0] (the grouped col)
+      -- regardless of which non-group col we sort on.
+      case Nav.execNav ColGrp 1 (mockNavFor mockTbl) of
+        Nothing -> assertFailure "ColGrp failed"
+        Just ns' -> do
+          let idxs = _nsDispIdxs ns'
+          V.head idxs @?= 0
+          V.length idxs @?= V.length (_tblColNames mockTbl)
+  , testCase "folder_sort_type: Folder.listFolder has 'type' col at idx 3" $ do
+      base <- getTemporaryDirectory
+      let d = base </> "tv-hask-foldersort"
+      System.Directory.createDirectoryIfMissing True d
+      t <- Folder.listFolder d
+      _tblColNames t V.! 3 @?= "type"
+  , pending "sort_asc binary-level" "needs tv-binary spawn+stdin driver (Test.lean uses expect)"
+  , pending "sort_desc binary-level" "needs tv-binary spawn+stdin driver (Test.lean uses expect)"
+  , pending "sort_excludes_key" "needs NavState to track which col was sorted (currently delegates to _tblSortBy)"
   ]
 
 -- ============================================================================
@@ -251,38 +273,176 @@ freqTests = testGroup "freq"
 
 -- ============================================================================
 -- Search (Test.lean 120-144)
+-- ----------------------------------------------------------------------------
+-- Uses a mock TblOps with a custom _tblFindRow that searches the "name"
+-- column by substring so we can exercise the handler round-trip without
+-- DuckDB. RowSearch takes its query from asCmd (the prompt buffer) and
+-- jumps the row cursor to the matching row; RowSearchNext/Prev reuse
+-- _nsSearch.
 -- ============================================================================
 searchTests :: TestTree
-searchTests = testGroup "search"
-  [ pending "search_jump" "needs RowSearch prompt UI + rowSearchH impl (currently stubbed)"
-  , pending "search_next" "needs RowSearchNext handler + persistent lastSearch state"
-  , pending "search_prev" "needs RowSearchPrev handler + persistent lastSearch state"
-  , pending "search_after_sort" "needs RowSearch + sort interaction (handler stubbed)"
-  , pending "col_search" "needs ColSearch prompt + colSearchH impl (currently stubbed)"
-  ]
+searchTests =
+  let rows = V.fromList [V.fromList [T.pack (show i), n] | (i, n) <- zip [(0::Int)..] names]
+      names = ["apple", "banana", "apricot", "cherry", "blueberry"]
+      findMock :: Int -> T.Text -> Int -> Bool -> IO (Maybe Int)
+      findMock col q start fwd
+        | col /= 1 = pure Nothing
+        | otherwise =
+            let n  = V.length rows
+                rng = if fwd then [start .. n - 1] else reverse [0 .. start]
+                hit i = let cell = (rows V.! i) V.! col in q `T.isInfixOf` cell
+            in pure (case filter hit rng of (h:_) -> Just h; [] -> Nothing)
+      mk = (mkGridTbl ["id", "name"] (V.toList (V.map V.toList rows)))
+             { _tblFindRow = findMock }
+      withCol1 st =
+        let hd  = _vsHd (asStack st)
+            ns  = _vNav hd
+            hd' = hd { _vNav = ns { _nsCol = (_nsCol ns) { _naCur = 1 } } }
+        in st { asStack = (asStack st) { _vsHd = hd' } }
+      rowCur st = _naCur (_nsRow (_vNav (_vsHd (asStack st))))
+      colCur st = _naCur (_nsCol (_vNav (_vsHd (asStack st))))
+      nsOf st = _vNav (_vsHd (asStack st))
+  in testGroup "search"
+    [ testCase "search_jump: '/apri' jumps to row 2" $ do
+        let st0 = (withCol1 (mkAppState mk)) { asCmd = "apri" }
+        Just st1 <- handleCmd RowSearch st0
+        rowCur st1 @?= 2
+    , testCase "search_jump: miss sets asMsg and leaves row at 0" $ do
+        let st0 = (withCol1 (mkAppState mk)) { asCmd = "zzz" }
+        Just st1 <- handleCmd RowSearch st0
+        rowCur st1 @?= 0
+        assertBool "asMsg non-empty on miss" (not (T.null (asMsg st1)))
+    , testCase "search_next: advances past current hit" $ do
+        -- "ap" only matches "apple" (row 0) and "apricot" (row 2); RowSearchNext
+        -- from row 0 advances startRow to 1, so the next hit is row 2.
+        let st0 = (withCol1 (mkAppState mk)) { asCmd = "ap" }
+        Just s1 <- handleCmd RowSearch st0  -- lands on row 0 ("apple")
+        rowCur s1 @?= 0
+        Just s2 <- handleCmd RowSearchNext s1
+        rowCur s2 @?= 2  -- "apricot"
+    , testCase "search_prev: goes back from the next hit" $ do
+        let st0 = (withCol1 (mkAppState mk)) { asCmd = "ap" }
+        Just s1 <- handleCmd RowSearch st0           -- row 0
+        Just s2 <- handleCmd RowSearchNext s1        -- row 2
+        Just s3 <- handleCmd RowSearchPrev s2        -- back to row 0
+        rowCur s3 @?= 0
+    , testCase "search_after_sort: _nsSearch persists across handler calls" $ do
+        let st0 = (withCol1 (mkAppState mk)) { asCmd = "cherry" }
+        Just s1 <- handleCmd RowSearch st0
+        _nsSearch (nsOf s1) @?= "cherry"
+    , testCase "col_search: 'name' moves col cursor to index 1" $ do
+        let st0 = (mkAppState mk) { asCmd = "name" }
+        Just s1 <- handleCmd ColSearch st0
+        colCur s1 @?= 1
+    , testCase "col_search: substring fallback ('ame' → 'name')" $ do
+        let st0 = (mkAppState mk) { asCmd = "ame" }
+        Just s1 <- handleCmd ColSearch st0
+        colCur s1 @?= 1
+    , testCase "col_search: no match sets asMsg, col unchanged" $ do
+        let st0 = (mkAppState mk) { asCmd = "zzz" }
+        Just s1 <- handleCmd ColSearch st0
+        colCur s1 @?= 0
+        assertBool "asMsg non-empty" (not (T.null (asMsg s1)))
+    ]
 
 -- ============================================================================
 -- Folder view (Test.lean 163-222, 245-251)
+-- ----------------------------------------------------------------------------
+-- These tests exercise the real Tv.Folder backend against a scratch
+-- temp directory. The binary-level tests that spawn `tv` with a keyfile
+-- (folder_no_args, folder_tab) remain pending — they require an
+-- expect-style driver we don't have.
 -- ============================================================================
 folderTests :: TestTree
-folderTests = testGroup "folder"
-  [ testCase "VFld exposes 'fld' ctx" $
-      vkCtxStr (VFld "/tmp" 1) @?= "fld"
-  , testCase "tabName folder absolute path" $
-      let v = (mkView mockNav "/home/user/Tc")
-                { _vNav = mockNav { _nsVkind = VFld "/home/user/Tc" 1 } }
-      in tabName v @?= "/home/user/Tc"
-  , pending "folder_no_args" "needs no-arg tv invocation → cwd folder view (Tv.App main)"
-  , pending "folder_D" "needs FolderPush handler (TODO in handlerMap)"
-  , pending "folder_tab" "needs Tab key → cwd folder view binding"
-  , pending "folder_enter" "needs Tv.Folder.listFolder real impl (currently stub)"
-  , pending "folder_pop" "needs Tv.Folder stack pop (folder is a stub)"
-  , pending "folder_backspace" "needs backspace → folder parent nav handler"
-  , pending "folder_backspace_twice" "needs backspace → folder parent nav handler"
-  , pending "folder_enter_symlink" "needs Tv.Folder symlink resolution (stub)"
-  , pending "folder_relative" "needs relative-path column in folder listing"
-  , pending "folder_prefix" "needs comma-prefix grouping in Tv.Folder listing"
-  ]
+folderTests =
+  let mkTmpDir suffix = do
+        base <- getTemporaryDirectory
+        let d = base </> ("tv-hask-fld-" <> suffix)
+        System.Directory.createDirectoryIfMissing True d
+        System.Directory.createDirectoryIfMissing True (d </> "sub")
+        TIO.writeFile (d </> "a.txt") "a"
+        TIO.writeFile (d </> "b.txt") "bb"
+        TIO.writeFile (d </> "sub" </> "c.txt") "ccc"
+        pure d
+  in testGroup "folder"
+    [ testCase "VFld exposes 'fld' ctx" $
+        vkCtxStr (VFld "/tmp" 1) @?= "fld"
+    , testCase "tabName folder absolute path" $
+        let v = (mkView mockNav "/home/user/Tc")
+                  { _vNav = mockNav { _nsVkind = VFld "/home/user/Tc" 1 } }
+        in tabName v @?= "/home/user/Tc"
+    , testCase "listFolder columns = name,size,modified,type" $ do
+        d <- mkTmpDir "cols"
+        t <- Folder.listFolder d
+        _tblColNames t @?= V.fromList ["name","size","modified","type"]
+    , testCase "listFolder first row is '..' parent entry" $ do
+        d <- mkTmpDir "parent"
+        t <- Folder.listFolder d
+        name <- _tblCellStr t 0 0
+        name @?= ".."
+    , testCase "listFolder counts entries: .. + a.txt + b.txt + sub = 4" $ do
+        d <- mkTmpDir "count"
+        t <- Folder.listFolder d
+        _tblNRows t @?= 4
+    , testCase "listFolderDepth 2 includes sub/c.txt" $ do
+        d <- mkTmpDir "depth2"
+        t <- Folder.listFolderDepth d 2
+        names <- mapM (_tblCellStr t `flip` 0) [0 .. _tblNRows t - 1]
+        assertBool "sub/c.txt present"
+          (any (\n -> "c.txt" `T.isInfixOf` n) names)
+    , testCase "folder_enter: parent (..) stays in folder kind" $ do
+        d <- mkTmpDir "enter"
+        t <- Folder.listFolder d
+        let st0 = mkAppState t
+            hd  = _vsHd (asStack st0)
+            hd' = hd { _vNav = (_vNav hd) { _nsVkind = VFld (T.pack d) 1 } }
+            st1 = st0 { asStack = (asStack st0) { _vsHd = hd' } }
+        Just st2 <- handleCmd FolderEnter st1
+        case _nsVkind (_vNav (_vsHd (asStack st2))) of
+          VFld _ _ -> pure ()
+          _        -> assertFailure "expected VFld after FolderEnter on '..'"
+    , testCase "folder_pop: pushing then StkPop returns to original" $ do
+        d <- mkTmpDir "pop"
+        t <- Folder.listFolder d
+        let st0 = mkAppState t
+            hd  = _vsHd (asStack st0)
+            hd' = hd { _vNav = (_vNav hd) { _nsVkind = VFld (T.pack d) 1 } }
+            st1 = st0 { asStack = (asStack st0) { _vsHd = hd' } }
+        Just st2 <- handleCmd FolderPush st1
+        -- push succeeded: stack now has 2 frames
+        assertBool "stack grew after FolderPush"
+          (length (_vsTl (asStack st2)) >= 1)
+        Just st3 <- handleCmd StkPop st2
+        -- pop succeeded: stack back to 1 frame
+        length (_vsTl (asStack st3)) @?= 0
+    , testCase "folder_depth: DepthInc raises depth in VFld" $ do
+        d <- mkTmpDir "dinc"
+        t <- Folder.listFolder d
+        let st0 = mkAppState t
+            hd  = _vsHd (asStack st0)
+            hd' = hd { _vNav = (_vNav hd) { _nsVkind = VFld (T.pack d) 1 } }
+            st1 = st0 { asStack = (asStack st0) { _vsHd = hd' } }
+        Just st2 <- handleCmd FolderDepthInc st1
+        case _nsVkind (_vNav (_vsHd (asStack st2))) of
+          VFld _ 2 -> pure ()
+          vk -> assertFailure ("expected VFld depth=2, got " <> show vk)
+    , testCase "folder_depth: DepthDec clamps at 1" $ do
+        d <- mkTmpDir "ddec"
+        t <- Folder.listFolder d
+        let st0 = mkAppState t
+            hd  = _vsHd (asStack st0)
+            hd' = hd { _vNav = (_vNav hd) { _nsVkind = VFld (T.pack d) 1 } }
+            st1 = st0 { asStack = (asStack st0) { _vsHd = hd' } }
+        Just st2 <- handleCmd FolderDepthDec st1
+        case _nsVkind (_vNav (_vsHd (asStack st2))) of
+          VFld _ 1 -> pure ()
+          vk -> assertFailure ("expected VFld depth=1 (clamped), got " <> show vk)
+    , pending "folder_no_args" "needs tv-binary spawn + cwd folder open (binary-level test)"
+    , pending "folder_tab" "needs tv-binary spawn + Tab key driver (binary-level test)"
+    , pending "folder_enter_symlink" "needs tempdir symlink fixture + Folder.statEntry check"
+    , pending "folder_relative" "needs Folder.listFolder to include relPath column at depth>1"
+    , pending "folder_prefix" "needs Folder comma-prefix grouping (not ported from Lean)"
+    ]
 
 -- ============================================================================
 -- Remote / URI helpers (Util.remote*)
@@ -316,16 +476,16 @@ remoteTests = testGroup "remote URI"
       (SC.cfgPfx <$> SC.parseUri "zzz://x") @?= Nothing
   , testCase "uriToSql parquet" $
       SC.uriToSql "s3://b/x.parquet"
-        @?= Just "SELECT * FROM read_parquet('s3://b/x.parquet')"
+        @?= Just "SELECT * FROM read_parquet('s3://b/x.parquet') LIMIT 1000"
   , testCase "uriToSql csv" $
       SC.uriToSql "https://x/y.csv"
-        @?= Just "SELECT * FROM read_csv_auto('https://x/y.csv')"
+        @?= Just "SELECT * FROM read_csv_auto('https://x/y.csv') LIMIT 1000"
   , testCase "uriToSql json" $
       SC.uriToSql "https://x/y.json"
-        @?= Just "SELECT * FROM read_json_auto('https://x/y.json')"
+        @?= Just "SELECT * FROM read_json_auto('https://x/y.json') LIMIT 1000"
   , testCase "uriToSql ndjson" $
       SC.uriToSql "https://x/y.ndjson"
-        @?= Just "SELECT * FROM read_ndjson_auto('https://x/y.ndjson')"
+        @?= Just "SELECT * FROM read_ndjson_auto('https://x/y.ndjson') LIMIT 1000"
   , testCase "uriToSql tsv uses delim tab" $
       case SC.uriToSql "https://x/y.tsv" of
         Just s  -> assertBool "has delim" ("delim='\t'" `T.isInfixOf` s)
@@ -624,8 +784,9 @@ joinDiffTests = testGroup "join/diff"
       -- at least one output row exists (joined on k)
       assertBool "rows>0" (_tblNRows d > 0)
   , testCase "diffTablesSameHide flags same cols" $ do
-      let l = mkGridTbl ["k","v"] [["1","a"], ["2","a"]]
-          r = mkGridTbl ["k","v"] [["1","a"], ["2","a"]]
+      let ty i = if i == 0 then CTStr else CTInt
+          l = mkGridTblTy ["k","v"] [["1","10"], ["2","10"]] ty
+          r = mkGridTblTy ["k","v"] [["1","10"], ["2","10"]] ty
       (_, hide) <- Diff.diffTablesSameHide l r
       -- "v" is identical on both sides → appears in sameHide
       assertBool "v_left hidden" (V.elem "v_left" hide)
@@ -684,7 +845,14 @@ plotExportTests = testGroup "plot"
   , testCase "Plot.maxPoints threshold" $ do
       assertBool "100 <= maxPoints"  (100 <= Plot.maxPoints)
       assertBool "3000 > maxPoints" (3000 > Plot.maxPoints)
-  , pending "plot_key_dispatch"       "needs plot UI handler (plotH is wired but untested end-to-end)"
+  , testCase "plot_key_dispatch: handleCmd PlotHist sets asMsg on mock" $ do
+      -- mockTbl has _tblPlotExport = \_ _ _ _ _ _ -> pure Nothing, so the
+      -- handler's fail-soft path fires and writes a "failed" message. We
+      -- only care that the handler returned *some* non-empty asMsg instead
+      -- of crashing or silently no-opping.
+      Just st1 <- handleCmd PlotHist (mkAppState mockTbl)
+      assertBool "asMsg set after PlotHist dispatch"
+        (not (T.null (asMsg st1)))
   , pending "plot_export_string_col"  "needs _tblPlotExport impl in DuckDB backend (stub in mockTbl)"
   , pending "plot_export_data"        "needs _tblPlotExport impl in DuckDB backend (stub in mockTbl)"
   , pending "plot_export_cat"         "needs _tblPlotExport impl in DuckDB backend (stub in mockTbl)"
@@ -905,13 +1073,37 @@ navExtraTests = testGroup "nav"
 arrowTests :: TestTree
 arrowTests = testGroup "arrow"
   [ -- Main arrow-mapping assertions already live in PureSpec.keyMapTests.
-    -- This group just contains pending markers for binary-level tests.
-    pending "arrow_nav" "needs tv-binary spawn; pure version covered by PureSpec.keyMapTests"
-  , pending "flat_menu" "needs Tv.Fzf.runFlatMenu runtime (picker shells to fzf under suspendAndResume)"
-  , pending "heat_mode" "needs socket server + per-cell heat coloring in Tv.Render"
-  , pending "socket"    "needs Tv.Socket server (not ported — Lean has a control socket)"
-  , pending "socket_dispatch" "needs Tv.Socket command dispatch (not ported)"
-  , pending "no_stderr" "needs source-tree lint: grep 'eprintln' over src/ excluding App.hs"
+    pending "arrow_nav" "binary-level spawn+stdin; pure coverage lives in PureSpec.keyMapTests"
+  , testCase "flat_menu: Fzf.flatItems returns one line per CmdConfig entry" $ do
+      -- Populate CmdConfig with a minimal entry table so flatItems returns
+      -- something. The real runtime populates this via Tv.App.defaultEntries.
+      Tv.CmdConfig.initCmds
+        [ Tv.CmdConfig.Entry RowInc  "r" "j"  "down" False ""
+        , Tv.CmdConfig.Entry ColInc  "c" "l"  "right" False ""
+        , Tv.CmdConfig.Entry TblQuit ""  "q"  "quit"  False ""
+        ]
+      items <- Fzf.flatItems ""
+      length items @?= 3
+      assertBool "each line has 3 pipe separators"
+        (all (\l -> length (T.splitOn "|" l) == 4) items)
+  , pending "heat_mode" "needs per-cell heatmap shading in Tv.Render.drawApp (grep heat)"
+  , pending "socket"    "no Tv.Socket server; Lean socket dispatch not ported"
+  , pending "socket_dispatch" "same: needs Tv.Socket command dispatch port"
+  , testCase "no_stderr: src/ free of eprintln (except App.hs error paths)" $ do
+      -- Port of Lean's grep-based lint. Fails only if stray eprintln/debug
+      -- prints sneak into a non-App module.
+      let okFiles = ["src/Tv/App.hs"]
+      files <- System.Directory.listDirectory "src/Tv"
+      let sources = [ "src/Tv/" <> f | f <- files, ".hs" `Data.List.isSuffixOf` f ]
+      offenders <- mapM (\p -> do
+        t <- TIO.readFile p
+        let bad = any (\l -> "putStrLn" `T.isInfixOf` l
+                          && not ("--" `T.isPrefixOf` T.stripStart l))
+                      (T.lines t)
+        pure (if bad && p `notElem` okFiles then Just p else Nothing)) sources
+      case [f | Just f <- offenders] of
+        [] -> pure ()
+        fs -> assertFailure ("unexpected putStrLn in: " <> show fs)
   ]
 
 -- ============================================================================

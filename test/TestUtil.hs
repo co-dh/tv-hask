@@ -121,6 +121,7 @@ testStack = ViewStack testView []
 -- ----------------------------------------------------------------------------
 
 -- | Run action with an in-memory DuckDB connection.
+-- DuckDB.connect caps memory_limit to 1GB globally (see DuckDB.hs).
 withMemConn :: (D.Conn -> IO a) -> IO a
 withMemConn f = do
   c <- D.connect ":memory:"

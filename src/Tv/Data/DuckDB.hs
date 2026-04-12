@@ -140,42 +140,30 @@ instance Exception DuckDBError
 -- both handles; drop it (or call 'disconnect') to release.
 connect :: FilePath -> IO Conn
 connect path = mask_ $ do
-  -- duckdb_database / duckdb_connection are void* handles. duckdb_open wants
-  -- a Ptr DuckDBDatabase out-slot; we malloc each slot and attach the FFI
-  -- finalizer to the slot. The underlying handle is freed by the finalizer;
-  -- we leak ~16 bytes per connection for the slot itself (acceptable).
   dbSlot <- mallocBytes (sizeOf (undefined :: Ptr ())) :: IO (Ptr DuckDBDatabase)
   cnSlot <- mallocBytes (sizeOf (undefined :: Ptr ())) :: IO (Ptr DuckDBConnection)
   poke (castPtr dbSlot :: Ptr (Ptr ())) nullPtr
   poke (castPtr cnSlot :: Ptr (Ptr ())) nullPtr
   rc <- withCString path $ \cpath -> C.c_duckdb_open cpath dbSlot
   when (rc /= DuckDBSuccess) $ do
-    free dbSlot
-    free cnSlot
+    free dbSlot; free cnSlot
     throwIO (DuckDBError ("duckdb_open failed for " ++ path))
   db <- peek dbSlot
   rc2 <- C.c_duckdb_connect db cnSlot
   when (rc2 /= DuckDBSuccess) $ do
-    C.c_duckdb_close dbSlot
-    free dbSlot
-    free cnSlot
+    C.c_duckdb_close dbSlot; free dbSlot; free cnSlot
     throwIO (DuckDBError "duckdb_connect failed")
-  -- Use concurrent (Haskell-side) finalizers so we can combine them with
-  -- our free(slot) cleanup. GHC.ForeignPtr rejects mixing C and Haskell
-  -- finalizers on the same ForeignPtr.
   dbFp <- newForeignPtr_ dbSlot
   cnFp <- newForeignPtr_ cnSlot
   addForeignPtrConcFinalizer dbFp $ do
-    C.c_duckdb_close dbSlot
-    free dbSlot
-  -- cnFp's finalizer closes the connection, frees its slot, then touches
-  -- dbFp. The touch keeps the db alive until after the connection is
-  -- disconnected — ForeignPtr ordering is otherwise unspecified.
+    C.c_duckdb_close dbSlot; free dbSlot
   addForeignPtrConcFinalizer cnFp $ do
-    C.c_duckdb_disconnect cnSlot
-    free cnSlot
-    touchForeignPtr dbFp
-  pure (Conn dbFp cnFp)
+    C.c_duckdb_disconnect cnSlot; free cnSlot; touchForeignPtr dbFp
+  let conn = Conn dbFp cnFp
+  -- Cap DuckDB's buffer pool. Default is 80% of system RAM — causes OOM
+  -- when multiple in-memory databases coexist (tests, derive, loadFromUri).
+  _ <- query conn "SET memory_limit='2GB'"
+  pure conn
 
 -- | Explicit disconnect. Normally the GC handles it.
 disconnect :: Conn -> IO ()

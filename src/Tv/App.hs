@@ -107,7 +107,10 @@ handlerMap = Map.fromList $
   , (TblQuit, quitH)
   , (FolderEnter, folderEnterH)
   , (FolderParent, folderParentH)
-  -- TODO FolderPush, FolderDel, FolderDepthInc/Dec: handlers not yet written
+  , (FolderPush, folderPushH)
+  , (FolderDel, folderDelH)
+  , (FolderDepthInc, folderDepthIncH)
+  , (FolderDepthDec, folderDepthDecH)
   , (StkPop, stkPopH)
   , (StkSwap, stkSwapH)
   , (StkDup,  stkDupH)
@@ -812,7 +815,9 @@ loadFile p = do
   r <- try $ do
     conn <- DB.connect ":memory:"
     res <- DB.query conn (fileQuery p)
-    DB.mkDbOps res
+    ops <- DB.mkDbOps res
+    DB.disconnect conn
+    pure ops
   pure $ case r of
     Left (e :: SomeException) -> Left (displayException e)
     Right ops -> Right ops

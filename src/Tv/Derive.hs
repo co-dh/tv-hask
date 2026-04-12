@@ -53,7 +53,9 @@ rebuildWith ops wrap = do
   let sql = wrap sub
   conn <- DB.connect ":memory:"
   res  <- DB.query conn sql
-  DB.mkDbOps res
+  ops' <- DB.mkDbOps res
+  DB.disconnect conn
+  pure ops'
 
 -- | Build a SELECT whose rows/columns match the given TblOps. Each
 -- source row becomes a VALUES tuple; each column is CAST to its
