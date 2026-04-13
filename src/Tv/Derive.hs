@@ -10,6 +10,7 @@ module Tv.Derive
   ( addDerived
   , parseDerive
   , rebuildWith
+  , rebuildWithIO
   , quoteId
   ) where
 
@@ -22,6 +23,7 @@ import Optics.Core ((^.))
 
 import Tv.Types
 import qualified Tv.Data.DuckDB as DB
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 
 -- | Parse "name = expr". Splits on the first @" = "@; rejoins the rest
 -- so expressions containing @=@ survive. Returns Nothing if either side
@@ -39,17 +41,20 @@ parseDerive input = case T.splitOn " = " input of
 -- recorded ColType), then issues @SELECT *, <expr> AS <name> FROM t@.
 -- On any failure the original TblOps is returned unchanged — same
 -- fail-soft behaviour as Tc.Derive.runWith.
-addDerived :: TblOps -> Text -> Text -> IO TblOps
+addDerived :: IOE :> es => TblOps -> Text -> Text -> Eff es TblOps
 addDerived ops name expr = do
-  r <- try (rebuildWith ops (\sub -> "SELECT *, " <> expr <> " AS " <> quoteId name <> " FROM (" <> sub <> ")"))
+  r <- liftIO (try (rebuildWithIO ops (\sub -> "SELECT *, " <> expr <> " AS " <> quoteId name <> " FROM (" <> sub <> ")")))
   case r of
     Right ops' -> pure ops'
     Left (_ :: SomeException) -> pure ops
 
 -- | Rebuild a TblOps by running @f sub@ where @sub@ is a SELECT that
 -- reconstructs the current table rows. Shared between derive and split.
-rebuildWith :: TblOps -> (Text -> Text) -> IO TblOps
-rebuildWith ops wrap = do
+rebuildWith :: IOE :> es => TblOps -> (Text -> Text) -> Eff es TblOps
+rebuildWith ops wrap = liftIO (rebuildWithIO ops wrap)
+
+rebuildWithIO :: TblOps -> (Text -> Text) -> IO TblOps
+rebuildWithIO ops wrap = do
   sub <- reconstructSql ops
   let sql = wrap sub
   conn <- DB.connect ":memory:"

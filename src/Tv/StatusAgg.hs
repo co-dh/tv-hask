@@ -13,6 +13,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 
 import Tv.Types
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Cache: (path, colIdx, formatted agg string)
@@ -28,24 +29,8 @@ prqlLimit = 1000
 -- | Aggregate stats for a single column: sum, avg, count (non-null).
 -- Returns "S1234 u12.3 #100" for numeric, "#100" for non-numeric.
 -- For large tables, skip SUM/AVG and show count only.
-compute :: TblOps -> Int -> IO Text
-compute tbl colIdx = do
-  let nr = (tbl ^. tblNRows)
-      ct = (tbl ^. tblColType) colIdx
-  if (tbl ^. tblTotalRows) > prqlLimit
-    then pure ("#" <> T.pack (show ((tbl ^. tblTotalRows))))
-    else if isNumeric ct then do
-      -- read all cells, parse as Double, compute sum/avg/count
-      vals <- readNumericCol tbl colIdx nr
-      let n = length vals
-      if n == 0 then pure ""
-      else do
-        let s = sum vals; a = s / fromIntegral n
-            fmt x = let t = T.pack (show x) in if T.length t > 8 then T.take 8 t else t
-        pure ("\931" <> fmt s <> " \956" <> fmt a <> " #" <> T.pack (show n))
-    else
-      -- non-numeric: count non-null
-      pure ("#" <> T.pack (show nr))
+compute :: IOE :> es => TblOps -> Int -> Eff es Text
+compute tbl colIdx = liftIO (computeIO tbl colIdx)
 
 -- | Read non-null numeric values from a column
 readNumericCol :: TblOps -> Int -> Int -> IO [Double]
@@ -67,12 +52,28 @@ readDouble t = case reads (T.unpack t) of
 
 -- | Update cache if column changed. Returns (updated cache, agg text for rendering).
 -- The caller is responsible for rendering the agg string on the status bar.
-update :: Cache -> TblOps -> Text -> Int -> IO Cache
-update cache@(cachedPath, cachedCol, _) tbl path colIdx = do
-  cache' <-
-    if cachedPath == path && cachedCol == colIdx then pure cache
-    else do
-      r <- try (compute tbl colIdx)
-      let agg' = case r of Left (_ :: SomeException) -> ""; Right a -> a
-      pure (path, colIdx, agg')
-  pure cache'
+update :: IOE :> es => Cache -> TblOps -> Text -> Int -> Eff es Cache
+update cache@(cachedPath, cachedCol, _) tbl path colIdx =
+  if cachedPath == path && cachedCol == colIdx then pure cache
+  else do
+    r <- liftIO (try (computeIO tbl colIdx))
+    let agg' = case r of Left (_ :: SomeException) -> ""; Right a -> a
+    pure (path, colIdx, agg')
+
+-- Internal IO helper so 'update' can 'try' it without leaving the Eff stack.
+computeIO :: TblOps -> Int -> IO Text
+computeIO tbl colIdx = do
+  let nr = (tbl ^. tblNRows)
+      ct = (tbl ^. tblColType) colIdx
+  if (tbl ^. tblTotalRows) > prqlLimit
+    then pure ("#" <> T.pack (show ((tbl ^. tblTotalRows))))
+    else if isNumeric ct then do
+      vals <- readNumericCol tbl colIdx nr
+      let n = length vals
+      if n == 0 then pure ""
+      else do
+        let s = sum vals; a = s / fromIntegral n
+            fmt x = let t = T.pack (show x) in if T.length t > 8 then T.take 8 t else t
+        pure ("\931" <> fmt s <> " \956" <> fmt a <> " #" <> T.pack (show n))
+    else
+      pure ("#" <> T.pack (show nr))

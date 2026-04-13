@@ -12,6 +12,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 import Tv.Types
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Max source rows to transpose; matches Tc.Transpose.maxRows.
@@ -25,7 +26,7 @@ maxRows = 200
 --   One output row per source column, in original column order. Returns an
 --   empty-shaped ops when the source has no rows or no columns (mirrors Lean
 --   returning 'none' from push).
-mkTransposedOps :: TblOps -> IO TblOps
+mkTransposedOps :: IOE :> es => TblOps -> Eff es TblOps
 mkTransposedOps src = do
   let names = (src ^. tblColNames)
       nc    = V.length names
@@ -33,7 +34,7 @@ mkTransposedOps src = do
   -- Materialize only the rows we'll use; cells are read as Text so mixed
   -- source types collapse uniformly (Lean CASTs to VARCHAR for the same
   -- reason).
-  rows <- V.generateM nc $ \c -> do
+  rows <- liftIO $ V.generateM nc $ \c -> do
     vals <- V.generateM nr (\r -> (src ^. tblCellStr) r c)
     pure (V.cons (names V.! c) vals)
   let outCols = V.cons "column"
