@@ -907,21 +907,21 @@ sessionTests = testGroup "session"
       Sess.decodeSession "not json" @?= Nothing
   , testCase "saveSession + loadSession round-trip" $ do
       let name = "tvhask-test-roundtrip"
-      mp <- Sess.saveSession name testStack
+      mp <- runEff (Sess.saveSession name testStack)
       case mp of
         Nothing -> assertFailure "save returned Nothing"
         Just _  -> do
-          r <- Sess.loadSession name
+          r <- runEff (Sess.loadSession name)
           case r of
             Nothing -> assertFailure "load returned Nothing"
             Just s  -> length (Sess.ssViews s) @?= 1
   , testCase "loadSession missing name returns Nothing" $ do
-      r <- Sess.loadSession "definitely-not-a-real-session-xyz123"
+      r <- runEff (Sess.loadSession "definitely-not-a-real-session-xyz123")
       r @?= Nothing
   , testCase "listSessions contains saved name" $ do
       let name = "tvhask-test-listable"
-      _ <- Sess.saveSession name testStack
-      xs <- Sess.listSessions
+      _ <- runEff (Sess.saveSession name testStack)
+      xs <- runEff Sess.listSessions
       assertBool "present" (name `elem` xs)
   ]
 
@@ -1091,7 +1091,7 @@ arrowTests = testGroup "arrow"
         , Tv.CmdConfig.Entry ColInc  "c" "l"  "right" False ""
         , Tv.CmdConfig.Entry TblQuit ""  "q"  "quit"  False ""
         ]
-      items <- Fzf.flatItems ""
+      items <- runEff (Fzf.flatItems "")
       length items @?= 3
       assertBool "each line has 3 pipe separators"
         (all (\l -> length (T.splitOn "|" l) == 4) items)

@@ -29,6 +29,7 @@ import Tv.Types
 import Tv.View (View(..), fromTbl, vNav, vDisp)
 import qualified Tv.Data.DuckDB as DB
 import Tv.Util (logWrite)
+import Tv.Eff (runEff)
 
 -- ============================================================================
 -- Format
@@ -144,14 +145,14 @@ tryReadCsv path = do
   ap <- absPath path
   r <- try (fromFileWith ap "read_csv" "") :: IO (Either SomeException (Maybe TblOps))
   case r of
-    Left e -> Nothing <$ logWrite "tryReadCsv" (path ++ ": " ++ displayException e)
+    Left e -> Nothing <$ runEff (logWrite "tryReadCsv" (path ++ ": " ++ displayException e))
     Right m -> pure (m >>= \ops -> fromTbl ops (T.pack path) 0 V.empty 0)
 
 -- | ATTACH database file and list its tables as a folder view.
 attachFile :: FilePath -> Format -> IO (Maybe View)
 attachFile ap fmt = (try go :: IO (Either SomeException (Maybe View))) >>= either logFail pure
   where
-    logFail e = Nothing <$ logWrite "attachFile" (ap ++ ": " ++ displayException e)
+    logFail e = Nothing <$ runEff (logWrite "attachFile" (ap ++ ": " ++ displayException e))
     go = do
       conn <- DB.connect ":memory:"
       loadDuckExt conn (fmtDuckdbExt fmt)

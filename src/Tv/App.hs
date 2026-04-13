@@ -214,7 +214,7 @@ precH f st _ =
 runCmdMenu :: AppState -> IO AppState
 runCmdMenu st = do
   let vctx = vkCtxStr (st ^. headNav % nsVkind)
-  mh <- Fzf.cmdMode vctx
+  mh <- runEff (Fzf.cmdMode vctx)
   case mh of
     Nothing -> pure st
     Just h -> case cmdFromStr h of
@@ -363,7 +363,7 @@ joinH st _ = case st ^. asStack % vsTl of
         allOps = [Join.JInner, Join.JLeft, Join.JRight, Join.JUnion, Join.JDiff]
         availOps = if joinOk then allOps else [Join.JUnion, Join.JDiff]
         labels  = map joinLabel availOps
-    mIdx <- Fzf.fzfIdx ["--prompt=join> "] labels
+    mIdx <- runEff (Fzf.fzfIdx ["--prompt=join> "] labels)
     case mIdx of
       Nothing -> pure (Just st)
       Just idx -> do
@@ -389,7 +389,7 @@ exportH st arg
       case mFmt of
         Just fmt -> do
           -- Generate path: ~/.cache/tv/tv_export_{filename}.{ext}
-          dir <- Util.logDir
+          dir <- runEff Util.logDir
           let rawBase = takeWhile (/= '.') (takeFileName (T.unpack (((curView st) ^. vPath))))
               base = if null rawBase then "export" else rawBase
               ext = T.unpack (Export.exportFmtExt fmt)
@@ -415,7 +415,7 @@ exportH st arg
 -- | Save the current stack as a named session (name from @asCmd@).
 sessSaveH :: Handler
 sessSaveH st arg = do
-  mp <- Session.saveSession arg ((st ^. asStack))
+  mp <- runEff (Session.saveSession arg ((st ^. asStack)))
   let msg = case mp of
         Just p  -> "saved session " <> T.pack p
         Nothing -> "save failed"
@@ -427,7 +427,7 @@ sessSaveH st arg = do
 -- TODO: rehydrate via openPath once SourceConfig replay lands.
 sessLoadH :: Handler
 sessLoadH st arg = do
-  ms <- Session.loadSession arg
+  ms <- runEff (Session.loadSession arg)
   let msg = case ms of
         Just _  -> "loaded session (rehydrate TODO)"
         Nothing -> "load failed"
@@ -567,7 +567,7 @@ rowFilterH st arg
       vals <- (ops ^. tblDistinct) colIdx
       let sorted = V.fromList (sort (V.toList vals))
           input  = T.intercalate "\n" (V.toList sorted)
-      mResult <- Fzf.fzf ["--print-query", "--prompt=filter > "] input
+      mResult <- runEff (Fzf.fzf ["--print-query", "--prompt=filter > "] input)
       case mResult of
         Nothing -> pure (Just st)
         Just result -> do
@@ -665,7 +665,7 @@ runThemePicker :: AppState -> IO AppState
 runThemePicker st = do
   let names = V.toList (V.imap (\i _ -> T.pack (show i) <> ": " <> Tv.Theme.themeName i)
                                (Tv.Theme.themes :: Vector (Text, Text)))
-  mSel <- Fzf.fzf ["--prompt=theme "] (T.intercalate "\n" names)
+  mSel <- runEff (Fzf.fzf ["--prompt=theme "] (T.intercalate "\n" names))
   case mSel of
     Nothing -> pure st
     Just sel -> case reads (T.unpack (T.takeWhile (/= ':') sel)) of
@@ -1343,7 +1343,7 @@ testInterp ref = AppF.Interp
 -- | -c test mode: run loopProg under testInterp, print rendered output.
 runTestMode :: AppState -> [Text] -> IO ()
 runTestMode st0 keys = do
-  Fzf.setTestMode True
+  runEff (Fzf.setTestMode True)
   ref <- newIORef keys
   st <- AppF.run (testInterp ref) (loopProg st0)
   txt <- renderText st
@@ -1358,7 +1358,7 @@ runApp = do
   -- Session mode: load session JSON and rehydrate views
   v <- case mSess of
     Just sessName -> do
-      ms <- Session.loadSession (T.pack sessName)
+      ms <- runEff (Session.loadSession (T.pack sessName))
       case ms of
         Nothing -> do
           hPutStrLn stderr ("Session not found: " ++ sessName)
