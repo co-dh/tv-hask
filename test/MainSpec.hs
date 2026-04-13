@@ -22,6 +22,7 @@ import qualified System.Directory
 import qualified Data.List
 import System.Directory (removeFile, doesFileExist, getTemporaryDirectory)
 import qualified Tv.CmdConfig
+import Tv.Eff (runEff)
 import System.FilePath ((</>))
 import qualified Data.Text.IO as TIO
 
@@ -1085,7 +1086,7 @@ arrowTests = testGroup "arrow"
   , testCase "flat_menu: Fzf.flatItems returns one line per CmdConfig entry" $ do
       -- Populate CmdConfig with a minimal entry table so flatItems returns
       -- something. The real runtime populates this via Tv.App.defaultEntries.
-      Tv.CmdConfig.initCmds
+      runEff $ Tv.CmdConfig.initCmds
         [ Tv.CmdConfig.Entry RowInc  "r" "j"  "down" False ""
         , Tv.CmdConfig.Entry ColInc  "c" "l"  "right" False ""
         , Tv.CmdConfig.Entry TblQuit ""  "q"  "quit"  False ""

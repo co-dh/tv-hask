@@ -22,6 +22,7 @@ import qualified Tv.Nav as Nav
 import Tv.App (handleKey, handleCmd)
 import Tv.Render
 import qualified Tv.CmdConfig as CC
+import Tv.Eff (runEff)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Build an AppState from mockTbl with keymap initialised. Only the
@@ -29,7 +30,7 @@ import Optics.Core ((^.), (%), (&), (.~), (%~))
 -- fed through handleKey.
 mkScreen :: IO AppState
 mkScreen = do
-  CC.initCmds
+  runEff $ CC.initCmds
     [ CC.Entry RowInc   "r" "j" "row++"    False ""
     , CC.Entry RowDec   "r" "k" "row--"    False ""
     , CC.Entry ColInc   "c" "l" "col++"    False ""

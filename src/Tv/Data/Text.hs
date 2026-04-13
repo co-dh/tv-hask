@@ -7,6 +7,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Data.Map.Strict as Map
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 
 -- | Find mode (most common value) in list.
 mode :: [Int] -> Int
@@ -72,5 +73,5 @@ fromText content =
               in Right (header <> "\n" <> T.intercalate "\n" rows)
 
 -- | Load from stdin (reads all input, returns TSV).
-fromStdin :: IO (Either String Text)
-fromStdin = fromText <$> TIO.getContents
+fromStdin :: IOE :> es => Eff es (Either String Text)
+fromStdin = fromText <$> liftIO TIO.getContents

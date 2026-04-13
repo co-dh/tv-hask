@@ -15,6 +15,7 @@ import Tv.View
 import Tv.Render
 import Tv.App (handleCmd, handleKey)
 import qualified Tv.CmdConfig as CC
+import Tv.Eff (runEff)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- ============================================================================
@@ -70,7 +71,7 @@ mockState = do
 
 -- Minimal command entry set so keyLookup resolves j/k/h/l/q.
 initTestCmds :: IO ()
-initTestCmds = CC.initCmds
+initTestCmds = runEff $ CC.initCmds
   [ CC.Entry RowInc  "r" "j" "row++"  False ""
   , CC.Entry RowDec  "r" "k" "row--"  False ""
   , CC.Entry ColInc  "c" "l" "col++"  False ""

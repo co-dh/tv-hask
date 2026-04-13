@@ -20,6 +20,7 @@ module Tv.Eff
     AppEff
     -- * Runners
   , runAppEff
+  , runEff
     -- * Optic helpers over 'State'
   , use
   , (.=)
