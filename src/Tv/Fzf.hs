@@ -20,6 +20,7 @@ import System.Environment (lookupEnv)
 import Control.Exception (try, SomeException)
 import Data.IORef
 import qualified Tv.CmdConfig as CC
+import Tv.Eff (runEff)
 
 -- | Global test mode flag (mirrors Lean Fzf.testMode IORef).
 -- When true, fzfCore returns the first line, fzfIdx returns 0.
@@ -110,7 +111,7 @@ fzfIdx opts items = do
 -- pipes line up in fzf.  Used by 'cmdMode' for the space-bar menu.
 flatItems :: Text -> IO [Text]
 flatItems vctx = do
-  items <- CC.menuItems vctx
+  items <- runEff (CC.menuItems vctx)
   let (maxH, maxX, maxK) = foldr step (0, 0, 0) items
       step (h, x, k, _) (mh, mx, mk) =
         (max mh (T.length h), max mx (T.length x), max mk (T.length k))

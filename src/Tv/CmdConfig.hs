@@ -11,6 +11,7 @@ import qualified Data.Set as Set
 import Data.IORef
 import System.IO.Unsafe (unsafePerformIO)
 import Tv.Types (Cmd, cmdStr, cmdFromStr)
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 
 -- | Command entry: metadata for key binding, menu display, and dispatch
 data Entry = Entry
@@ -42,8 +43,8 @@ menuRef :: IORef [Entry]
 menuRef = unsafePerformIO $ newIORef []
 
 -- | Build lookup caches from entry list (called once at startup)
-initCmds :: [Entry] -> IO ()
-initCmds entries = do
+initCmds :: IOE :> es => [Entry] -> Eff es ()
+initCmds entries = liftIO $ do
   let keyM = Map.fromList [(( entKey e, entViewCtx e), ci e) | e <- entries, not (T.null (entKey e))]
       cmdM = Map.fromList [( entCmd e, ci e) | e <- entries]
       argS = Set.fromList [entCmd e | e <- entries, T.isInfixOf "a" (entCtx e)]
@@ -54,33 +55,27 @@ initCmds entries = do
   where ci e = CmdInfo (entCmd e) (entResets e)
 
 -- | Context-aware key lookup: try (key, viewCtx) first, fall back to (key, "")
-keyLookup :: Text -> Text -> IO (Maybe CmdInfo)
+keyLookup :: IOE :> es => Text -> Text -> Eff es (Maybe CmdInfo)
 keyLookup key viewCtx = do
-  m <- readIORef keyInfoRef
+  m <- liftIO (readIORef keyInfoRef)
   pure $ case Map.lookup (key, viewCtx) m of
     Just ci -> Just ci
     Nothing -> Map.lookup (key, "") m
 
 -- | Lookup by Cmd
-cmdLookup :: Cmd -> IO CmdInfo
+cmdLookup :: IOE :> es => Cmd -> Eff es CmdInfo
 cmdLookup c = do
-  m <- readIORef cmdInfoRef
+  m <- liftIO (readIORef cmdInfoRef)
   pure $ Map.findWithDefault (CmdInfo c False) c m
 
--- | Lookup by command string (socket/external boundary)
-handlerLookup :: Text -> IO (Maybe CmdInfo)
-handlerLookup h = case cmdFromStr h of
-  Just c -> Just <$> cmdLookup c
-  Nothing -> pure Nothing
-
 -- | Check if command takes user input
-isArgCmd :: Cmd -> IO Bool
-isArgCmd c = Set.member c <$> readIORef argCmdRef
+isArgCmd :: IOE :> es => Cmd -> Eff es Bool
+isArgCmd c = Set.member c <$> liftIO (readIORef argCmdRef)
 
 -- | Menu items filtered by view context
-menuItems :: Text -> IO [(Text, Text, Text, Text)]
+menuItems :: IOE :> es => Text -> Eff es [(Text, Text, Text, Text)]
 menuItems vctx = do
-  es <- readIORef menuRef
+  es <- liftIO (readIORef menuRef)
   pure [(cmdStr (entCmd e), entCtx e, entKey e, entLabel e)
        | e <- es, not (T.null (entLabel e))
        , T.null (entViewCtx e) || entViewCtx e == vctx]

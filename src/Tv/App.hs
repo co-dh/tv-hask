@@ -39,6 +39,7 @@ import qualified Tv.Key as Key
 import Tv.Key (evToKey)
 import Tv.CmdConfig (keyLookup, CmdInfo(..))
 import qualified Tv.CmdConfig as CC
+import Tv.Eff (runEff)
 import Tv.Theme (initTheme, toAttrMap, ThemeState(..), themeName, themes, applyTheme, tsStyles, tsThemeIdx)
 import qualified Tv.Theme
 import qualified Tv.Data.DuckDB as DB
@@ -669,7 +670,7 @@ runThemePicker st = do
     Nothing -> pure st
     Just sel -> case reads (T.unpack (T.takeWhile (/= ':') sel)) of
       [(i, _)] -> do
-        theme' <- Tv.Theme.applyTheme (Tv.Theme.ThemeState ((st ^. asStyles)) ((st ^. asThemeIdx))) i
+        theme' <- runEff (Tv.Theme.applyTheme (Tv.Theme.ThemeState ((st ^. asStyles)) ((st ^. asThemeIdx))) i)
         pure (st & asStyles .~ Tv.Theme.tsStyles theme' & asThemeIdx .~ Tv.Theme.tsThemeIdx theme')
       _ -> pure st
 
@@ -804,7 +805,7 @@ dispatch st ci arg = case Map.lookup (ciCmd ci) handlerMap of
 -- | Convenience: dispatch by Cmd + arg (looks up CmdInfo from cache).
 handleCmd :: Cmd -> Text -> AppState -> IO (Maybe AppState)
 handleCmd cmd arg st = do
-  ci <- CC.cmdLookup cmd
+  ci <- runEff (CC.cmdLookup cmd)
   dispatch st ci arg
 
 -- | Dispatch a single key through keyLookup + dispatch. Non-arg commands get
@@ -813,7 +814,7 @@ handleCmd cmd arg st = do
 handleKey :: Text -> AppState -> IO (Maybe AppState)
 handleKey key st = do
   let ctx = vkCtxStr (st ^. headNav % nsVkind)
-  mci <- keyLookup key ctx
+  mci <- runEff (keyLookup key ctx)
   case mci of
     Nothing -> pure (Just st)
     Just ci -> dispatch st ci ""
@@ -859,14 +860,14 @@ handleEvent (Brick.VtyEvent ev@(Vty.EvKey k mods)) = do
       _ -> do
         let key = evToKey ev
             ctx = vkCtxStr (st ^. headNav % nsVkind)
-        mci <- liftIO $ keyLookup key ctx
+        mci <- liftIO $ runEff (keyLookup key ctx)
         case mci of
           Nothing -> pure ()
           Just ci
             | ciCmd ci == TblMenu -> BM.suspendAndResume (runCmdMenu st)
             | ciCmd ci == ThemeOpen -> BM.suspendAndResume (runThemePicker st)
             | otherwise -> do
-                isArg <- liftIO $ CC.isArgCmd (ciCmd ci)
+                isArg <- liftIO $ runEff (CC.isArgCmd (ciCmd ci))
                 if isArg
                   then Brick.put (st & asPendingCmd .~ Just (ciCmd ci) & asCmd .~ "" & asMsg .~ "")
                   else do
@@ -1074,7 +1075,7 @@ initialState v = initialStateSized v 200 80
 -- so the first frame is laid out at the correct size.
 initialStateSized :: View -> Int -> Int -> IO AppState
 initialStateSized v tw th = do
-  theme <- initTheme
+  theme <- runEff initTheme
   refreshGrid AppState
     { _asStack = ViewStack v []
     , _asThemeIdx = tsThemeIdx theme
@@ -1305,11 +1306,11 @@ loopProg a = do
       | T.null key -> loopProg a'
       | otherwise -> do
           let ctx = vkCtxStr (a' ^. headNav % nsVkind)
-          mci <- liftIO (keyLookup key ctx)
+          mci <- liftIO (runEff (keyLookup key ctx))
           case mci of
             Nothing -> loopProg a'
             Just ci -> do
-              isArg <- liftIO (CC.isArgCmd (ciCmd ci))
+              isArg <- liftIO (runEff (CC.isArgCmd (ciCmd ci)))
               arg <- if isArg then AppF.readArg' else pure ""
               r <- liftIO (dispatch a' ci arg)
               case r of
@@ -1351,7 +1352,7 @@ runTestMode st0 keys = do
 
 runApp :: IO ()
 runApp = do
-  CC.initCmds defaultEntries
+  runEff (CC.initCmds defaultEntries)
   args <- getArgs
   (path, mKeys, mSess) <- parseCliArgs args
   -- Session mode: load session JSON and rehydrate views

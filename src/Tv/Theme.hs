@@ -17,6 +17,7 @@ import System.FilePath (takeDirectory, (</>))
 import qualified Graphics.Vty as Vty
 import qualified Brick.AttrMap as Brick
 import Brick.Util (fg, bg, on)
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 
 -- | Style indices (matching Lean's constants)
 data Style = SCursor | SSelRow | SSelColCurRow | SSelCol | SCurRow | SCurCol
@@ -139,12 +140,9 @@ defaultDark = V.fromList
 stylesRef :: IORef (Vector StylePair)
 stylesRef = unsafePerformIO $ newIORef defaultDark
 
-getStyles :: IO (Vector StylePair)
-getStyles = readIORef stylesRef
-
 -- | Detect terminal background: dark (True) or light (False)
-isDark :: IO Bool
-isDark = do
+isDark :: IOE :> es => Eff es Bool
+isDark = liftIO $ do
   mfgbg <- lookupEnv "COLORFGBG"
   pure $ case mfgbg of
     Just s -> case reads (reverse $ takeWhile (/= ';') $ reverse s) of
@@ -157,8 +155,8 @@ builtinCsv :: Text
 builtinCsv = ""  -- TODO: embed theme.csv via file-embed or TH
 
 -- | Load theme.csv: next to binary, then CWD, then builtin
-loadCsv :: IO Text
-loadCsv = do
+loadCsv :: IOE :> es => Eff es Text
+loadCsv = liftIO $ do
   exePath <- getExecutablePath
   let binDir = takeDirectory exePath
   tryPaths [binDir </> "theme.csv", "theme.csv"]
@@ -169,7 +167,7 @@ loadCsv = do
       if ok then TIO.readFile p else tryPaths ps
 
 -- | Load theme by name from CSV
-loadTheme :: Text -> Text -> IO (Vector StylePair)
+loadTheme :: IOE :> es => Text -> Text -> Eff es (Vector StylePair)
 loadTheme theme variant = do
   csv <- loadCsv
   let lns = filter (not . T.null) (T.splitOn "\n" csv)
@@ -197,7 +195,7 @@ loadTheme theme variant = do
     find p = foldr (\x acc -> if p x then Just x else acc) Nothing
 
 -- | Load theme by index
-loadIdx :: Int -> IO (Vector StylePair)
+loadIdx :: IOE :> es => Int -> Eff es (Vector StylePair)
 loadIdx idx = let (t, v) = themes V.! idx in loadTheme t v
 
 -- | Apply a StylePair to a base attr, respecting Nothing = "keep default".
@@ -216,18 +214,20 @@ toAttrMap styles = Brick.attrMap Vty.defAttr
   , i < V.length styles ]
 
 -- | Initialize theme state
-initTheme :: IO ThemeState
+initTheme :: IOE :> es => Eff es ThemeState
 initTheme = do
   dark <- isDark
   let v = if dark then "dark" else "light"
   styles <- loadTheme "default" v
-  writeIORef stylesRef styles
-  let idx = maybe 0 id $ V.findIndex (== ("default", v)) themes
-  pure $ ThemeState styles idx
+  liftIO $ do
+    writeIORef stylesRef styles
+    let idx = maybe 0 id $ V.findIndex (== ("default", v)) themes
+    pure $ ThemeState styles idx
 
 -- | Apply theme by index
-applyTheme :: ThemeState -> Int -> IO ThemeState
+applyTheme :: IOE :> es => ThemeState -> Int -> Eff es ThemeState
 applyTheme ts idx = do
   styles <- loadIdx idx
-  writeIORef stylesRef styles
-  pure $ ts { tsStyles = styles, tsThemeIdx = idx }
+  liftIO $ do
+    writeIORef stylesRef styles
+    pure $ ts { tsStyles = styles, tsThemeIdx = idx }
