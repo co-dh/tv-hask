@@ -138,7 +138,7 @@ sortTests = testGroup "sort"
       base <- getTemporaryDirectory
       let d = base </> "tv-hask-foldersort"
       System.Directory.createDirectoryIfMissing True d
-      t <- Folder.listFolder d
+      t <- runEff (Folder.listFolder d)
       (t ^. tblColNames) V.! 3 @?= "type"
   , pending "sort_asc binary-level" "needs tv-binary spawn+stdin driver (Test.lean uses expect)"
   , pending "sort_desc binary-level" "needs tv-binary spawn+stdin driver (Test.lean uses expect)"
@@ -360,26 +360,26 @@ folderTests =
         in tabName v @?= "/home/user/Tc"
     , testCase "listFolder columns = name,size,modified,type" $ do
         d <- mkTmpDir "cols"
-        t <- Folder.listFolder d
+        t <- runEff (Folder.listFolder d)
         (t ^. tblColNames) @?= V.fromList ["name","size","modified","type"]
     , testCase "listFolder first row is '..' parent entry" $ do
         d <- mkTmpDir "parent"
-        t <- Folder.listFolder d
+        t <- runEff (Folder.listFolder d)
         name <- (t ^. tblCellStr) 0 0
         name @?= ".."
     , testCase "listFolder counts entries: .. + a.txt + b.txt + sub = 4" $ do
         d <- mkTmpDir "count"
-        t <- Folder.listFolder d
+        t <- runEff (Folder.listFolder d)
         (t ^. tblNRows) @?= 4
     , testCase "listFolderDepth 2 includes sub/c.txt" $ do
         d <- mkTmpDir "depth2"
-        t <- Folder.listFolderDepth d 2
+        t <- runEff (Folder.listFolderDepth d 2)
         names <- mapM ((t ^. tblCellStr) `flip` 0) [0 .. (t ^. tblNRows) - 1]
         assertBool "sub/c.txt present"
           (any (\n -> "c.txt" `T.isInfixOf` n) names)
     , testCase "folder_enter: parent (..) stays in folder kind" $ do
         d <- mkTmpDir "enter"
-        t <- Folder.listFolder d
+        t <- runEff (Folder.listFolder d)
         let st0 = mkAppState t
             st1 = st0 & headNav % nsVkind .~ VFld (T.pack d) 1
         Just st2 <- handleCmd FolderEnter "" st1
@@ -388,7 +388,7 @@ folderTests =
           _        -> assertFailure "expected VFld after FolderEnter on '..'"
     , testCase "folder_pop: pushing then StkPop returns to original" $ do
         d <- mkTmpDir "pop"
-        t <- Folder.listFolder d
+        t <- runEff (Folder.listFolder d)
         let st0 = mkAppState t
             st1 = st0 & headNav % nsVkind .~ VFld (T.pack d) 1
         Just st2 <- handleCmd FolderPush "" st1
@@ -400,7 +400,7 @@ folderTests =
         length (st3 ^. asStack % vsTl) @?= 0
     , testCase "folder_depth: DepthInc raises depth in VFld" $ do
         d <- mkTmpDir "dinc"
-        t <- Folder.listFolder d
+        t <- runEff (Folder.listFolder d)
         let st0 = mkAppState t
             st1 = st0 & headNav % nsVkind .~ VFld (T.pack d) 1
         Just st2 <- handleCmd FolderDepthInc "" st1
@@ -409,7 +409,7 @@ folderTests =
           vk -> assertFailure ("expected VFld depth=2, got " <> show vk)
     , testCase "folder_depth: DepthDec clamps at 1" $ do
         d <- mkTmpDir "ddec"
-        t <- Folder.listFolder d
+        t <- runEff (Folder.listFolder d)
         let st0 = mkAppState t
             st1 = st0 & headNav % nsVkind .~ VFld (T.pack d) 1
         Just st2 <- handleCmd FolderDepthDec "" st1
@@ -1024,12 +1024,12 @@ sourceFormatTests = testGroup "source formats"
             Nothing -> assertFailure "null count"
           _ -> assertFailure "no chunks"
   , testCase "loadFromUri local parquet returns Right" $ do
-      r <- SC.loadFromUri "/home/dh/repo/Tc/data/1.parquet"
+      r <- runEff (SC.loadFromUri "/home/dh/repo/Tc/data/1.parquet")
       case r of
         Right t -> assertBool "has rows" ((t ^. tblNRows) > 0)
         Left e  -> assertFailure ("loadFromUri: " <> e)
   , testCase "loadFromUri local csv returns Right" $ do
-      r <- SC.loadFromUri "/home/dh/repo/Tc/data/basic.csv"
+      r <- runEff (SC.loadFromUri "/home/dh/repo/Tc/data/basic.csv")
       case r of
         Right t -> assertBool "has rows" ((t ^. tblNRows) > 0)
         Left e  -> assertFailure ("loadFromUri: " <> e)

@@ -449,7 +449,7 @@ folderPushH :: Handler
 folderPushH st _ = do
   case st ^. headNav % nsVkind of
     VFld base depth -> do
-      ops <- Folder.listFolderDepth (T.unpack base) depth
+      ops <- runEff (Folder.listFolderDepth (T.unpack base) depth)
       case fromTbl ops base 0 V.empty 0 of
         Nothing -> pure (Just (st & asMsg .~ "folder.push: empty"))
         Just v  -> Just <$> refreshGrid (st & asStack %~ vsPush (v & vNav % nsVkind .~ VFld base depth))
@@ -485,7 +485,7 @@ folderDelH st _ = do
             pure (Just (st & asMsg .~ "del failed: " <> T.pack (displayException e)))
           Right _ -> do
             -- Rebuild the current folder view so the entry disappears.
-            ops' <- Folder.listFolderDepth (T.unpack base) 1
+            ops' <- runEff (Folder.listFolderDepth (T.unpack base) 1)
             s' <- refreshGrid (st & headTbl .~ ops')
             pure (Just (s' & asMsg .~ "trashed " <> name))
     _ -> pure (Just (st & asMsg .~ "del: not in a folder view"))
@@ -501,7 +501,7 @@ folderDepthAdjH :: Int -> Handler
 folderDepthAdjH d st _ = case st ^. headNav % nsVkind of
   VFld base depth -> do
     let d' = max 1 (min 5 (depth + d))
-    ops' <- Folder.listFolderDepth (T.unpack base) d'
+    ops' <- runEff (Folder.listFolderDepth (T.unpack base) d')
     s' <- refreshGrid (st & headTbl .~ ops' & headNav % nsVkind .~ VFld base d')
     pure (Just (s' & asMsg .~ "depth=" <> T.pack (show d')))
   _ -> pure (Just (st & asMsg .~ "depth: not in a folder view"))
@@ -1028,7 +1028,7 @@ loadTextFile p = do
 loadFolder :: FilePath -> IO (TblOps, FilePath)
 loadFolder p = do
   ap <- canonicalizePath p
-  ops <- Folder.listFolder ap
+  ops <- runEff (Folder.listFolder ap)
   pure (ops, ap)
 
 -- | Open any path: directory → folder view, otherwise → file view. Used
@@ -1054,7 +1054,7 @@ openPath st p = do
             Nothing  -> False
       if needsFF
         then do
-          mv <- try (FF.openFile p) :: IO (Either SomeException (Maybe View))
+          mv <- try (runEff (FF.openFile p)) :: IO (Either SomeException (Maybe View))
           case mv of
             Right (Just v) -> Just <$> refreshGrid (st & asStack .~ vsPush v ((st ^. asStack)))
             _ -> pure (Just (st & asMsg .~ "open failed: " <> T.pack p))
@@ -1201,7 +1201,7 @@ openInitialView path = do
           Nothing  -> False
     if needsFF
       then do
-        mv <- FF.openFile path
+        mv <- runEff (FF.openFile path)
         case mv of
           Just v -> pure v
           Nothing -> fail ("open failed: " ++ path)

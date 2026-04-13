@@ -29,7 +29,7 @@ import Tv.Types
 import Tv.View (View(..), fromTbl, vNav, vDisp)
 import qualified Tv.Data.DuckDB as DB
 import Tv.Util (logWrite)
-import Tv.Eff (runEff)
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 
 -- ============================================================================
 -- Format
@@ -74,8 +74,8 @@ isTxtFile :: String -> Bool
 isTxtFile p = ".txt" `isSuffixOf` map toLower (stripGz p)
 
 -- | Resolve absolute path via realpath.
-absPath :: FilePath -> IO FilePath
-absPath path = do
+absPath :: IOE :> es => FilePath -> Eff es FilePath
+absPath path = liftIO $ do
   (ec, out, _) <- readProcessWithExitCode "realpath" [path] ""
   pure $ if ec == ExitSuccess then trimEnd out else path
   where trimEnd = reverse . dropWhile (`elem` (" \t\n\r" :: String)) . reverse
@@ -91,8 +91,8 @@ spawn cmd args = do
 -- | View file with bat (if available) or less. .gz files piped through zcat.
 -- NOTE: Term.shutdown/init calls should be done by the caller (App layer)
 -- since the Haskell port uses brick which manages terminal state.
-viewFile :: FilePath -> IO ()
-viewFile path = do
+viewFile :: IOE :> es => FilePath -> Eff es ()
+viewFile path = liftIO $ do
   let gz = ".gz" `isSuffixOf` path
       esc = T.unpack (T.replace "'" "'\\''" (T.pack path))
   hasBat <- cmdExists "bat"
@@ -140,19 +140,21 @@ fromFileWith path reader ext =
       DB.query conn (fileReadSql path reader) >>= DB.mkDbOps
 
 -- | Try to ingest as CSV via DuckDB read_csv (handles .gz). Nothing = not valid CSV.
-tryReadCsv :: FilePath -> IO (Maybe View)
+tryReadCsv :: IOE :> es => FilePath -> Eff es (Maybe View)
 tryReadCsv path = do
   ap <- absPath path
-  r <- try (fromFileWith ap "read_csv" "") :: IO (Either SomeException (Maybe TblOps))
+  r <- liftIO (try (fromFileWith ap "read_csv" "") :: IO (Either SomeException (Maybe TblOps)))
   case r of
-    Left e -> Nothing <$ runEff (logWrite "tryReadCsv" (path ++ ": " ++ displayException e))
+    Left e -> Nothing <$ logWrite "tryReadCsv" (path ++ ": " ++ displayException e)
     Right m -> pure (m >>= \ops -> fromTbl ops (T.pack path) 0 V.empty 0)
 
 -- | ATTACH database file and list its tables as a folder view.
-attachFile :: FilePath -> Format -> IO (Maybe View)
-attachFile ap fmt = (try go :: IO (Either SomeException (Maybe View))) >>= either logFail pure
+attachFile :: IOE :> es => FilePath -> Format -> Eff es (Maybe View)
+attachFile ap fmt = do
+  r <- liftIO (try go :: IO (Either SomeException (Maybe View)))
+  either logFail pure r
   where
-    logFail e = Nothing <$ runEff (logWrite "attachFile" (ap ++ ": " ++ displayException e))
+    logFail e = Nothing <$ logWrite "attachFile" (ap ++ ": " ++ displayException e)
     go = do
       conn <- DB.connect ":memory:"
       loadDuckExt conn (fmtDuckdbExt fmt)
@@ -171,11 +173,11 @@ attachFile ap fmt = (try go :: IO (Either SomeException (Maybe View))) >>= eithe
                        | otherwise = case acc of (h:t) -> (x:h):t; [] -> [[x]]
 
 -- | Open any supported data file as a View (attach for DB, reader for data files).
-openFile :: FilePath -> IO (Maybe View)
+openFile :: IOE :> es => FilePath -> Eff es (Maybe View)
 openFile path = do
   ap <- absPath path
   let toView ops = fromTbl ops (T.pack path) 0 V.empty 0
-      readWith reader ext = (>>= toView) <$> fromFileWith ap reader ext
+      readWith reader ext = (>>= toView) <$> liftIO (fromFileWith ap reader ext)
   case findFormat path of
     Just fmt | fmtAttach fmt -> attachFile ap fmt
     Just fmt                 -> readWith (fmtReader fmt) (fmtDuckdbExt fmt)
