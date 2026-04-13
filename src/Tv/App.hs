@@ -248,7 +248,7 @@ stkDupH st _ = Just <$> refreshGrid (st & asStack %~ vsDup)
 -- | Push a column-metadata view computed from the current table.
 metaPushH :: Handler
 metaPushH st _ = do
-  ops' <- Meta.mkMetaOps (curOps st)
+  ops' <- runEff (Meta.mkMetaOps (curOps st))
   pushOps st (curView st ^. vPath <> " [meta]") VColMeta ops'
 
 -- | Open a frequency view on (nav.grp ++ current col). The grouping
@@ -272,7 +272,7 @@ freqOpenH st _ = do
   if V.null colIdxs
     then pure (Just (st & asMsg .~ "freq: no columns selected"))
     else do
-      ops' <- Freq.mkFreqOps ops colIdxs
+      ops' <- runEff (Freq.mkFreqOps ops colIdxs)
       let total = ops' ^. tblNRows
           vk    = VFreq colNames total
           path  = curView st ^. vPath <> " [freq " <> T.intercalate "," (V.toList colNames) <> "]"
@@ -294,7 +294,7 @@ freqFilterH st _ = case st ^. headNav % nsVkind of
       let freqOps   = curOps st
           parentOps = parent ^. vNav % nsTbl
           row       = st ^. headNav % nsRow % naCur
-      expr <- Freq.filterExpr freqOps cols row
+      expr <- runEff (Freq.filterExpr freqOps cols row)
       mOps <- (parentOps ^. tblFilter) expr
       case mOps of
         Nothing -> pure (Just (st & asMsg .~ "freq.filter: filter failed"))
@@ -307,7 +307,7 @@ freqFilterH st _ = case st ^. headNav % nsVkind of
 -- | Push a transposed-table view.
 xposeH :: Handler
 xposeH st _ = do
-  ops' <- Transpose.mkTransposedOps (curOps st)
+  ops' <- runEff (Transpose.mkTransposedOps (curOps st))
   pushOps st (((curView st) ^. vPath) <> " [T]") VTbl ops'
 
 -- | Derive a new column from @asCmd == "name = expr"@. No-op + message on
@@ -316,7 +316,7 @@ deriveH :: Handler
 deriveH st arg = case Derive.parseDerive arg of
   Nothing -> pure (Just (st & asMsg .~ "derive: usage 'name = expr'"))
   Just (n, e) -> do
-    ops' <- Derive.addDerived (curOps st) n e
+    ops' <- runEff (Derive.addDerived (curOps st) n e)
     pushOps st (((curView st) ^. vPath) <> " =" <> n) VTbl ops'
 
 -- | Split the current column by regex taken from @asCmd@.
@@ -328,7 +328,7 @@ splitH st arg
           ci = curColIdx ns
           colName = curColName ns
           origNc = V.length (((curOps st) ^. tblColNames))
-      ops' <- Split.splitColumn (curOps st) ci arg
+      ops' <- runEff (Split.splitColumn (curOps st) ci arg)
       -- Position cursor at the first split column (right after original columns).
       -- Lean Split.run does this so the user sees the new columns immediately.
       let startCol = origNc
@@ -344,7 +344,7 @@ diffH st _ = case st ^. asStack % vsTl of
   (v2:_) -> do
     let l = st ^. headTbl
         r = v2 ^. vNav % nsTbl
-    ops' <- Diff.diffTables l r
+    ops' <- runEff (Diff.diffTables l r)
     pushOps st "[diff]" VTbl ops'
 
 -- | Join top two views via fzf-selected operation.  Lean Join.run:
@@ -368,7 +368,7 @@ joinH st _ = case st ^. asStack % vsTl of
       Nothing -> pure (Just st)
       Just idx -> do
         let op = availOps !! min idx (length availOps - 1)
-        ops' <- Join.joinWith op l r leftGrp
+        ops' <- runEff (Join.joinWith op l r leftGrp)
         pushOps st "[join]" VTbl ops'
   where
     joinLabel Join.JInner = "join inner"
@@ -394,7 +394,7 @@ exportH st arg
               base = if null rawBase then "export" else rawBase
               ext = T.unpack (Export.exportFmtExt fmt)
               path = dir </> ("tv_export_" ++ base ++ "." ++ ext)
-          r <- try (Export.exportTable (curOps st) fmt path)
+          r <- try (runEff (Export.exportTable (curOps st) fmt path))
           let msg = case r of
                 Left (e :: SomeException) -> "export failed: " <> T.pack (displayException e)
                 Right _ -> "exported to " <> T.pack path
@@ -406,7 +406,7 @@ exportH st arg
           case Export.exportFmtFromText ext of
             Nothing -> pure (Just (st & asMsg .~ "export: unknown fmt " <> arg))
             Just fmt -> do
-              r <- try (Export.exportTable (curOps st) fmt path)
+              r <- try (runEff (Export.exportTable (curOps st) fmt path))
               let msg = case r of
                     Left (e :: SomeException) -> "export failed: " <> T.pack (displayException e)
                     Right _ -> "exported to " <> T.pack path
@@ -687,7 +687,7 @@ plotH kind st _ = do
       -- Resolve group column names -> data indices, dropping any that
       -- don't exist in the current table (defensive: nav state may lag).
       grpIdx = V.mapMaybe (`V.elemIndex` names) (ns ^. nsGrp)
-  r <- Plot.runPlot kind tbl curC grpIdx
+  r <- runEff (Plot.runPlot kind tbl curC grpIdx)
   let msg = case r of
         Just p  -> "plot: saved to " <> T.pack p
         Nothing -> "plot: failed (check column types / R install)"
@@ -1281,14 +1281,14 @@ renderTextTable st = do
       tab  = R.tabText st
       tabLine = tab <> replayOps
   -- Sparklines: one string per column, nBars = column inner width
-  sparkLines <- Sparkline.compute tbl 10
+  sparkLines <- runEff (Sparkline.compute tbl 10)
   let sparkRow = if V.any (not . T.null) sparkLines
         then [T.concat [ " " <> T.justifyLeft (max 0 (widths V.! ci - 2)) ' '
                            (if ci < V.length sparkLines then sparkLines V.! ci else "")
                          <> " " <> sep ci | ci <- [0 .. nVis - 1] ]]
         else []
   -- Status aggregation: Σ/μ/# for current column
-  agg <- StatusAgg.compute tbl (curColIdx ns)
+  agg <- runEff (StatusAgg.compute tbl (curColIdx ns))
   let aggSuffix = if T.null agg then "" else " " <> agg
       stat = R.statusText st <> aggSuffix
   pure $ T.unlines (hdrLine : sparkRow ++ dataLines ++ infoLines ++ [hdrLine, tabLine, stat])

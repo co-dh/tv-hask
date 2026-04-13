@@ -26,6 +26,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 import Tv.Types
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | The five join operations exposed by the fzf menu in Tc/Join.lean.
@@ -136,16 +137,16 @@ runJoin keep left right keys = do
   pure (mkRowOps cols rows)
 
 -- | Inner join on @keys@: keep only rows whose key tuple appears in both.
-joinInner :: TblOps -> TblOps -> Vector Text -> IO TblOps
-joinInner = runJoin (\_ _ -> False)
+joinInner :: IOE :> es => TblOps -> TblOps -> Vector Text -> Eff es TblOps
+joinInner l r k = liftIO (runJoin (\_ _ -> False) l r k)
 
 -- | Left outer join: every left row, plus right columns (blank if no match).
-joinLeft :: TblOps -> TblOps -> Vector Text -> IO TblOps
-joinLeft = runJoin (\l _ -> l)
+joinLeft :: IOE :> es => TblOps -> TblOps -> Vector Text -> Eff es TblOps
+joinLeft l r k = liftIO (runJoin (\l' _ -> l') l r k)
 
 -- | Right outer join: every right row, plus left columns (blank if no match).
-joinRight :: TblOps -> TblOps -> Vector Text -> IO TblOps
-joinRight = runJoin (\_ r -> r)
+joinRight :: IOE :> es => TblOps -> TblOps -> Vector Text -> Eff es TblOps
+joinRight l r k = liftIO (runJoin (\_ r' -> r') l r k)
 
 -- ============================================================================
 -- Union / diff: operate on rows as a whole.
@@ -154,8 +155,8 @@ joinRight = runJoin (\_ r -> r)
 -- | Union: concat rows. Column layout follows left; right rows are
 -- projected onto left's column order (missing cols become empty). Matches
 -- PRQL @append@ semantics where both inputs are assumed to share a schema.
-joinUnion :: TblOps -> TblOps -> IO TblOps
-joinUnion left right = do
+joinUnion :: IOE :> es => TblOps -> TblOps -> Eff es TblOps
+joinUnion left right = liftIO $ do
   lRows <- readAll left
   rRows <- readAll right
   let lNames = (left ^. tblColNames)
@@ -170,8 +171,8 @@ joinUnion left right = do
 
 -- | Set diff: rows in left whose key tuple does not appear in right.
 -- With no keys, compares entire rows (matching PRQL @remove@).
-joinDiff :: TblOps -> TblOps -> Vector Text -> IO TblOps
-joinDiff left right keys = do
+joinDiff :: IOE :> es => TblOps -> TblOps -> Vector Text -> Eff es TblOps
+joinDiff left right keys = liftIO $ do
   lRows <- readAll left
   rRows <- readAll right
   let lIdx = nameIdx ((left ^. tblColNames))
@@ -184,7 +185,7 @@ joinDiff left right keys = do
 
 -- | Dispatch by 'JoinOp'. Keys are required for inner/left/right; for
 -- union and diff they're optional (diff falls back to full-row equality).
-joinWith :: JoinOp -> TblOps -> TblOps -> Vector Text -> IO TblOps
+joinWith :: IOE :> es => JoinOp -> TblOps -> TblOps -> Vector Text -> Eff es TblOps
 joinWith JInner l r k = joinInner l r k
 joinWith JLeft  l r k = joinLeft  l r k
 joinWith JRight l r k = joinRight l r k

@@ -20,6 +20,7 @@ import qualified Data.Vector as V
 import System.IO (IOMode(..), withFile, hPutStr)
 
 import Tv.Types
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | File extension for an 'ExportFmt', matching Tc's @ExportFmt.ext@.
@@ -43,8 +44,8 @@ exportFmtFromText t = case T.strip t of
 -- 'EFParquet' is rejected here — writing parquet requires a DuckDB
 -- connection which this module intentionally doesn't carry; callers
 -- must dispatch parquet exports through the DB backend directly.
-exportTable :: TblOps -> ExportFmt -> FilePath -> IO ()
-exportTable tbl fmt path = do
+exportTable :: IOE :> es => TblOps -> ExportFmt -> FilePath -> Eff es ()
+exportTable tbl fmt path = liftIO $ do
   rows <- materialize tbl
   let cols = (tbl ^. tblColNames)
   case fmt of

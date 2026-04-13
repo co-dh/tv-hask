@@ -23,6 +23,7 @@ import System.Exit (ExitCode(..))
 import Control.Exception (try, SomeException)
 
 import Tv.Types
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Downsampling threshold: rows above this are stride-sampled before plotting.
@@ -48,8 +49,8 @@ isSingleColPlot _         = False
 -- (cursor) and @grp@ holds the x/category indices with the first entry
 -- used as the x-axis. Returns @Just pngPath@ on success or @Nothing@
 -- on validation/render failure.
-runPlot :: PlotKind -> TblOps -> Int -> Vector Int -> IO (Maybe FilePath)
-runPlot kind tbl curCol grp = do
+runPlot :: IOE :> es => PlotKind -> TblOps -> Int -> Vector Int -> Eff es (Maybe FilePath)
+runPlot kind tbl curCol grp = liftIO $ do
   tmp <- getTemporaryDirectory
   let datPath = tmp </> "tv-plot.dat"
       pngPath = tmp </> "tv-plot.png"

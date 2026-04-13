@@ -157,35 +157,35 @@ metaTests = testGroup "meta"
                        , _vNav = mockNav { _nsVkind = VColMeta } }
       in tabName v @?= "meta"
   , testCase "mkMetaOps emits 7 cols in fixed order" $ do
-      m <- Meta.mkMetaOps mockTbl
+      m <- runEff (Meta.mkMetaOps mockTbl)
       (m ^. tblColNames) @?=
         V.fromList ["column","coltype","cnt","dist","null_pct","mn","mx"]
   , testCase "mkMetaOps: one row per source col" $ do
-      m <- Meta.mkMetaOps mockTbl
+      m <- runEff (Meta.mkMetaOps mockTbl)
       (m ^. tblNRows) @?= V.length ((mockTbl ^. tblColNames))
   , testCase "mkMetaOps: row i names source col i" $ do
-      m <- Meta.mkMetaOps mockTbl
+      m <- runEff (Meta.mkMetaOps mockTbl)
       c0 <- (m ^. tblCellStr) 0 0
       c1 <- (m ^. tblCellStr) 1 0
       c0 @?= "c0"
       c1 @?= "c1"
   , testCase "mkMetaOps cnt=nrows when no nulls" $ do
-      m <- Meta.mkMetaOps mockTbl
+      m <- runEff (Meta.mkMetaOps mockTbl)
       cnt <- (m ^. tblCellStr) 0 2          -- row 0 col cnt
       cnt @?= T.pack (show ((mockTbl ^. tblNRows)))
   , testCase "mkMetaOps null_pct rounds on half-null column" $ do
       let t = mkGridTbl ["x"] [["a"], [""], ["b"], [""]]
-      m <- Meta.mkMetaOps t
+      m <- runEff (Meta.mkMetaOps t)
       np <- (m ^. tblCellStr) 0 4
       np @?= "50"
   , testCase "mkMetaOps dist counts uniques" $ do
       let t = mkGridTbl ["x"] [["a"], ["a"], ["b"]]
-      m <- Meta.mkMetaOps t
+      m <- runEff (Meta.mkMetaOps t)
       d <- (m ^. tblCellStr) 0 3
       d @?= "2"
   , testCase "mkMetaOps min/max textual" $ do
       let t = mkGridTbl ["x"] [["b"], ["a"], ["c"]]
-      m <- Meta.mkMetaOps t
+      m <- runEff (Meta.mkMetaOps t)
       mn <- (m ^. tblCellStr) 0 5
       mx <- (m ^. tblCellStr) 0 6
       mn @?= "a"
@@ -614,21 +614,21 @@ filterExportTests = testGroup "filter/export"
   , testCase "exportTable csv writes header + rows" $ do
       p <- tmpPath "export-csv.csv"
       let t = mkGridTbl ["a","b"] [["1","x"], ["2","y"]]
-      Export.exportTable t EFCsv p
+      runEff (Export.exportTable t EFCsv p)
       s <- TIO.readFile p
       removeFile p
       s @?= "a,b\n1,x\n2,y\n"
   , testCase "exportTable csv quotes cells with commas" $ do
       p <- tmpPath "export-csv-q.csv"
       let t = mkGridTbl ["a"] [["x,y"]]
-      Export.exportTable t EFCsv p
+      runEff (Export.exportTable t EFCsv p)
       s <- TIO.readFile p
       removeFile p
       s @?= "a\n\"x,y\"\n"
   , testCase "exportTable ndjson one object per line" $ do
       p <- tmpPath "export.ndjson"
       let t = mkGridTbl ["a","b"] [["1","x"], ["2","y"]]
-      Export.exportTable t EFNdjson p
+      runEff (Export.exportTable t EFNdjson p)
       s <- TIO.readFile p
       removeFile p
       assertBool "obj1" ("{\"a\":\"1\",\"b\":\"x\"}" `T.isInfixOf` s)
@@ -636,14 +636,14 @@ filterExportTests = testGroup "filter/export"
   , testCase "exportTable json top-level array" $ do
       p <- tmpPath "export.json"
       let t = mkGridTbl ["a"] [["1"]]
-      Export.exportTable t EFJson p
+      runEff (Export.exportTable t EFJson p)
       s <- TIO.readFile p
       removeFile p
       s @?= "[{\"a\":\"1\"}]\n"
   , testCase "exportTable parquet throws (no DB)" $ do
       p <- tmpPath "export.parquet"
       let t = mkGridTbl ["a"] [["1"]]
-      r <- try (Export.exportTable t EFParquet p) :: IO (Either SomeException ())
+      r <- try (runEff (Export.exportTable t EFParquet p)) :: IO (Either SomeException ())
       exists <- doesFileExist p
       if exists then removeFile p else pure ()
       case r of
@@ -658,27 +658,27 @@ transposeTests :: TestTree
 transposeTests = testGroup "transpose"
   [ testCase "mkTransposedOps swaps dims" $ do
       let t = mkGridTbl ["a","b","c"] [["1","2","3"], ["4","5","6"]]
-      tx <- Transpose.mkTransposedOps t
+      tx <- runEff (Transpose.mkTransposedOps t)
       (tx ^. tblNRows) @?= 3
       V.length ((tx ^. tblColNames)) @?= 3  -- "column" + row_0 + row_1
   , testCase "transpose col0 is 'column' marker" $ do
       let t = mkGridTbl ["a","b"] [["1","2"]]
-      tx <- Transpose.mkTransposedOps t
+      tx <- runEff (Transpose.mkTransposedOps t)
       ((tx ^. tblColNames) V.! 0) @?= "column"
   , testCase "transpose col i>0 named 'row_{i-1}'" $ do
       let t = mkGridTbl ["a","b"] [["1","2"], ["3","4"]]
-      tx <- Transpose.mkTransposedOps t
+      tx <- runEff (Transpose.mkTransposedOps t)
       (tx ^. tblColNames) @?= V.fromList ["column", "row_0", "row_1"]
   , testCase "transpose cell[i][0] is source col name" $ do
       let t = mkGridTbl ["a","b"] [["1","2"]]
-      tx <- Transpose.mkTransposedOps t
+      tx <- runEff (Transpose.mkTransposedOps t)
       n0 <- (tx ^. tblCellStr) 0 0
       n1 <- (tx ^. tblCellStr) 1 0
       n0 @?= "a"
       n1 @?= "b"
   , testCase "transpose cells preserve values" $ do
       let t = mkGridTbl ["a","b"] [["1","2"], ["3","4"]]
-      tx <- Transpose.mkTransposedOps t
+      tx <- runEff (Transpose.mkTransposedOps t)
       v00 <- (tx ^. tblCellStr) 0 1  -- a, row0 = 1
       v01 <- (tx ^. tblCellStr) 0 2  -- a, row1 = 3
       v10 <- (tx ^. tblCellStr) 1 1  -- b, row0 = 2
@@ -688,7 +688,7 @@ transposeTests = testGroup "transpose"
       -- synthesize a 250-row, 1-col table
       let rows = [[T.pack (show i)] | i <- [0 .. 249 :: Int]]
           t    = mkGridTbl ["x"] rows
-      tx <- Transpose.mkTransposedOps t
+      tx <- runEff (Transpose.mkTransposedOps t)
       -- 1 source col -> 1 output row, 1 + min(250,200) = 201 output cols
       (tx ^. tblNRows) @?= 1
       V.length ((tx ^. tblColNames)) @?= 201
@@ -717,29 +717,29 @@ derivSplitTests = testGroup "derive/split"
       Derive.quoteId "a\"b" @?= "\"a\"\"b\""
   , testCase "addDerived adds a column via DuckDB" $ do
       let t = mkGridTblTy ["x"] [["1"], ["2"], ["3"]] (const CTInt)
-      t' <- Derive.addDerived t "y" "x + 1"
+      t' <- runEff (Derive.addDerived t "y" "x + 1")
       (t' ^. tblColNames) @?= V.fromList ["x", "y"]
       (t' ^. tblNRows) @?= 3
   , testCase "addDerived fails soft on bad expr" $ do
       let t = mkGridTblTy ["x"] [["1"], ["2"]] (const CTInt)
-      t' <- Derive.addDerived t "y" "!!!bogus!!!"
+      t' <- runEff (Derive.addDerived t "y" "!!!bogus!!!")
       -- on parse failure we keep the original shape
       (t' ^. tblColNames) @?= V.fromList ["x"]
   , testCase "splitColumn: int column no-op" $ do
       let t = mkGridTblTy ["n"] [["1"], ["2"]] (const CTInt)
-      t' <- Split.splitColumn t 0 "-"
+      t' <- runEff (Split.splitColumn t 0 "-")
       (t' ^. tblColNames) @?= V.fromList ["n"]
   , testCase "splitColumn: empty pat no-op" $ do
       let t = mkGridTbl ["s"] [["a-b-c"]]
-      t' <- Split.splitColumn t 0 ""
+      t' <- runEff (Split.splitColumn t 0 "")
       (t' ^. tblColNames) @?= V.fromList ["s"]
   , testCase "splitColumn: out-of-range idx no-op" $ do
       let t = mkGridTbl ["s"] [["a-b"]]
-      t' <- Split.splitColumn t 9 "-"
+      t' <- runEff (Split.splitColumn t 9 "-")
       (t' ^. tblColNames) @?= V.fromList ["s"]
   , testCase "splitColumn: dash splits adds cols" $ do
       let t = mkGridTbl ["tag"] [["a-b-c"], ["d-e-f"]]
-      t' <- Split.splitColumn t 0 "-"
+      t' <- runEff (Split.splitColumn t 0 "-")
       -- original + 3 extra parts
       V.length ((t' ^. tblColNames)) @?= 4
       ((t' ^. tblColNames) V.! 0) @?= "tag"
@@ -754,7 +754,7 @@ joinDiffTests = testGroup "join/diff"
   [ testCase "joinInner matches on key" $ do
       let l = mkGridTbl ["k","a"] [["1","x"], ["2","y"]]
           r = mkGridTbl ["k","b"] [["1","p"], ["3","q"]]
-      j <- Join.joinInner l r (V.singleton "k")
+      j <- runEff (Join.joinInner l r (V.singleton "k"))
       (j ^. tblNRows) @?= 1
       -- columns: left ++ right with collision suffix
       (j ^. tblColNames) @?= V.fromList ["k","a","k_r","b"]
@@ -763,40 +763,40 @@ joinDiffTests = testGroup "join/diff"
   , testCase "joinLeft keeps unmatched left row" $ do
       let l = mkGridTbl ["k"] [["1"], ["2"]]
           r = mkGridTbl ["k"] [["1"]]
-      j <- Join.joinLeft l r (V.singleton "k")
+      j <- runEff (Join.joinLeft l r (V.singleton "k"))
       (j ^. tblNRows) @?= 2
   , testCase "joinRight keeps unmatched right row" $ do
       let l = mkGridTbl ["k"] [["1"]]
           r = mkGridTbl ["k"] [["1"], ["2"]]
-      j <- Join.joinRight l r (V.singleton "k")
+      j <- runEff (Join.joinRight l r (V.singleton "k"))
       (j ^. tblNRows) @?= 2
   , testCase "joinUnion concatenates row counts" $ do
       let l = mkGridTbl ["a"] [["1"], ["2"]]
           r = mkGridTbl ["a"] [["3"]]
-      j <- Join.joinUnion l r
+      j <- runEff (Join.joinUnion l r)
       (j ^. tblNRows) @?= 3
       (j ^. tblColNames) @?= V.fromList ["a"]
   , testCase "joinDiff removes keyed matches" $ do
       let l = mkGridTbl ["k"] [["1"], ["2"], ["3"]]
           r = mkGridTbl ["k"] [["2"]]
-      j <- Join.joinDiff l r (V.singleton "k")
+      j <- runEff (Join.joinDiff l r (V.singleton "k"))
       (j ^. tblNRows) @?= 2
   , testCase "joinWith JUnion dispatches" $ do
       let l = mkGridTbl ["a"] [["1"]]
           r = mkGridTbl ["a"] [["2"]]
-      j <- Join.joinWith Join.JUnion l r V.empty
+      j <- runEff (Join.joinWith Join.JUnion l r V.empty)
       (j ^. tblNRows) @?= 2
   , testCase "diffTables with common key col" $ do
       let l = mkGridTbl ["k","v"] [["1","a"], ["2","b"]]
           r = mkGridTbl ["k","v"] [["1","a"], ["2","c"]]
-      d <- Diff.diffTables l r
+      d <- runEff (Diff.diffTables l r)
       -- at least one output row exists (joined on k)
       assertBool "rows>0" ((d ^. tblNRows) > 0)
   , testCase "diffTablesSameHide flags same cols" $ do
       let ty i = if i == 0 then CTStr else CTInt
           l = mkGridTblTy ["k","v"] [["1","10"], ["2","10"]] ty
           r = mkGridTblTy ["k","v"] [["1","10"], ["2","10"]] ty
-      (_, hide) <- Diff.diffTablesSameHide l r
+      (_, hide) <- runEff (Diff.diffTablesSameHide l r)
       -- "v" is identical on both sides → appears in sameHide
       assertBool "v_left hidden" (V.elem "v_left" hide)
       assertBool "v_right hidden" (V.elem "v_right" hide)

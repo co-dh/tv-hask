@@ -20,6 +20,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 
 import Tv.Types
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Column shared by both tables with identical name and type.
@@ -86,8 +87,8 @@ project idx row = V.map (\n -> case Map.lookup n idx of
 
 -- | Compare two TblOps, returning a materialized diff table and the set of
 -- same-value column names that callers may hide by default.
-diffTablesSameHide :: TblOps -> TblOps -> IO (TblOps, Vector Text)
-diffTablesSameHide left right = do
+diffTablesSameHide :: IOE :> es => TblOps -> TblOps -> Eff es (TblOps, Vector Text)
+diffTablesSameHide left right = liftIO $ do
   let common = commonCols left right
   case resolveKeys V.empty V.empty common of
     Nothing -> pure (mkRowOps (V.singleton "diff") V.empty, V.empty)
@@ -162,7 +163,7 @@ diffTablesSameHide left right = do
       pure (mkRowOps renamedCols allRows, sameHide)
 
 -- | Simple wrapper matching the sliver spec: just the diff table.
-diffTables :: TblOps -> TblOps -> IO TblOps
+diffTables :: IOE :> es => TblOps -> TblOps -> Eff es TblOps
 diffTables l r = fst <$> diffTablesSameHide l r
 
 -- | Build a read-only TblOps from a rectangular Text grid.

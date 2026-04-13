@@ -18,6 +18,7 @@ import qualified Data.Vector.Mutable as MV
 import Control.Monad (forM_)
 
 import Tv.Types
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- 9 levels: space + 8 Unicode block elements
@@ -31,8 +32,8 @@ prqlLimit = 1000
 -- | Compute sparkline strings for all columns.
 -- Returns one string per column (empty for non-numeric).
 -- nBars = number of histogram buckets.
-compute :: TblOps -> Int -> IO (Vector Text)
-compute tbl nBars = do
+compute :: IOE :> es => TblOps -> Int -> Eff es (Vector Text)
+compute tbl nBars = liftIO $ do
   let names = (tbl ^. tblColNames)
       nc = V.length names
       nr = min ((tbl ^. tblNRows)) prqlLimit

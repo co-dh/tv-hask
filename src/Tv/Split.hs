@@ -16,27 +16,28 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Tv.Types
-import Tv.Derive (rebuildWith, quoteId)
+import Tv.Derive (rebuildWithIO, quoteId)
 import qualified Tv.Data.DuckDB as DB
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Split the column at @colIdx@ by regex @pat@ into multiple new
 -- columns. Returns the original TblOps if the column isn't a string,
 -- the pattern is empty, the max-parts probe fails, or nothing would
 -- actually split (n <= 1). Mirrors Tc.Split.runWith.
-splitColumn :: TblOps -> Int -> Text -> IO TblOps
+splitColumn :: IOE :> es => TblOps -> Int -> Text -> Eff es TblOps
 splitColumn ops colIdx pat
   | colIdx < 0 || colIdx >= V.length ((ops ^. tblColNames)) = pure ops
   | (ops ^. tblColType) colIdx /= CTStr = pure ops
   | T.null pat = pure ops
-  | otherwise = do
+  | otherwise = liftIO $ do
       let col = (ops ^. tblColNames) V.! colIdx
           ep  = escSql pat
-      n <- maxParts ops col ep
+      n <- maxPartsIO ops col ep
       if n <= 1
         then pure ops
         else do
-          r <- try (rebuildWith ops (wrapSplit col ep n))
+          r <- try (rebuildWithIO ops (wrapSplit col ep n))
           case r of
             Right ops' -> pure ops'
             Left (_ :: SomeException) -> pure ops
@@ -54,8 +55,11 @@ wrapSplit col ep n sub =
 -- pattern @ep@. Caps at 20 to match Tc.Split.maxParts. Any error (bad
 -- regex, unsupported func, etc.) returns 0, which makes splitColumn a
 -- no-op upstream.
-maxParts :: TblOps -> Text -> Text -> IO Int
-maxParts ops col ep = do
+maxParts :: IOE :> es => TblOps -> Text -> Text -> Eff es Int
+maxParts ops col ep = liftIO (maxPartsIO ops col ep)
+
+maxPartsIO :: TblOps -> Text -> Text -> IO Int
+maxPartsIO ops col ep = do
   -- Re-materialize the current TblOps into a DuckDB table, then run the
   -- count query on it. We do the whole thing in one go by wrapping the
   -- same rebuild logic as derive, but swapping the final SELECT for a
@@ -64,7 +68,7 @@ maxParts ops col ep = do
       wrap sub =
         "SELECT COALESCE(max(array_length(string_split_regex(" <> qc <> ", '"
         <> ep <> "'))), 0) AS n FROM (" <> sub <> ")"
-  r <- try (rebuildWith ops wrap)
+  r <- try (rebuildWithIO ops wrap)
   case r of
     Left (_ :: SomeException) -> pure 0
     Right ops' -> do

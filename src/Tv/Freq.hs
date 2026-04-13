@@ -25,6 +25,7 @@ import Optics.Core ((^.))
 
 import Tv.Types
 import qualified Tv.Derive as Derive
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 
 -- | Build a frequency-table TblOps. Given a source table and the column
 -- indices to group on (from @NavState._nsGrp@ + current column), produce
@@ -35,7 +36,7 @@ import qualified Tv.Derive as Derive
 -- is out of range; falls back to the source on any DuckDB error too (the
 -- Lean version is similarly fail-soft — AdbcTable.freqTable returns
 -- 'none' and the caller leaves the stack alone).
-mkFreqOps :: TblOps -> Vector Int -> IO TblOps
+mkFreqOps :: IOE :> es => TblOps -> Vector Int -> Eff es TblOps
 mkFreqOps src colIdxs
   | V.null colIdxs = pure src
   | V.any outOfRange colIdxs = pure src
@@ -49,7 +50,7 @@ mkFreqOps src colIdxs
             "SELECT " <> groupSql <> ", COUNT(*) AS count FROM ("
               <> sub <> ") GROUP BY " <> groupSql
               <> " ORDER BY count DESC LIMIT 1000"
-      handle (\(_ :: SomeException) -> pure src) (Derive.rebuildWith src wrap)
+      liftIO (handle (\(_ :: SomeException) -> pure src) (Derive.rebuildWithIO src wrap))
   where
     names = src ^. tblColNames
     nc    = V.length names
@@ -58,8 +59,8 @@ mkFreqOps src colIdxs
 -- | Build a PRQL filter expression matching a freq view row. Given the
 -- freq table, group column names, and row index, produces
 -- @"`col1` == 'v1' && `col2` == 'v2'"@. Lean Tc.Freq.filterExprIO.
-filterExpr :: TblOps -> Vector Text -> Int -> IO Text
-filterExpr freqOps cols row = do
+filterExpr :: IOE :> es => TblOps -> Vector Text -> Int -> Eff es Text
+filterExpr freqOps cols row = liftIO $ do
   let nc = V.length cols
   parts <- V.generateM nc $ \i -> do
     v <- (freqOps ^. tblCellStr) row i
