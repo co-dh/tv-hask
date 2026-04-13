@@ -44,8 +44,8 @@ import Control.Exception (SomeException)
 import Control.Monad.IO.Class (liftIO)
 import Effectful (Eff, IOE, runEff, (:>))
 import Effectful.Error.Static (Error, catchError, runErrorNoCallStack, throwError)
-import Effectful.State.Static.Local (State, evalState, get, gets, modify, put, runState)
-import Optics.Core (A_Getter, A_Setter, Is, Optic', view)
+import Effectful.State.Static.Local (State, get, gets, modify, put, runState)
+import Optics.Core (A_Getter, A_Setter, Is, Optic')
 import qualified Optics.Core as O
 
 import Tv.Render (AppState)
@@ -80,7 +80,7 @@ runAppEff st =
 
 -- | Read via an optic from the 'State' effect.
 use :: (State s :> es, Is k A_Getter) => Optic' k is s a -> Eff es a
-use l = gets (view l)
+use l = gets (O.view l)
 
 infix 4 .=
 -- | Set via an optic in the 'State' effect.
