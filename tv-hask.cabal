@@ -27,6 +27,7 @@ library
     Tv.Nav
     Tv.View
     Tv.Render
+    Tv.Eff
     Tv.Key
     Tv.CmdConfig
     Tv.Theme
