@@ -20,7 +20,7 @@ import System.Environment (lookupEnv)
 import Control.Exception (try, SomeException)
 import Data.IORef
 import qualified Tv.CmdConfig as CC
-import Tv.Eff (runEff)
+import Tv.Eff (Eff, IOE, (:>), liftIO, runEff)
 
 -- | Global test mode flag (mirrors Lean Fzf.testMode IORef).
 -- When true, fzfCore returns the first line, fzfIdx returns 0.
@@ -28,11 +28,11 @@ import Tv.Eff (runEff)
 testModeRef :: IORef Bool
 testModeRef = unsafePerformIO (newIORef False)
 
-setTestMode :: Bool -> IO ()
-setTestMode = writeIORef testModeRef
+setTestMode :: IOE :> es => Bool -> Eff es ()
+setTestMode = liftIO . writeIORef testModeRef
 
-getTestMode :: IO Bool
-getTestMode = readIORef testModeRef
+getTestMode :: IOE :> es => Eff es Bool
+getTestMode = liftIO (readIORef testModeRef)
 
 -- | Extract the first field (handler name) from an aligned flat-selection line:
 --   "plot.area    | cg |   | Plot: area chart"  →  Just "plot.area"
@@ -48,12 +48,12 @@ parseFlatSel s
 -- In test mode (setTestMode True), returns the first non-empty line without
 -- spawning fzf — mirrors Lean Fzf.fzfCore test-mode path.
 -- Uses --tmux popup if $TMUX is set, else --height inline picker.
-fzfCore :: [Text] -> Text -> IO Text
+fzfCore :: IOE :> es => [Text] -> Text -> Eff es Text
 fzfCore opts input = do
   tm <- getTestMode
   if tm then pure $ case filter (not . T.null) (T.splitOn "\n" input) of
                        (x:_) -> x; _ -> ""
-  else do
+  else liftIO $ do
     tmux <- lookupEnv "TMUX"
     let lns = filter (not . T.null) (T.splitOn "\n" input)
         popupH = min 15 (length lns + 2)
@@ -86,7 +86,7 @@ fzfCore opts input = do
   where tshow = T.pack . show
 
 -- | Single-select wrapper; returns Nothing on empty/cancel.
-fzf :: [Text] -> Text -> IO (Maybe Text)
+fzf :: IOE :> es => [Text] -> Text -> Eff es (Maybe Text)
 fzf opts input = do
   out <- fzfCore opts input
   pure (if T.null out then Nothing else Just out)
@@ -94,7 +94,7 @@ fzf opts input = do
 -- | Indexed select over a list of items. Prefixes each line with "i\t",
 -- hides the index from the display with --with-nth=2.., parses the index
 -- out of the selection.
-fzfIdx :: [Text] -> [Text] -> IO (Maybe Int)
+fzfIdx :: IOE :> es => [Text] -> [Text] -> Eff es (Maybe Int)
 fzfIdx opts items = do
   tm <- getTestMode
   if tm then pure (if null items then Nothing else Just 0)
@@ -109,9 +109,9 @@ fzfIdx opts items = do
 -- | Build aligned menu items from CmdConfig for a given view context.
 -- Each line is @"handler | ctx | key | label"@ with columns padded so the
 -- pipes line up in fzf.  Used by 'cmdMode' for the space-bar menu.
-flatItems :: Text -> IO [Text]
+flatItems :: IOE :> es => Text -> Eff es [Text]
 flatItems vctx = do
-  items <- runEff (CC.menuItems vctx)
+  items <- CC.menuItems vctx
   let (maxH, maxX, maxK) = foldr step (0, 0, 0) items
       step (h, x, k, _) (mh, mx, mk) =
         (max mh (T.length h), max mx (T.length x), max mk (T.length k))
@@ -122,7 +122,7 @@ flatItems vctx = do
 -- | Space menu: show fzf picker over all commands visible in @vctx@.
 -- Returns the handler-name string (first "|" field) of the chosen row, or
 -- Nothing on cancel / empty menu.
-cmdMode :: Text -> IO (Maybe Text)
+cmdMode :: IOE :> es => Text -> Eff es (Maybe Text)
 cmdMode vctx = do
   items <- flatItems vctx
   if null items then pure Nothing

@@ -45,6 +45,7 @@ import System.FilePath ((</>), takeExtension, dropExtension)
 import Tv.Types
 import Tv.Util (logDir, logWrite)
 import Tv.View
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- ============================================================================
@@ -84,14 +85,14 @@ sanitize :: Text -> Text
 sanitize = T.filter (\c -> isAlphaNum c || c == '-' || c == '_' || c == '.')
 
 -- | ~/.cache/tv/sessions/, created if missing.
-sessDir :: IO FilePath
+sessDir :: IOE :> es => Eff es FilePath
 sessDir = do
   d <- (</> "sessions") <$> logDir
-  createDirectoryIfMissing True d
+  liftIO (createDirectoryIfMissing True d)
   pure d
 
 -- | Full path for session name (sanitized). Returns Nothing if name empties out.
-sessPath :: Text -> IO (Maybe FilePath)
+sessPath :: IOE :> es => Text -> Eff es (Maybe FilePath)
 sessPath name =
   let safe = sanitize name
   in if T.null safe
@@ -276,7 +277,7 @@ decodeSession = A.decode
 
 -- | Persist a ViewStack under a name (sanitized). Empty name → autoName.
 -- On success the session file path is written to the log.
-saveSession :: Text -> ViewStack -> IO (Maybe FilePath)
+saveSession :: IOE :> es => Text -> ViewStack -> Eff es (Maybe FilePath)
 saveSession nameIn vs = do
   let name = if T.null (sanitize nameIn) then autoName vs else nameIn
   mpath <- sessPath name
@@ -285,7 +286,7 @@ saveSession nameIn vs = do
       logWrite "session" ("save: invalid name " <> T.unpack nameIn)
       pure Nothing
     Just p -> do
-      r <- try (BL.writeFile p (encodeSession (stackToSaved vs))) :: IO (Either SomeException ())
+      r <- liftIO (try (BL.writeFile p (encodeSession (stackToSaved vs))) :: IO (Either SomeException ()))
       case r of
         Left e  -> logWrite "session" ("save failed: " <> show e) >> pure Nothing
         Right _ -> do
@@ -295,22 +296,24 @@ saveSession nameIn vs = do
 -- | Load a saved session by name. Returns Nothing on missing file or parse error.
 -- NOTE: returns 'SavedSession', not a live 'ViewStack' — the TblOps pipeline
 -- has to be re-executed by App/SourceConfig before a View can exist.
-loadSession :: Text -> IO (Maybe SavedSession)
+loadSession :: IOE :> es => Text -> Eff es (Maybe SavedSession)
 loadSession name = sessPath name >>= \case
   Nothing -> pure Nothing
-  Just p  -> (try (BL.readFile p) :: IO (Either SomeException BL.ByteString)) >>= \case
-    Left _   -> pure Nothing
-    Right bs -> case decodeSession bs of
-      Nothing -> Nothing <$ logWrite "session" ("parse failed: " <> p)
-      Just s  -> pure (Just s)
+  Just p  -> do
+    r <- liftIO (try (BL.readFile p) :: IO (Either SomeException BL.ByteString))
+    case r of
+      Left _   -> pure Nothing
+      Right bs -> case decodeSession bs of
+        Nothing -> Nothing <$ logWrite "session" ("parse failed: " <> p)
+        Just s  -> pure (Just s)
 
 -- | List available session names (*.json stems) in ~/.cache/tv/sessions/.
-listSessions :: IO [Text]
+listSessions :: IOE :> es => Eff es [Text]
 listSessions = do
   d <- sessDir
-  exists <- doesDirectoryExist d
+  exists <- liftIO (doesDirectoryExist d)
   if not exists then pure [] else
-    either (const []) (mapMaybe stem) <$>
+    liftIO $ either (const []) (mapMaybe stem) <$>
       (try (listDirectory d) :: IO (Either SomeException [FilePath]))
   where
     stem f | takeExtension f == ".json" = Just (T.pack (dropExtension f))

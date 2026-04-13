@@ -21,6 +21,7 @@ import Control.Exception (try, SomeException, bracket)
 import Control.Monad (void, unless)
 import Network.Socket (Socket, Family(..), SocketType(..), SockAddr(..), socket, bind, listen, accept, close, defaultProtocol)
 import qualified Network.Socket.ByteString as NSB
+import Tv.Eff (Eff, IOE, (:>), liftIO, runEff)
 
 -- ============================================================================
 -- Log
@@ -34,25 +35,25 @@ logDirRef = unsafePerformIO $ do
   createDirectoryIfMissing True dir
   newIORef dir
 
-logDir :: IO FilePath
-logDir = readIORef logDirRef
+logDir :: IOE :> es => Eff es FilePath
+logDir = liftIO (readIORef logDirRef)
 
-logPath :: IO FilePath
+logPath :: IOE :> es => Eff es FilePath
 logPath = (</> "tv.log") <$> logDir
 
-logTimestamp :: IO String
-logTimestamp = do
+logTimestamp :: IOE :> es => Eff es String
+logTimestamp = liftIO $ do
   now <- getCurrentTime
   zt <- utcToLocalZonedTime now
   pure $ formatTime defaultTimeLocale "%H:%M:%S%Q" (zonedTimeToLocalTime zt)
 
-logWrite :: String -> String -> IO ()
+logWrite :: IOE :> es => String -> String -> Eff es ()
 logWrite tag msg = do
   p <- logPath
   ts <- logTimestamp
-  appendFile p $ "[" ++ ts ++ "] [" ++ tag ++ "] " ++ msg ++ "\n"
+  liftIO $ appendFile p $ "[" ++ ts ++ "] [" ++ tag ++ "] " ++ msg ++ "\n"
 
-logError :: String -> IO ()
+logError :: IOE :> es => String -> Eff es ()
 logError = logWrite "error"
 
 -- ============================================================================
@@ -63,21 +64,21 @@ logError = logWrite "error"
 tmpDirRef :: IORef FilePath
 tmpDirRef = unsafePerformIO $ newIORef ""
 
-initTmpDir :: IO FilePath
-initTmpDir = do
+initTmpDir :: IOE :> es => Eff es FilePath
+initTmpDir = liftIO $ do
   out <- readProcess "mktemp" ["-d", "/tmp/tv-XXXXXX"] ""
   let dir = filter (/= '\n') out
   writeIORef tmpDirRef dir
   pure dir
 
-tmpPath :: String -> IO FilePath
-tmpPath name = (</> name) <$> readIORef tmpDirRef
+tmpPath :: IOE :> es => String -> Eff es FilePath
+tmpPath name = liftIO ((</> name) <$> readIORef tmpDirRef)
 
-tryRemoveFile :: FilePath -> IO ()
-tryRemoveFile p = void (try @SomeException $ removeFile p)
+tryRemoveFile :: IOE :> es => FilePath -> Eff es ()
+tryRemoveFile p = liftIO (void (try @SomeException $ removeFile p))
 
-cleanupTmp :: IO ()
-cleanupTmp = do
+cleanupTmp :: IOE :> es => Eff es ()
+cleanupTmp = liftIO $ do
   dir <- readIORef tmpDirRef
   unless (null dir) $ void (try @SomeException $ removeDirectoryRecursive dir)
 
@@ -89,8 +90,8 @@ cleanupTmp = do
 sockRef :: IORef (Maybe (Socket, FilePath))
 sockRef = unsafePerformIO $ newIORef Nothing
 
-initSocket :: IO ()
-initSocket = do
+initSocket :: IOE :> es => Eff es ()
+initSocket = liftIO $ do
   tmp <- getTemporaryDirectory
   pid <- getProcessID
   let path = tmp </> "tv-" ++ show pid ++ ".sock"
@@ -102,8 +103,8 @@ initSocket = do
 
 -- | Poll for a command string from the socket (non-blocking via accept timeout).
 -- Returns Nothing if no pending connection.
-sockPollCmd :: IO (Maybe Text)
-sockPollCmd = do
+sockPollCmd :: IOE :> es => Eff es (Maybe Text)
+sockPollCmd = liftIO $ do
   msock <- readIORef sockRef
   case msock of
     Nothing -> pure Nothing
@@ -120,21 +121,21 @@ sockPollCmd = do
           let t = T.strip (TE.decodeUtf8 bs)
           in pure (if T.null t then Nothing else Just t)
 
-sockGetPath :: IO FilePath
-sockGetPath = maybe "" snd <$> readIORef sockRef
+sockGetPath :: IOE :> es => Eff es FilePath
+sockGetPath = liftIO (maybe "" snd <$> readIORef sockRef)
 
-shutdownSocket :: IO ()
+shutdownSocket :: IOE :> es => Eff es ()
 shutdownSocket = do
-  msock <- readIORef sockRef
+  msock <- liftIO (readIORef sockRef)
   case msock of
     Nothing -> pure ()
     Just (sock, path) -> do
-      close sock
+      liftIO (close sock)
       tryRemoveFile path
-      writeIORef sockRef Nothing
+      liftIO (writeIORef sockRef Nothing)
 
 bracketSocket :: IO a -> IO a
-bracketSocket act = bracket initSocket (const shutdownSocket) (const act)
+bracketSocket act = bracket (runEff initSocket) (const (runEff shutdownSocket)) (const act)
 
 -- ============================================================================
 -- Remote: URI path operations
