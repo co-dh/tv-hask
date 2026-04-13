@@ -140,13 +140,10 @@ defaultDark = V.fromList
 stylesRef :: IORef (Vector StylePair)
 stylesRef = unsafePerformIO $ newIORef defaultDark
 
-getStyles :: IOE :> es => Eff es (Vector StylePair)
-getStyles = liftIO (readIORef stylesRef)
-
 -- | Detect terminal background: dark (True) or light (False)
 isDark :: IOE :> es => Eff es Bool
-isDark = do
-  mfgbg <- liftIO (lookupEnv "COLORFGBG")
+isDark = liftIO $ do
+  mfgbg <- lookupEnv "COLORFGBG"
   pure $ case mfgbg of
     Just s -> case reads (reverse $ takeWhile (/= ';') $ reverse s) of
       [(bg, "")] -> (bg :: Int) < 7
@@ -159,15 +156,15 @@ builtinCsv = ""  -- TODO: embed theme.csv via file-embed or TH
 
 -- | Load theme.csv: next to binary, then CWD, then builtin
 loadCsv :: IOE :> es => Eff es Text
-loadCsv = do
-  exePath <- liftIO getExecutablePath
+loadCsv = liftIO $ do
+  exePath <- getExecutablePath
   let binDir = takeDirectory exePath
   tryPaths [binDir </> "theme.csv", "theme.csv"]
   where
     tryPaths [] = pure builtinCsv
     tryPaths (p:ps) = do
-      ok <- liftIO (doesFileExist p)
-      if ok then liftIO (TIO.readFile p) else tryPaths ps
+      ok <- doesFileExist p
+      if ok then TIO.readFile p else tryPaths ps
 
 -- | Load theme by name from CSV
 loadTheme :: IOE :> es => Text -> Text -> Eff es (Vector StylePair)
@@ -222,13 +219,15 @@ initTheme = do
   dark <- isDark
   let v = if dark then "dark" else "light"
   styles <- loadTheme "default" v
-  liftIO (writeIORef stylesRef styles)
-  let idx = maybe 0 id $ V.findIndex (== ("default", v)) themes
-  pure $ ThemeState styles idx
+  liftIO $ do
+    writeIORef stylesRef styles
+    let idx = maybe 0 id $ V.findIndex (== ("default", v)) themes
+    pure $ ThemeState styles idx
 
 -- | Apply theme by index
 applyTheme :: IOE :> es => ThemeState -> Int -> Eff es ThemeState
 applyTheme ts idx = do
   styles <- loadIdx idx
-  liftIO (writeIORef stylesRef styles)
-  pure $ ts { tsStyles = styles, tsThemeIdx = idx }
+  liftIO $ do
+    writeIORef stylesRef styles
+    pure $ ts { tsStyles = styles, tsThemeIdx = idx }

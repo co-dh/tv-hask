@@ -68,12 +68,6 @@ cmdLookup c = do
   m <- liftIO (readIORef cmdInfoRef)
   pure $ Map.findWithDefault (CmdInfo c False) c m
 
--- | Lookup by command string (socket/external boundary)
-handlerLookup :: IOE :> es => Text -> Eff es (Maybe CmdInfo)
-handlerLookup h = case cmdFromStr h of
-  Just c -> Just <$> cmdLookup c
-  Nothing -> pure Nothing
-
 -- | Check if command takes user input
 isArgCmd :: IOE :> es => Cmd -> Eff es Bool
 isArgCmd c = Set.member c <$> liftIO (readIORef argCmdRef)
