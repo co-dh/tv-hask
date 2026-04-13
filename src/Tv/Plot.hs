@@ -23,7 +23,7 @@ import System.Exit (ExitCode(..))
 import Control.Exception (try, SomeException)
 
 import Tv.Types
-  ( PlotKind(..), TblOps(..), isNumeric )
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Downsampling threshold: rows above this are stride-sampled before plotting.
 -- Mirrors Tc/Tc/Plot.lean's @maxPoints@ (2000).
@@ -53,12 +53,12 @@ runPlot kind tbl curCol grp = do
   tmp <- getTemporaryDirectory
   let datPath = tmp </> "tv-plot.dat"
       pngPath = tmp </> "tv-plot.png"
-      names   = _tblColNames tbl
-      nr      = _tblNRows tbl
+      names   = (tbl ^. tblColNames)
+      nr      = (tbl ^. tblNRows)
       stride  = max 1 (nr `div` maxPoints)
   if isSingleColPlot kind
     then do
-      if not (isNumeric (_tblColType tbl curCol))
+      if not (isNumeric ((tbl ^. tblColType) curCol))
         then pure Nothing
         else do
           let yName = names V.! curCol
@@ -72,7 +72,7 @@ runPlot kind tbl curCol grp = do
           let xIdx  = V.head grp
               xName = names V.! xIdx
               yName = names V.! curCol
-          if not (isNumeric (_tblColType tbl curCol))
+          if not (isNumeric ((tbl ^. tblColType) curCol))
             then pure Nothing
             else do
               writeXYCols tbl datPath grp curCol nr stride
@@ -83,7 +83,7 @@ runPlot kind tbl curCol grp = do
 writeSingleCol :: TblOps -> FilePath -> Text -> Int -> Int -> Int -> IO ()
 writeSingleCol tbl path yName col nr stride = do
   let rows = [0, stride .. nr - 1]
-  vals <- mapM (\r -> _tblCellStr tbl r col) rows
+  vals <- mapM (\r -> (tbl ^. tblCellStr) r col) rows
   let body = T.unlines (filter (not . T.null) vals)
   TIO.writeFile path (yName <> "\n" <> body)
 
@@ -93,11 +93,11 @@ writeSingleCol tbl path yName col nr stride = do
 writeXYCols :: TblOps -> FilePath -> Vector Int -> Int -> Int -> Int -> IO ()
 writeXYCols tbl path grp curCol nr stride = do
   let cols   = V.toList grp ++ [curCol]
-      names  = _tblColNames tbl
+      names  = (tbl ^. tblColNames)
       header = T.intercalate "\t" [names V.! c | c <- cols]
       rows   = [0, stride .. nr - 1]
   body <- mapM (\r -> do
-                   cells <- mapM (_tblCellStr tbl r) cols
+                   cells <- mapM ((tbl ^. tblCellStr) r) cols
                    pure (T.intercalate "\t" (map clean cells))) rows
   TIO.writeFile path (T.unlines (header : body))
   where

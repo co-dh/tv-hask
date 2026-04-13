@@ -90,7 +90,8 @@ import Database.DuckDB.FFI
   , pattern DuckDBTypeVarchar
   )
 
-import Tv.Types (ColType (..), TblOps (..), Column, Op(..), escSql)
+import Tv.Types hiding (DataChunk)
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- ============================================================================
 -- Handle types
@@ -395,7 +396,7 @@ readCellAny cv row = case cvType cv of
   _      -> maybe "" id (readCellText cv row)  -- fallback; TODO date/time fmt
 
 -- | Zero-copy TblOps backed by DuckDB chunks. Rows are NOT materialized;
--- _tblCellStr indexes into the chunk vector storage on demand via readCellAny.
+-- tblCellStr into the chunk vector storage on demand via readCellAny.
 -- The chunk ForeignPtrs keep the underlying DuckDB memory alive as long as
 -- the TblOps is reachable.
 mkDbOps :: Result -> IO TblOps

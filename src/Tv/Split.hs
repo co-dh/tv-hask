@@ -18,6 +18,7 @@ import qualified Data.Vector as V
 import Tv.Types
 import Tv.Derive (rebuildWith, quoteId)
 import qualified Tv.Data.DuckDB as DB
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Split the column at @colIdx@ by regex @pat@ into multiple new
 -- columns. Returns the original TblOps if the column isn't a string,
@@ -25,11 +26,11 @@ import qualified Tv.Data.DuckDB as DB
 -- actually split (n <= 1). Mirrors Tc.Split.runWith.
 splitColumn :: TblOps -> Int -> Text -> IO TblOps
 splitColumn ops colIdx pat
-  | colIdx < 0 || colIdx >= V.length (_tblColNames ops) = pure ops
-  | _tblColType ops colIdx /= CTStr = pure ops
+  | colIdx < 0 || colIdx >= V.length ((ops ^. tblColNames)) = pure ops
+  | (ops ^. tblColType) colIdx /= CTStr = pure ops
   | T.null pat = pure ops
   | otherwise = do
-      let col = _tblColNames ops V.! colIdx
+      let col = (ops ^. tblColNames) V.! colIdx
           ep  = escSql pat
       n <- maxParts ops col ep
       if n <= 1
@@ -67,7 +68,7 @@ maxParts ops col ep = do
   case r of
     Left (_ :: SomeException) -> pure 0
     Right ops' -> do
-      cell <- _tblCellStr ops' 0 0
+      cell <- (ops' ^. tblCellStr) 0 0
       let v = fromMaybe 0 (readIntMaybe cell)
       pure (min v 20)
 

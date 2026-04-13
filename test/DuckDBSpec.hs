@@ -11,8 +11,9 @@ import System.Directory (createDirectoryIfMissing, removeDirectoryRecursive, get
 import Control.Exception (bracket)
 import qualified Tv.Data.DuckDB as D
 import qualified Tv.Folder as Folder
-import Tv.Types (ColType (..), TblOps (..))
+import Tv.Types
 import TestUtil (withMemConn)
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 tests :: TestTree
 tests =
@@ -91,9 +92,9 @@ tests =
         withMemConn $ \c -> do
           r <- D.query c "SELECT * FROM read_parquet('/home/dh/repo/Tc/data/1.parquet') LIMIT 1000"
           ops <- D.mkDbOps r
-          assertBool "nrows > 0" (_tblNRows ops > 0)
-          assertBool "ncols > 0" (V.length (_tblColNames ops) > 0)
-          s <- _tblCellStr ops 0 0
+          assertBool "nrows > 0" ((ops ^. tblNRows) > 0)
+          assertBool "ncols > 0" (V.length ((ops ^. tblColNames)) > 0)
+          s <- (ops ^. tblCellStr) 0 0
           assertBool ("cell (0,0) = " ++ T.unpack s) (not (T.null s))
     , testCase "listFolder returns expected entries for a temp dir" $ do
         tmp <- getTemporaryDirectory
@@ -105,9 +106,9 @@ tests =
                 removeDirectoryRecursive
                 $ \_ -> do
           ops <- Folder.listFolder d
-          V.toList (_tblColNames ops) @?= ["name", "size", "modified", "type"]
-          _tblNRows ops @?= 3
-          names <- mapM (\r -> _tblCellStr ops r 0) [0 .. _tblNRows ops - 1]
+          V.toList ((ops ^. tblColNames)) @?= ["name", "size", "modified", "type"]
+          (ops ^. tblNRows) @?= 3
+          names <- mapM (\r -> (ops ^. tblCellStr) r 0) [0 .. (ops ^. tblNRows) - 1]
           assertBool ("names = " ++ show names) (".." `elem` names)
           assertBool ("names = " ++ show names) ("a.txt" `elem` names)
           assertBool ("names = " ++ show names) ("b.txt" `elem` names)

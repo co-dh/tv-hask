@@ -18,6 +18,7 @@ import Data.Maybe (fromMaybe)
 import TestUtil
 import Tv.Types
 import qualified Tv.Data.DuckDB as D
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 tests :: TestTree
 tests = testGroup "LargeData (ported from TestLargeData.lean)"
@@ -81,7 +82,7 @@ tests = testGroup "LargeData (ported from TestLargeData.lean)"
     -- is not ported — src/Tv/Render.hs uses fixed-width columns.
     testCase "width_stable_after_info: header cols stable with infoVis toggle" $ do
       -- Stand-in: headerText from Render is deterministic regardless of
-      -- asInfoVis state. Exercise it to ensure no crash.
+      -- asInfoVis. Exercise it to ensure no crash.
       withMemConn $ \c -> do
         r <- D.query c "SELECT 1 AS a, 2 AS b"
         D.columnNames r @?= V.fromList ["a", "b"]

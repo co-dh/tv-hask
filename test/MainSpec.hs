@@ -46,7 +46,8 @@ import qualified Tv.Join as Join
 import qualified Tv.Session as Sess
 import qualified Tv.SourceConfig as SC
 import Tv.App (handleCmd)
-import Tv.Render (AppState(..))
+import Tv.Render
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- ----------------------------------------------------------------------------
 -- Pending: helper that stands in for "we know what the Lean test wanted but
@@ -62,12 +63,12 @@ mkAppState :: TblOps -> AppState
 mkAppState t =
   let Just v = fromTbl t "mock" 0 V.empty 0
   in AppState
-       { asStack = ViewStack v []
-       , asThemeIdx = 0, asTestKeys = [], asMsg = "", asErr = ""
-       , asCmd = "", asPendingCmd = Nothing
-       , asGrid = V.empty
-       , asVisRow0 = 0, asVisCol0 = 0, asVisH = 5, asVisW = 3
-       , asStyles = V.empty, asInfoVis = False
+       { _asStack = ViewStack v []
+       , _asThemeIdx = 0, _asTestKeys = [], _asMsg = "", _asErr = ""
+       , _asCmd = "", _asPendingCmd = Nothing
+       , _asGrid = V.empty
+       , _asVisRow0 = 0, _asVisCol0 = 0, _asVisH = 5, _asVisW = 3
+       , _asStyles = V.empty, _asInfoVis = False
        }
 
 -- | Resolve a path in the system temp dir; callers are responsible for
@@ -114,14 +115,14 @@ sortTests = testGroup "sort"
         @?= Just (ESort 0 V.empty V.empty False)
   , testCase "sort.asc cursor-col is curColIdx" $
       -- move cursor right then check ESort carries col=1
-      let ns = (_vNav testView) { _nsCol = mkAxis { _naCur = 1 } }
+      let ns = ((testView ^. vNav)) { _nsCol = mkAxis { _naCur = 1 } }
           v' = testView { _vNav = ns }
       in fmap snd (updateView v' SortAsc 1)
            @?= Just (ESort 1 V.empty V.empty True)
   , testCase "updateView ColGrp marks current col as group key" $ do
       -- ColGrp is pure on NavState; the group list should include c0 after.
       case Nav.execNav ColGrp 1 (mockNavFor mockTbl) of
-        Just ns' -> _nsGrp ns' @?= V.singleton "c0"
+        Just ns' -> (ns' ^. nsGrp) @?= V.singleton "c0"
         Nothing  -> assertFailure "ColGrp returned Nothing"
   , testCase "sort_selected_not_key: ColGrp + SortAsc keeps group disp first" $ do
       -- After grouping c0, dispIdxs should start with [0] (the grouped col)
@@ -129,15 +130,15 @@ sortTests = testGroup "sort"
       case Nav.execNav ColGrp 1 (mockNavFor mockTbl) of
         Nothing -> assertFailure "ColGrp failed"
         Just ns' -> do
-          let idxs = _nsDispIdxs ns'
+          let idxs = (ns' ^. nsDispIdxs)
           V.head idxs @?= 0
-          V.length idxs @?= V.length (_tblColNames mockTbl)
+          V.length idxs @?= V.length ((mockTbl ^. tblColNames))
   , testCase "folder_sort_type: Folder.listFolder has 'type' col at idx 3" $ do
       base <- getTemporaryDirectory
       let d = base </> "tv-hask-foldersort"
       System.Directory.createDirectoryIfMissing True d
       t <- Folder.listFolder d
-      _tblColNames t V.! 3 @?= "type"
+      (t ^. tblColNames) V.! 3 @?= "type"
   , pending "sort_asc binary-level" "needs tv-binary spawn+stdin driver (Test.lean uses expect)"
   , pending "sort_desc binary-level" "needs tv-binary spawn+stdin driver (Test.lean uses expect)"
   , pending "sort_excludes_key" "needs NavState to track which col was sorted (currently delegates to _tblSortBy)"
@@ -156,36 +157,36 @@ metaTests = testGroup "meta"
       in tabName v @?= "meta"
   , testCase "mkMetaOps emits 7 cols in fixed order" $ do
       m <- Meta.mkMetaOps mockTbl
-      _tblColNames m @?=
+      (m ^. tblColNames) @?=
         V.fromList ["column","coltype","cnt","dist","null_pct","mn","mx"]
   , testCase "mkMetaOps: one row per source col" $ do
       m <- Meta.mkMetaOps mockTbl
-      _tblNRows m @?= V.length (_tblColNames mockTbl)
+      (m ^. tblNRows) @?= V.length ((mockTbl ^. tblColNames))
   , testCase "mkMetaOps: row i names source col i" $ do
       m <- Meta.mkMetaOps mockTbl
-      c0 <- _tblCellStr m 0 0
-      c1 <- _tblCellStr m 1 0
+      c0 <- (m ^. tblCellStr) 0 0
+      c1 <- (m ^. tblCellStr) 1 0
       c0 @?= "c0"
       c1 @?= "c1"
   , testCase "mkMetaOps cnt=nrows when no nulls" $ do
       m <- Meta.mkMetaOps mockTbl
-      cnt <- _tblCellStr m 0 2          -- row 0 col cnt
-      cnt @?= T.pack (show (_tblNRows mockTbl))
+      cnt <- (m ^. tblCellStr) 0 2          -- row 0 col cnt
+      cnt @?= T.pack (show ((mockTbl ^. tblNRows)))
   , testCase "mkMetaOps null_pct rounds on half-null column" $ do
       let t = mkGridTbl ["x"] [["a"], [""], ["b"], [""]]
       m <- Meta.mkMetaOps t
-      np <- _tblCellStr m 0 4
+      np <- (m ^. tblCellStr) 0 4
       np @?= "50"
   , testCase "mkMetaOps dist counts uniques" $ do
       let t = mkGridTbl ["x"] [["a"], ["a"], ["b"]]
       m <- Meta.mkMetaOps t
-      d <- _tblCellStr m 0 3
+      d <- (m ^. tblCellStr) 0 3
       d @?= "2"
   , testCase "mkMetaOps min/max textual" $ do
       let t = mkGridTbl ["x"] [["b"], ["a"], ["c"]]
       m <- Meta.mkMetaOps t
-      mn <- _tblCellStr m 0 5
-      mx <- _tblCellStr m 0 6
+      mn <- (m ^. tblCellStr) 0 5
+      mx <- (m ^. tblCellStr) 0 6
       mn @?= "a"
       mx @?= "c"
   ]
@@ -207,7 +208,7 @@ freqTests = testGroup "freq"
     testCase "freq_shows: FreqOpen pushes VFreq view" $ do
       let t = mkGridTblTy ["c"] [["a"],["b"],["a"]] (const CTStr)
       Just st' <- handleCmd FreqOpen "" (mkAppState t)
-      case _nsVkind (_vNav (_vsHd (asStack st'))) of
+      case st' ^. headNav % nsVkind of
         VFreq cs _ -> cs @?= V.singleton "c"
         k -> assertFailure ("expected VFreq, got " <> show k)
   , -- Test.lean:63 test_freq_by_key — with grp set to c0, FreqOpen groups
@@ -215,66 +216,57 @@ freqTests = testGroup "freq"
     testCase "freq_by_key: FreqOpen with grp=[c0] uses grp cols" $ do
       let t = mkGridTblTy ["c0","c1"] [["a","1"],["b","2"],["a","3"]] (const CTStr)
           st0 = mkAppState t
-          ns  = _vNav (_vsHd (asStack st0))
-          st  = st0 { asStack = (asStack st0)
-                        { _vsHd = (_vsHd (asStack st0))
-                            { _vNav = ns { _nsGrp = V.singleton "c0" } } } }
+          st  = st0 & headNav % nsGrp .~ V.singleton "c0"
       Just st' <- handleCmd FreqOpen "" st
-      case _nsVkind (_vNav (_vsHd (asStack st'))) of
+      case st' ^. headNav % nsVkind of
         VFreq cs _ -> cs @?= V.singleton "c0"
         k -> assertFailure ("expected VFreq, got " <> show k)
   , -- Test.lean:67 test_freq_multi_key — grp=[c0,c1] → VFreq carries both.
     testCase "freq_multi_key: FreqOpen with 2 grp cols carries both" $ do
       let t = mkGridTblTy ["c0","c1"] [["a","1"],["b","2"]] (const CTStr)
           st0 = mkAppState t
-          ns  = _vNav (_vsHd (asStack st0))
-          st  = st0 { asStack = (asStack st0)
-                        { _vsHd = (_vsHd (asStack st0))
-                            { _vNav = ns { _nsGrp = V.fromList ["c0","c1"] } } } }
+          st  = st0 & headNav % nsGrp .~ V.fromList ["c0","c1"]
       Just st' <- handleCmd FreqOpen "" st
-      case _nsVkind (_vNav (_vsHd (asStack st'))) of
+      case st' ^. headNav % nsVkind of
         VFreq cs _ -> cs @?= V.fromList ["c0","c1"]
         k -> assertFailure ("expected VFreq, got " <> show k)
   , -- Test.lean:71 test_freq_keeps_grp — parent (tail) view keeps its grp.
     testCase "freq_keeps_grp: parent view retains its grp after FreqOpen" $ do
       let t = mkGridTblTy ["c0","c1"] [["a","1"],["b","2"]] (const CTStr)
           st0 = mkAppState t
-          ns  = _vNav (_vsHd (asStack st0))
-          st  = st0 { asStack = (asStack st0)
-                        { _vsHd = (_vsHd (asStack st0))
-                            { _vNav = ns { _nsGrp = V.singleton "c0" } } } }
+          st  = st0 & headNav % nsGrp .~ V.singleton "c0"
       Just st' <- handleCmd FreqOpen "" st
-      case _vsTl (asStack st') of
-        (parent:_) -> _nsGrp (_vNav parent) @?= V.singleton "c0"
+      case st' ^. asStack % vsTl of
+        (parent:_) -> parent ^. vNav % nsGrp @?= V.singleton "c0"
         [] -> assertFailure "expected parent view on stack"
   , -- Test.lean:58 test_freq_after_meta — MetaPush then FreqOpen chains.
     testCase "freq_after_meta: MetaPush then FreqOpen produces VFreq on top" $ do
       let t = mkGridTblTy ["x"] [["a"],["b"]] (const CTStr)
       Just st1 <- handleCmd MetaPush "" (mkAppState t)
       Just st2 <- handleCmd FreqOpen "" st1
-      case _nsVkind (_vNav (_vsHd (asStack st2))) of
+      case st2 ^. headNav % nsVkind of
         VFreq _ _ -> pure ()
         k -> assertFailure ("expected VFreq on top, got " <> show k)
       -- tail should contain the meta view
-      length (_vsTl (asStack st2)) @?= 2
+      length (st2 ^. asStack % vsTl) @?= 2
   , -- Test.lean:105 test_freq_enter — after FreqOpen, FreqFilter filters
     -- the parent table. The parent mock filter returns Nothing, so we get
-    -- a "filter failed" asMsg instead of a new view. That still exercises
+    -- a "filter failed" asMsg a new view. That still exercises
     -- the full freqFilterH dispatch path.
     testCase "freq_enter: FreqFilter on VFreq view runs handler end-to-end" $ do
       let t = mkGridTblTy ["c"] [["a"],["b"]] (const CTStr)
       Just st1 <- handleCmd FreqOpen "" (mkAppState t)
       Just st2 <- handleCmd FreqFilter "" st1
       -- The parent table comes from mkGridTbl which has _tblFilter = \_ -> pure Nothing,
-      -- so the handler surfaces an asMsg but does not halt.
-      assertBool "asMsg non-empty after freq.filter"
-        (not (T.null (asMsg st2)))
+      -- so the handler surfaces an asMsg and does not halt.
+      assertBool "non-empty asMsg after freq.filter"
+        (not (T.null (st2 ^. asMsg)))
   ]
 
 -- ============================================================================
 -- Search (Test.lean 120-144)
 -- ----------------------------------------------------------------------------
--- Uses a mock TblOps with a custom _tblFindRow that searches the "name"
+-- Uses a mock TblOps with a custom that tblFindRow searches the "name"
 -- column by substring so we can exercise the handler round-trip without
 -- DuckDB. RowSearch takes its query from asCmd (the prompt buffer) and
 -- jumps the row cursor to the matching row; RowSearchNext/Prev reuse
@@ -294,14 +286,10 @@ searchTests =
             in pure (case filter hit rng of (h:_) -> Just h; [] -> Nothing)
       mk = (mkGridTbl ["id", "name"] (V.toList (V.map V.toList rows)))
              { _tblFindRow = findMock }
-      withCol1 st =
-        let hd  = _vsHd (asStack st)
-            ns  = _vNav hd
-            hd' = hd { _vNav = ns { _nsCol = (_nsCol ns) { _naCur = 1 } } }
-        in st { asStack = (asStack st) { _vsHd = hd' } }
-      rowCur st = _naCur (_nsRow (_vNav (_vsHd (asStack st))))
-      colCur st = _naCur (_nsCol (_vNav (_vsHd (asStack st))))
-      nsOf st = _vNav (_vsHd (asStack st))
+      withCol1 st = st & headNav % nsCol % naCur .~ 1
+      rowCur st = st ^. headNav % nsRow % naCur
+      colCur st = st ^. headNav % nsCol % naCur
+      nsOf st = st ^. headNav
   in testGroup "search"
     [ testCase "search_jump: '/apri' jumps to row 2" $ do
         let st0 = withCol1 (mkAppState mk)
@@ -311,7 +299,7 @@ searchTests =
         let st0 = withCol1 (mkAppState mk)
         Just st1 <- handleCmd RowSearch "zzz" st0
         rowCur st1 @?= 0
-        assertBool "asMsg non-empty on miss" (not (T.null (asMsg st1)))
+        assertBool "non-empty asMsg on miss" (not (T.null (st1 ^. asMsg)))
     , testCase "search_next: advances past current hit" $ do
         let st0 = withCol1 (mkAppState mk)
         Just s1 <- handleCmd RowSearch "ap" st0  -- lands on row 0 ("apple")
@@ -324,10 +312,10 @@ searchTests =
         Just s2 <- handleCmd RowSearchNext "" s1           -- row 2
         Just s3 <- handleCmd RowSearchPrev "" s2           -- back to row 0
         rowCur s3 @?= 0
-    , testCase "search_after_sort: _nsSearch persists across handler calls" $ do
+    , testCase "search_after_sort: nsSearch persists across handler calls" $ do
         let st0 = withCol1 (mkAppState mk)
         Just s1 <- handleCmd RowSearch "cherry" st0
-        _nsSearch (nsOf s1) @?= "cherry"
+        ((nsOf s1) ^. nsSearch) @?= "cherry"
     , testCase "col_search: 'name' moves col cursor to index 1" $ do
         let st0 = mkAppState mk
         Just s1 <- handleCmd ColSearch "name" st0
@@ -340,7 +328,7 @@ searchTests =
         let st0 = mkAppState mk
         Just s1 <- handleCmd ColSearch "zzz" st0
         colCur s1 @?= 0
-        assertBool "asMsg non-empty" (not (T.null (asMsg s1)))
+        assertBool "non-empty asMsg" (not (T.null (s1 ^. asMsg)))
     ]
 
 -- ============================================================================
@@ -372,67 +360,59 @@ folderTests =
     , testCase "listFolder columns = name,size,modified,type" $ do
         d <- mkTmpDir "cols"
         t <- Folder.listFolder d
-        _tblColNames t @?= V.fromList ["name","size","modified","type"]
+        (t ^. tblColNames) @?= V.fromList ["name","size","modified","type"]
     , testCase "listFolder first row is '..' parent entry" $ do
         d <- mkTmpDir "parent"
         t <- Folder.listFolder d
-        name <- _tblCellStr t 0 0
+        name <- (t ^. tblCellStr) 0 0
         name @?= ".."
     , testCase "listFolder counts entries: .. + a.txt + b.txt + sub = 4" $ do
         d <- mkTmpDir "count"
         t <- Folder.listFolder d
-        _tblNRows t @?= 4
+        (t ^. tblNRows) @?= 4
     , testCase "listFolderDepth 2 includes sub/c.txt" $ do
         d <- mkTmpDir "depth2"
         t <- Folder.listFolderDepth d 2
-        names <- mapM (_tblCellStr t `flip` 0) [0 .. _tblNRows t - 1]
+        names <- mapM ((t ^. tblCellStr) `flip` 0) [0 .. (t ^. tblNRows) - 1]
         assertBool "sub/c.txt present"
           (any (\n -> "c.txt" `T.isInfixOf` n) names)
     , testCase "folder_enter: parent (..) stays in folder kind" $ do
         d <- mkTmpDir "enter"
         t <- Folder.listFolder d
         let st0 = mkAppState t
-            hd  = _vsHd (asStack st0)
-            hd' = hd { _vNav = (_vNav hd) { _nsVkind = VFld (T.pack d) 1 } }
-            st1 = st0 { asStack = (asStack st0) { _vsHd = hd' } }
+            st1 = st0 & headNav % nsVkind .~ VFld (T.pack d) 1
         Just st2 <- handleCmd FolderEnter "" st1
-        case _nsVkind (_vNav (_vsHd (asStack st2))) of
+        case st2 ^. headNav % nsVkind of
           VFld _ _ -> pure ()
           _        -> assertFailure "expected VFld after FolderEnter on '..'"
     , testCase "folder_pop: pushing then StkPop returns to original" $ do
         d <- mkTmpDir "pop"
         t <- Folder.listFolder d
         let st0 = mkAppState t
-            hd  = _vsHd (asStack st0)
-            hd' = hd { _vNav = (_vNav hd) { _nsVkind = VFld (T.pack d) 1 } }
-            st1 = st0 { asStack = (asStack st0) { _vsHd = hd' } }
+            st1 = st0 & headNav % nsVkind .~ VFld (T.pack d) 1
         Just st2 <- handleCmd FolderPush "" st1
         -- push succeeded: stack now has 2 frames
         assertBool "stack grew after FolderPush"
-          (length (_vsTl (asStack st2)) >= 1)
+          (length (st2 ^. asStack % vsTl) >= 1)
         Just st3 <- handleCmd StkPop "" st2
         -- pop succeeded: stack back to 1 frame
-        length (_vsTl (asStack st3)) @?= 0
+        length (st3 ^. asStack % vsTl) @?= 0
     , testCase "folder_depth: DepthInc raises depth in VFld" $ do
         d <- mkTmpDir "dinc"
         t <- Folder.listFolder d
         let st0 = mkAppState t
-            hd  = _vsHd (asStack st0)
-            hd' = hd { _vNav = (_vNav hd) { _nsVkind = VFld (T.pack d) 1 } }
-            st1 = st0 { asStack = (asStack st0) { _vsHd = hd' } }
+            st1 = st0 & headNav % nsVkind .~ VFld (T.pack d) 1
         Just st2 <- handleCmd FolderDepthInc "" st1
-        case _nsVkind (_vNav (_vsHd (asStack st2))) of
+        case st2 ^. headNav % nsVkind of
           VFld _ 2 -> pure ()
           vk -> assertFailure ("expected VFld depth=2, got " <> show vk)
     , testCase "folder_depth: DepthDec clamps at 1" $ do
         d <- mkTmpDir "ddec"
         t <- Folder.listFolder d
         let st0 = mkAppState t
-            hd  = _vsHd (asStack st0)
-            hd' = hd { _vNav = (_vNav hd) { _nsVkind = VFld (T.pack d) 1 } }
-            st1 = st0 { asStack = (asStack st0) { _vsHd = hd' } }
+            st1 = st0 & headNav % nsVkind .~ VFld (T.pack d) 1
         Just st2 <- handleCmd FolderDepthDec "" st1
-        case _nsVkind (_vNav (_vsHd (asStack st2))) of
+        case st2 ^. headNav % nsVkind of
           VFld _ 1 -> pure ()
           vk -> assertFailure ("expected VFld depth=1 (clamped), got " <> show vk)
     , pending "folder_no_args" "needs tv-binary spawn + cwd folder open (binary-level test)"
@@ -519,32 +499,32 @@ colTests :: TestTree
 colTests = testGroup "col"
   [ testCase "Nav.execNav ColHide toggles hidden" $ do
       let Just ns' = Nav.execNav ColHide 1 mockNav
-      _nsHidden ns' @?= V.singleton "c0"
+      (ns' ^. nsHidden) @?= V.singleton "c0"
   , testCase "Nav.execNav ColHide toggle round-trip" $ do
       let Just ns1 = Nav.execNav ColHide 1 mockNav
           Just ns2 = Nav.execNav ColHide 1 ns1
-      _nsHidden ns2 @?= V.empty
+      (ns2 ^. nsHidden) @?= V.empty
   , testCase "Nav.execNav ColGrp toggles grp" $ do
       let Just ns' = Nav.execNav ColGrp 1 mockNav
-      _nsGrp ns' @?= V.singleton "c0"
+      (ns' ^. nsGrp) @?= V.singleton "c0"
   , testCase "ColShiftL with 2 grp cols reorders" $ do
       -- set grp=["c0","c1"], cursor on c1 (display idx 1 which maps to c1)
       let ns0 = mockNav { _nsGrp = V.fromList ["c0", "c1"]
                         , _nsDispIdxs = V.fromList [0, 1, 2]
                         , _nsCol = mkAxis { _naCur = 1 } }
       case Nav.execNav ColShiftL 1 ns0 of
-        Just ns' -> _nsGrp ns' @?= V.fromList ["c1", "c0"]
+        Just ns' -> (ns' ^. nsGrp) @?= V.fromList ["c1", "c0"]
         Nothing  -> assertFailure "shiftL returned Nothing"
   , -- Test.lean:271 test_delete_col — ColExclude on cursor col drops it.
-    -- Uses _tblHideCols. mkGridTbl's mockTbl _tblHideCols returns itself,
+    -- Uses _tblHideCols. mkGridTbl's mockTbl tblHideCols itself,
     -- so handleCmd ColExclude succeeds and pushes a new view with the
     -- same grid. Instead we assert Nav.execNav ColHide flags the col in
-    -- _nsHidden as the pure equivalent (matching the Lean footer check).
+    -- nsHidden the pure equivalent (matching the Lean footer check).
     testCase "delete_col: Nav ColHide flags current col as hidden" $ do
       let t = mkGridTbl ["a","b","c"] [["1","2","3"]]
           ns = mockNavFor t
           Just ns' = Nav.execNav ColHide 1 ns
-      _nsHidden ns' @?= V.singleton "a"
+      (ns' ^. nsHidden) @?= V.singleton "a"
   , -- Test.lean:280 test_delete_hidden_cols — hide c0 then exclude; final
     -- view should not contain c0. Again exercised purely via Nav state.
     testCase "delete_hidden_cols: Hide then another Hide toggles the flag" $ do
@@ -553,9 +533,9 @@ colTests = testGroup "col"
           Just ns1 = Nav.execNav ColHide 1 ns   -- hide a
           ns1'     = ns1 { _nsCol = mkAxis { _naCur = 1 } }
           Just ns2 = Nav.execNav ColHide 1 ns1' -- also hide b
-      V.length (_nsHidden ns2) @?= 2
-      V.elem "a" (_nsHidden ns2) @?= True
-      V.elem "b" (_nsHidden ns2) @?= True
+      V.length ((ns2 ^. nsHidden)) @?= 2
+      V.elem "a" ((ns2 ^. nsHidden)) @?= True
+      V.elem "b" ((ns2 ^. nsHidden)) @?= True
   , testCase "key_cursor: ColInc then ColGrp, cursor visits keyed col" $ do
       -- 3-col table: a b c. Move to b (ColInc), then group b (!).
       -- After grouping, dispIdxs = [1,0,2] (b first). Cursor at display 1 = col a.
@@ -678,30 +658,30 @@ transposeTests = testGroup "transpose"
   [ testCase "mkTransposedOps swaps dims" $ do
       let t = mkGridTbl ["a","b","c"] [["1","2","3"], ["4","5","6"]]
       tx <- Transpose.mkTransposedOps t
-      _tblNRows tx @?= 3
-      V.length (_tblColNames tx) @?= 3  -- "column" + row_0 + row_1
+      (tx ^. tblNRows) @?= 3
+      V.length ((tx ^. tblColNames)) @?= 3  -- "column" + row_0 + row_1
   , testCase "transpose col0 is 'column' marker" $ do
       let t = mkGridTbl ["a","b"] [["1","2"]]
       tx <- Transpose.mkTransposedOps t
-      (_tblColNames tx V.! 0) @?= "column"
+      ((tx ^. tblColNames) V.! 0) @?= "column"
   , testCase "transpose col i>0 named 'row_{i-1}'" $ do
       let t = mkGridTbl ["a","b"] [["1","2"], ["3","4"]]
       tx <- Transpose.mkTransposedOps t
-      _tblColNames tx @?= V.fromList ["column", "row_0", "row_1"]
+      (tx ^. tblColNames) @?= V.fromList ["column", "row_0", "row_1"]
   , testCase "transpose cell[i][0] is source col name" $ do
       let t = mkGridTbl ["a","b"] [["1","2"]]
       tx <- Transpose.mkTransposedOps t
-      n0 <- _tblCellStr tx 0 0
-      n1 <- _tblCellStr tx 1 0
+      n0 <- (tx ^. tblCellStr) 0 0
+      n1 <- (tx ^. tblCellStr) 1 0
       n0 @?= "a"
       n1 @?= "b"
   , testCase "transpose cells preserve values" $ do
       let t = mkGridTbl ["a","b"] [["1","2"], ["3","4"]]
       tx <- Transpose.mkTransposedOps t
-      v00 <- _tblCellStr tx 0 1  -- a, row0 = 1
-      v01 <- _tblCellStr tx 0 2  -- a, row1 = 3
-      v10 <- _tblCellStr tx 1 1  -- b, row0 = 2
-      v11 <- _tblCellStr tx 1 2  -- b, row1 = 4
+      v00 <- (tx ^. tblCellStr) 0 1  -- a, row0 = 1
+      v01 <- (tx ^. tblCellStr) 0 2  -- a, row1 = 3
+      v10 <- (tx ^. tblCellStr) 1 1  -- b, row0 = 2
+      v11 <- (tx ^. tblCellStr) 1 2  -- b, row1 = 4
       (v00,v01,v10,v11) @?= ("1","3","2","4")
   , testCase "transpose caps source rows at 200" $ do
       -- synthesize a 250-row, 1-col table
@@ -709,8 +689,8 @@ transposeTests = testGroup "transpose"
           t    = mkGridTbl ["x"] rows
       tx <- Transpose.mkTransposedOps t
       -- 1 source col -> 1 output row, 1 + min(250,200) = 201 output cols
-      _tblNRows tx @?= 1
-      V.length (_tblColNames tx) @?= 201
+      (tx ^. tblNRows) @?= 1
+      V.length ((tx ^. tblColNames)) @?= 201
   ]
 
 -- ============================================================================
@@ -737,32 +717,32 @@ derivSplitTests = testGroup "derive/split"
   , testCase "addDerived adds a column via DuckDB" $ do
       let t = mkGridTblTy ["x"] [["1"], ["2"], ["3"]] (const CTInt)
       t' <- Derive.addDerived t "y" "x + 1"
-      _tblColNames t' @?= V.fromList ["x", "y"]
-      _tblNRows t' @?= 3
+      (t' ^. tblColNames) @?= V.fromList ["x", "y"]
+      (t' ^. tblNRows) @?= 3
   , testCase "addDerived fails soft on bad expr" $ do
       let t = mkGridTblTy ["x"] [["1"], ["2"]] (const CTInt)
       t' <- Derive.addDerived t "y" "!!!bogus!!!"
       -- on parse failure we keep the original shape
-      _tblColNames t' @?= V.fromList ["x"]
+      (t' ^. tblColNames) @?= V.fromList ["x"]
   , testCase "splitColumn: int column no-op" $ do
       let t = mkGridTblTy ["n"] [["1"], ["2"]] (const CTInt)
       t' <- Split.splitColumn t 0 "-"
-      _tblColNames t' @?= V.fromList ["n"]
+      (t' ^. tblColNames) @?= V.fromList ["n"]
   , testCase "splitColumn: empty pat no-op" $ do
       let t = mkGridTbl ["s"] [["a-b-c"]]
       t' <- Split.splitColumn t 0 ""
-      _tblColNames t' @?= V.fromList ["s"]
+      (t' ^. tblColNames) @?= V.fromList ["s"]
   , testCase "splitColumn: out-of-range idx no-op" $ do
       let t = mkGridTbl ["s"] [["a-b"]]
       t' <- Split.splitColumn t 9 "-"
-      _tblColNames t' @?= V.fromList ["s"]
+      (t' ^. tblColNames) @?= V.fromList ["s"]
   , testCase "splitColumn: dash splits adds cols" $ do
       let t = mkGridTbl ["tag"] [["a-b-c"], ["d-e-f"]]
       t' <- Split.splitColumn t 0 "-"
       -- original + 3 extra parts
-      V.length (_tblColNames t') @?= 4
-      (_tblColNames t' V.! 0) @?= "tag"
-      (_tblColNames t' V.! 1) @?= "tag_1"
+      V.length ((t' ^. tblColNames)) @?= 4
+      ((t' ^. tblColNames) V.! 0) @?= "tag"
+      ((t' ^. tblColNames) V.! 1) @?= "tag_1"
   ]
 
 -- ============================================================================
@@ -774,43 +754,43 @@ joinDiffTests = testGroup "join/diff"
       let l = mkGridTbl ["k","a"] [["1","x"], ["2","y"]]
           r = mkGridTbl ["k","b"] [["1","p"], ["3","q"]]
       j <- Join.joinInner l r (V.singleton "k")
-      _tblNRows j @?= 1
+      (j ^. tblNRows) @?= 1
       -- columns: left ++ right with collision suffix
-      _tblColNames j @?= V.fromList ["k","a","k_r","b"]
-      v <- _tblCellStr j 0 3
+      (j ^. tblColNames) @?= V.fromList ["k","a","k_r","b"]
+      v <- (j ^. tblCellStr) 0 3
       v @?= "p"
   , testCase "joinLeft keeps unmatched left row" $ do
       let l = mkGridTbl ["k"] [["1"], ["2"]]
           r = mkGridTbl ["k"] [["1"]]
       j <- Join.joinLeft l r (V.singleton "k")
-      _tblNRows j @?= 2
+      (j ^. tblNRows) @?= 2
   , testCase "joinRight keeps unmatched right row" $ do
       let l = mkGridTbl ["k"] [["1"]]
           r = mkGridTbl ["k"] [["1"], ["2"]]
       j <- Join.joinRight l r (V.singleton "k")
-      _tblNRows j @?= 2
+      (j ^. tblNRows) @?= 2
   , testCase "joinUnion concatenates row counts" $ do
       let l = mkGridTbl ["a"] [["1"], ["2"]]
           r = mkGridTbl ["a"] [["3"]]
       j <- Join.joinUnion l r
-      _tblNRows j @?= 3
-      _tblColNames j @?= V.fromList ["a"]
+      (j ^. tblNRows) @?= 3
+      (j ^. tblColNames) @?= V.fromList ["a"]
   , testCase "joinDiff removes keyed matches" $ do
       let l = mkGridTbl ["k"] [["1"], ["2"], ["3"]]
           r = mkGridTbl ["k"] [["2"]]
       j <- Join.joinDiff l r (V.singleton "k")
-      _tblNRows j @?= 2
+      (j ^. tblNRows) @?= 2
   , testCase "joinWith JUnion dispatches" $ do
       let l = mkGridTbl ["a"] [["1"]]
           r = mkGridTbl ["a"] [["2"]]
       j <- Join.joinWith Join.JUnion l r V.empty
-      _tblNRows j @?= 2
+      (j ^. tblNRows) @?= 2
   , testCase "diffTables with common key col" $ do
       let l = mkGridTbl ["k","v"] [["1","a"], ["2","b"]]
           r = mkGridTbl ["k","v"] [["1","a"], ["2","c"]]
       d <- Diff.diffTables l r
       -- at least one output row exists (joined on k)
-      assertBool "rows>0" (_tblNRows d > 0)
+      assertBool "rows>0" ((d ^. tblNRows) > 0)
   , testCase "diffTablesSameHide flags same cols" $ do
       let ty i = if i == 0 then CTStr else CTInt
           l = mkGridTblTy ["k","v"] [["1","10"], ["2","10"]] ty
@@ -873,18 +853,18 @@ plotExportTests = testGroup "plot"
   , testCase "Plot.maxPoints threshold" $ do
       assertBool "100 <= maxPoints"  (100 <= Plot.maxPoints)
       assertBool "3000 > maxPoints" (3000 > Plot.maxPoints)
-  , testCase "plot_key_dispatch: handleCmd PlotHist sets asMsg on mock" $ do
+  , testCase "plot_key_dispatch: handleCmd PlotHist sets (on ^. asMsg) mock" $ do
       -- mockTbl has _tblPlotExport = \_ _ _ _ _ _ -> pure Nothing, so the
       -- handler's fail-soft path fires and writes a "failed" message. We
-      -- only care that the handler returned *some* non-empty asMsg instead
+      -- only care that the handler returned *some* non-empty asMsg
       -- of crashing or silently no-opping.
       Just st1 <- handleCmd PlotHist "" (mkAppState mockTbl)
       assertBool "asMsg set after PlotHist dispatch"
-        (not (T.null (asMsg st1)))
-  , pending "plot_export_string_col"  "needs _tblPlotExport impl in DuckDB backend (stub in mockTbl)"
-  , pending "plot_export_data"        "needs _tblPlotExport impl in DuckDB backend (stub in mockTbl)"
-  , pending "plot_export_cat"         "needs _tblPlotExport impl in DuckDB backend (stub in mockTbl)"
-  , pending "plot_time_downsample"    "needs _tblPlotExport time downsample path in DuckDB backend"
+        (not (T.null ((st1 ^. asMsg))))
+  , pending "plot_export_string_col"  "needs tblPlotExport impl in DuckDB backend (stub in mockTbl)"
+  , pending "plot_export_data"        "needs tblPlotExport impl in DuckDB backend (stub in mockTbl)"
+  , pending "plot_export_cat"         "needs tblPlotExport impl in DuckDB backend (stub in mockTbl)"
+  , pending "plot_time_downsample"    "needs (time ^. tblPlotExport) downsample path in DuckDB backend"
   , pending "plot_downsample_step"    "needs Plot.maxPoints downsample step in plotExport path"
   , pending "plot_render_line"        "needs R subprocess rendering wired into Plot.runPlot (uses system R)"
   , pending "plot_render_scatter_cat" "needs R subprocess rendering wired into Plot.runPlot"
@@ -1045,12 +1025,12 @@ sourceFormatTests = testGroup "source formats"
   , testCase "loadFromUri local parquet returns Right" $ do
       r <- SC.loadFromUri "/home/dh/repo/Tc/data/1.parquet"
       case r of
-        Right t -> assertBool "has rows" (_tblNRows t > 0)
+        Right t -> assertBool "has rows" ((t ^. tblNRows) > 0)
         Left e  -> assertFailure ("loadFromUri: " <> e)
   , testCase "loadFromUri local csv returns Right" $ do
       r <- SC.loadFromUri "/home/dh/repo/Tc/data/basic.csv"
       case r of
-        Right t -> assertBool "has rows" (_tblNRows t > 0)
+        Right t -> assertBool "has rows" ((t ^. tblNRows) > 0)
         Left e  -> assertFailure ("loadFromUri: " <> e)
   , pending "jsonl_sort"    "needs jsonl open + sort via read_ndjson_auto in Tv.SourceConfig dispatcher"
   , pending "xlsx_open"     "needs DuckDB excel extension (INSTALL excel; LOAD excel)"
@@ -1070,29 +1050,29 @@ navExtraTests :: TestTree
 navExtraTests = testGroup "nav"
   [ testCase "RowInc at 0 → 1" $ do
       let Just ns' = Nav.execNav RowInc 1 mockNav
-      _naCur (_nsRow ns') @?= 1
+      ns' ^. nsRow % naCur @?= 1
   , testCase "RowDec at 0 stays 0" $ do
       let Just ns' = Nav.execNav RowDec 1 mockNav
-      _naCur (_nsRow ns') @?= 0
+      ns' ^. nsRow % naCur @?= 0
   , testCase "RowPgdn jumps by page size" $ do
       let Just ns' = Nav.execNav RowPgdn 3 mockNav
-      _naCur (_nsRow ns') @?= 3
+      ns' ^. nsRow % naCur @?= 3
   , testCase "RowBot → last row" $ do
       let Just ns' = Nav.execNav RowBot 1 mockNav
-      _naCur (_nsRow ns') @?= _tblNRows mockTbl - 1
+      ns' ^. nsRow % naCur @?= (mockTbl ^. tblNRows) - 1
   , testCase "ColLast → last col" $ do
       let Just ns' = Nav.execNav ColLast 1 mockNav
-      _naCur (_nsCol ns') @?= V.length (_tblColNames mockTbl) - 1
+      ns' ^. nsCol % naCur @?= V.length ((mockTbl ^. tblColNames)) - 1
   , testCase "ColFirst → 0" $ do
       -- move then move back
       let Just ns1 = Nav.execNav ColLast  1 mockNav
           Just ns2 = Nav.execNav ColFirst 1 ns1
-      _naCur (_nsCol ns2) @?= 0
+      ns2 ^. nsCol % naCur @?= 0
   , testCase "RowInc twice then RowDec once = 1" $ do
       let Just ns1 = Nav.execNav RowInc 1 mockNav
           Just ns2 = Nav.execNav RowInc 1 ns1
           Just ns3 = Nav.execNav RowDec 1 ns2
-      _naCur (_nsRow ns3) @?= 1
+      ns3 ^. nsRow % naCur @?= 1
   ]
 
 -- ============================================================================

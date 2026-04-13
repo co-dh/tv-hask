@@ -34,6 +34,7 @@ import qualified Data.Vector as V
 import Tv.Types
 import Tv.View
 import qualified Tv.Data.DuckDB as D
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- ----------------------------------------------------------------------------
 -- Pure string helpers (ported from TestUtil.lean)
@@ -107,7 +108,7 @@ mockNavFor :: TblOps -> NavState
 mockNavFor t = NavState
   { _nsTbl = t, _nsRow = mkAxis, _nsCol = mkAxis
   , _nsGrp = V.empty, _nsHidden = V.empty
-  , _nsDispIdxs = V.enumFromN 0 (V.length (_tblColNames t))
+  , _nsDispIdxs = V.enumFromN 0 (V.length ((t ^. tblColNames)))
   , _nsVkind = VTbl, _nsSearch = "", _nsPrecAdj = 0, _nsWidthAdj = 0, _nsHeatMode = 0
   }
 

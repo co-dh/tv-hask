@@ -17,6 +17,7 @@ import Foreign.ForeignPtr (ForeignPtr)
 import Foreign.Ptr (Ptr)
 import GHC.Generics (Generic)
 import Optics.TH (makeLenses)
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- ============================================================================
 -- ColType
@@ -286,7 +287,7 @@ clamp lo hi v = max lo (min v (hi - 1))
 
 -- | Move cursor by delta, clamped to [0, n)
 axisMove :: Int -> Int -> NavAxis -> NavAxis
-axisMove n d ax = ax { _naCur = clamp 0 n (_naCur ax + d) }
+axisMove n d = naCur %~ clamp 0 n . (+ d)
 
 -- | Toggle element in vector (add if absent, remove if present)
 vToggle :: Eq a => a -> Vector a -> Vector a
@@ -313,15 +314,15 @@ dispOrder grp names =
 
 -- | Current column index in data order (via dispIdxs)
 curColIdx :: NavState -> Int
-curColIdx ns = _nsDispIdxs ns V.! _naCur (_nsCol ns)
+curColIdx ns = (ns ^. nsDispIdxs) V.! (ns ^. nsCol % naCur)
 
 -- | Current column name
 curColName :: NavState -> Text
-curColName ns = _tblColNames (_nsTbl ns) V.! curColIdx ns
+curColName ns = (ns ^. nsTbl % tblColNames) V.! curColIdx ns
 
 -- | Number of group columns
 nGrp :: NavState -> Int
-nGrp = V.length . _nsGrp
+nGrp ns = V.length (ns ^. nsGrp)
 
 -- | Escape single quotes for SQL
 escSql :: Text -> Text

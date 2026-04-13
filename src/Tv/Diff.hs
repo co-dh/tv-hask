@@ -20,6 +20,7 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 
 import Tv.Types
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Column shared by both tables with identical name and type.
 data Common = Common { cmName :: !Text, cmType :: !ColType }
@@ -27,21 +28,21 @@ data Common = Common { cmName :: !Text, cmType :: !ColType }
 -- | Intersect columns of left and right by name; keep only pairs whose
 -- types match. Order follows left (same as Lean filterMap over colNames).
 commonCols :: TblOps -> TblOps -> Vector Common
-commonCols l r = V.mapMaybe mk (_tblColNames l)
+commonCols l r = V.mapMaybe mk ((l ^. tblColNames))
   where
-    rIdx = Map.fromList (zip (V.toList (_tblColNames r)) [0 :: Int ..])
+    rIdx = Map.fromList (zip (V.toList ((r ^. tblColNames))) [0 :: Int ..])
     mk n = do
       ri <- Map.lookup n rIdx
-      let li = maybe (-1) id (V.elemIndex n (_tblColNames l))
-          lt = _tblColType l li
-          rt = _tblColType r ri
+      let li = maybe (-1) id (V.elemIndex n ((l ^. tblColNames)))
+          lt = (l ^. tblColType) li
+          rt = (r ^. tblColType) ri
       if lt == rt then Just (Common n lt) else Nothing
 
 -- | Columns of tbl whose name is neither in common nor in keys. Returns
 -- (originalIndex, name).
 onlyCols :: TblOps -> Vector Common -> Vector Text -> Vector (Int, Text)
 onlyCols tbl common keys = V.ifilter (\_ (_, n) -> keep n)
-  (V.indexed (_tblColNames tbl))
+  (V.indexed ((tbl ^. tblColNames)))
   where
     cset = Set.fromList (V.toList (V.map cmName common))
     kset = Set.fromList (V.toList keys)
@@ -71,11 +72,11 @@ resolveKeys parentGrp curGrp common
 
 -- | Materialize one row of a table as a Vector Text.
 readRow :: TblOps -> Int -> IO (Vector Text)
-readRow tbl r = V.generateM (V.length (_tblColNames tbl)) (_tblCellStr tbl r)
+readRow tbl r = V.generateM (V.length ((tbl ^. tblColNames))) ((tbl ^. tblCellStr) r)
 
 -- | Materialize every row of a table.
 readAll :: TblOps -> IO (Vector (Vector Text))
-readAll tbl = V.generateM (_tblNRows tbl) (readRow tbl)
+readAll tbl = V.generateM ((tbl ^. tblNRows)) (readRow tbl)
 
 -- | Project named columns out of a materialized row.
 project :: Map.Map Text Int -> Vector Text -> Vector Text -> Vector Text
@@ -93,8 +94,8 @@ diffTablesSameHide left right = do
     Just (allKeys, valCols) -> do
       lRows <- readAll left
       rRows <- readAll right
-      let lIdx = Map.fromList (zip (V.toList (_tblColNames left))  [0 :: Int ..])
-          rIdx = Map.fromList (zip (V.toList (_tblColNames right)) [0 :: Int ..])
+      let lIdx = Map.fromList (zip (V.toList ((left ^. tblColNames)))  [0 :: Int ..])
+          rIdx = Map.fromList (zip (V.toList ((right ^. tblColNames))) [0 :: Int ..])
           keyL = V.map (\row -> project lIdx row allKeys) lRows
           keyR = V.map (\row -> project rIdx row allKeys) rRows
           -- Right-side index: key → first right row with that key. The Lean

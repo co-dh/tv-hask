@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 -- | Render: brick widget drawing for table, status bar, header.
 -- Mirrors the layout of Tc/c/render.c:
 --   y=0               header row (column names, bold+underline, type char at end)
@@ -22,6 +23,8 @@ import qualified Brick
 import qualified Brick.AttrMap as A
 import qualified Brick.Widgets.Core as C
 import qualified Graphics.Vty as Vty
+import Optics.Core (Lens', (%), (^.), (&), (.~), (%~))
+import Optics.TH (makeLenses)
 import Tv.Types
 import Tv.View
 
@@ -44,26 +47,40 @@ cmdLabel = \case
   TblJoin    -> "join keys"
   c          -> cmdStr c
 
--- | Application state for brick. asGrid caches cell text for the visible
+-- | Application state for brick. asGrid cell text for the visible
 -- window; it is rebuilt after each handler that moves the viewport or
 -- mutates the underlying table (see Tv.App.refreshGrid).
 data AppState = AppState
-  { asStack    :: !ViewStack
-  , asThemeIdx :: !Int
-  , asTestKeys :: ![Text]               -- remaining -c keys (empty = interactive)
-  , asMsg      :: !Text                 -- status message
-  , asErr      :: !Text                 -- error popup text
-  , asCmd      :: !Text                 -- prompt input buffer (when asPendingCmd is Just)
-                                        -- or a stashed command arg for handlers
-  , asPendingCmd :: !(Maybe Cmd)        -- Just c = prompt mode, pending dispatch of c
-  , asGrid     :: !(Vector (Vector Text))  -- [row][col] pre-fetched cells, visible window
-  , asVisRow0  :: !Int                  -- first visible row (viewport origin row)
-  , asVisCol0  :: !Int                  -- first visible col
-  , asVisH     :: !Int                  -- visible row count
-  , asVisW     :: !Int                  -- visible col count
-  , asStyles   :: !(Vector (Maybe Vty.Color, Maybe Vty.Color))  -- theme styles keyed by index; Nothing = terminal default
-  , asInfoVis  :: !Bool                 -- info overlay on current column (name/type/index)
+  { _asStack    :: !ViewStack
+  , _asThemeIdx :: !Int
+  , _asTestKeys :: ![Text]               -- remaining -c keys (empty = interactive)
+  , _asMsg      :: !Text                 -- status message
+  , _asErr      :: !Text                 -- error popup text
+  , _asCmd      :: !Text                 -- prompt input buffer (when _asPendingCmd is Just)
+                                         -- or a stashed command arg for handlers
+  , _asPendingCmd :: !(Maybe Cmd)        -- Just c = prompt mode, pending dispatch of c
+  , _asGrid     :: !(Vector (Vector Text))  -- [row][col] pre-fetched cells, visible window
+  , _asVisRow0  :: !Int                  -- first visible row (viewport origin row)
+  , _asVisCol0  :: !Int                  -- first visible col
+  , _asVisH     :: !Int                  -- visible row count
+  , _asVisW     :: !Int                  -- visible col count
+  , _asStyles   :: !(Vector (Maybe Vty.Color, Maybe Vty.Color))  -- theme styles keyed by index; Nothing = terminal default
+  , _asInfoVis  :: !Bool                 -- info overlay on current column (name/type/index)
   } deriving (Show)
+
+makeLenses ''AppState
+
+-- | Composed path lenses for the most-reached parts of AppState. Every
+-- handler that moves the cursor or mutates the head view reaches one of
+-- these; preferring them avoids repeating the asStack % vsHd % ... prefix.
+headView :: Lens' AppState View
+headView = asStack % vsHd
+
+headNav :: Lens' AppState NavState
+headNav = headView % vNav
+
+headTbl :: Lens' AppState TblOps
+headTbl = headNav % nsTbl
 
 -- ============================================================================
 -- Attribute names (must match Tv.Theme.styleNames)
@@ -138,11 +155,11 @@ typeChar _           = ' '
 -- | Column names of the visible window (data-order via dispIdxs, sliced).
 visColNames :: AppState -> Vector Text
 visColNames st =
-  let ns = _vNav $ _vsHd $ asStack st
-      names = _tblColNames (_nsTbl ns)
-      disp = _nsDispIdxs ns
-      slice = V.slice (min (V.length disp) (asVisCol0 st))
-                      (min (asVisW st) (max 0 (V.length disp - asVisCol0 st)))
+  let ns = st ^. headNav
+      names = ns ^. nsTbl % tblColNames
+      disp = ns ^. nsDispIdxs
+      slice = V.slice (min (V.length disp) (st ^. asVisCol0))
+                      (min (st ^. asVisW) (max 0 (V.length disp - st ^. asVisCol0)))
                       disp
   in V.map (names V.!) slice
 
@@ -151,7 +168,7 @@ visColNames st =
 visColWidths :: AppState -> Vector Int
 visColWidths st =
   let names = visColNames st
-      grid = asGrid st
+      grid = st ^. asGrid
       one ci =
         let cellLen r = if ci < V.length r then T.length (r V.! ci) else 0
             dw = V.foldl' (\a r -> max a (cellLen r)) (T.length (names V.! ci)) grid
@@ -175,20 +192,20 @@ headerText st = T.intercalate " " (V.toList (visColNames st))
 -- "colName  cI/N grp=G sel=S r{row}/{total}"
 statusText :: AppState -> Text
 statusText st =
-  let ns = _vNav $ _vsHd $ asStack st
-      r = _naCur (_nsRow ns)
-      tbl = _nsTbl ns
-      total = _tblTotalRows tbl
-      nc = V.length (_tblColNames tbl)
+  let ns = st ^. headNav
+      r = ns ^. nsRow % naCur
+      tbl = ns ^. nsTbl
+      total = tbl ^. tblTotalRows
+      nc = V.length (tbl ^. tblColNames)
       ci = curColIdx ns
       colName = curColName ns
-      grpN = V.length (_nsGrp ns)
-      selN = V.length (_naSels (_nsRow ns))
+      grpN = V.length (ns ^. nsGrp)
+      selN = V.length (ns ^. nsRow % naSels)
       right = "c" <> tshow ci <> "/" <> tshow nc
               <> " grp=" <> tshow grpN <> " sel=" <> tshow selN
               <> " r" <> tshow r <> "/" <> tshow total
-      msg = asMsg st
-      cmd = asCmd st
+      msg = st ^. asMsg
+      cmd = st ^. asCmd
   in colName <> "  " <> right
      <> (if T.null msg then "" else " " <> msg)
      <> (if T.null cmd then "" else " :" <> cmd)
@@ -197,9 +214,7 @@ statusText st =
 -- | Tab line: source path or folder path.
 -- | Tab line matching Lean renderTabLine: [current] for single view.
 tabText :: AppState -> Text
-tabText st =
-  let v = _vsHd (asStack st)
-  in "[" <> _vPath v <> "]"
+tabText st = "[" <> st ^. headView % vPath <> "]"
 
 -- ============================================================================
 -- Heat mode: viridis-inspired background gradient (ports Tc/c/heat.c)
@@ -234,16 +249,17 @@ fnvHash01 s = fromIntegral (h Data.Bits..&. 0xFFFF) / 65535.0
 heatScan :: Word8 -> AppState -> Vector HeatCol
 heatScan mode st = V.generate nVis scanCol
   where
-    ns = _vNav $ _vsHd $ asStack st
-    tbl = _nsTbl ns
-    disp = _nsDispIdxs ns
-    grid = asGrid st
+    ns = st ^. headNav
+    tbl = ns ^. nsTbl
+    disp = ns ^. nsDispIdxs
+    grid = st ^. asGrid
     nVis = V.length (visColNames st)
-    origIdx ci = let p = asVisCol0 st + ci
+    origIdx ci = let p = st ^. asVisCol0 + ci
                  in if p < V.length disp then disp V.! p else 0
+    colType i = (tbl ^. tblColType) i
     scanCol ci
-      | isNumeric (_tblColType tbl (origIdx ci)) && (mode Data.Bits..&. 1 /= 0) = scanNum ci
-      | not (isNumeric (_tblColType tbl (origIdx ci))) && (mode Data.Bits..&. 2 /= 0) = scanStr ci
+      | isNumeric (colType (origIdx ci)) && (mode Data.Bits..&. 1 /= 0) = scanNum ci
+      | not (isNumeric (colType (origIdx ci))) && (mode Data.Bits..&. 2 /= 0) = scanStr ci
       | otherwise = HeatNone
     scanNum ci =
       let vals = V.mapMaybe (\row -> parseNum (cellAt row ci)) grid
@@ -285,28 +301,29 @@ drawApp :: AppState -> [Brick.Widget Name]
 drawApp st =
   [C.vBox ([headerW, gridW, footerW, tabW] ++ infoW ++ [statusW])]
   where
-    ns = _vNav $ _vsHd $ asStack st
-    tbl = _nsTbl ns
-    disp = _nsDispIdxs ns
-    curCol = _naCur (_nsCol ns)
-    curRow = _naCur (_nsRow ns)
-    rowSelSet = IS.fromList $ V.toList $ _naSels (_nsRow ns)
-    colSelSet = IS.fromList $ V.toList $ _naSels (_nsCol ns)
-    grpNames = _nsGrp ns
+    ns = st ^. headNav
+    tbl = ns ^. nsTbl
+    disp = ns ^. nsDispIdxs
+    curCol = ns ^. nsCol % naCur
+    curRow = ns ^. nsRow % naCur
+    rowSelSet = IS.fromList $ V.toList $ ns ^. nsRow % naSels
+    colSelSet = IS.fromList $ V.toList $ ns ^. nsCol % naSels
+    grpNames = ns ^. nsGrp
     nKeys = V.length grpNames
     names = visColNames st
     widths = visColWidths st
     nVis = V.length names
-    hMode = _nsHeatMode ns
+    hMode = ns ^. nsHeatMode
     hcols = if hMode /= 0 then heatScan hMode st else V.empty
 
+    colType i = (tbl ^. tblColType) i
     -- Translate visible column index -> absolute dispIdxs position.
-    absDispPos ci = asVisCol0 st + ci
+    absDispPos ci = st ^. asVisCol0 + ci
     -- Data-order column index for a visible slot.
     origIdx ci =
       let p = absDispPos ci
       in if p < V.length disp then disp V.! p else 0
-    isNumCol ci = isNumeric (_tblColType tbl (origIdx ci))
+    isNumCol ci = isNumeric (colType (origIdx ci))
     isGrpCol ci = absDispPos ci < nKeys
     isCurCol ci = origIdx ci == curCol
     isSelCol ci = IS.member (origIdx ci) colSelSet
@@ -323,7 +340,7 @@ drawApp st =
     headerCell ci name =
       let w = widths V.! ci
           inner = max 0 (w - 2)
-          tc = T.singleton (typeChar (_tblColType tbl (origIdx ci)))
+          tc = T.singleton (typeChar (colType (origIdx ci)))
           nameTxt = T.take inner (T.justifyLeft inner ' ' name)
           txt = " " <> nameTxt <> tc
           a | isCurCol ci = attrCursor
@@ -370,12 +387,12 @@ drawApp st =
               in C.withAttr a (C.txt txt)
 
     mkRow rIdx row =
-      let absRow = asVisRow0 st + rIdx
+      let absRow = st ^. asVisRow0 + rIdx
       in C.hBox $ concat
            [ [dataCell absRow ci (if ci < V.length row then row V.! ci else ""), sep ci]
            | ci <- [0 .. nVis - 1] ]
 
-    gridW = C.vBox $ V.toList $ V.imap mkRow (asGrid st)
+    gridW = C.vBox $ V.toList $ V.imap mkRow (st ^. asGrid)
 
     -- Tab line at h-2. bar attribute gives it its own colour.
     tabW = C.withAttr attrBar (C.txt (tabText st))
@@ -384,10 +401,11 @@ drawApp st =
     -- the InfoTog command. Shows current column's name/type/index so the
     -- user can inspect metadata without opening the full colMeta view.
     infoW
-      | asInfoVis st =
-          let nCols = V.length (_tblColNames tbl)
-              nm = if curCol < nCols then _tblColNames tbl V.! curCol else ""
-              ty = if curCol < nCols then colTypeName' (_tblColType tbl curCol) else ""
+      | st ^. asInfoVis =
+          let colNames = tbl ^. tblColNames
+              nCols = V.length colNames
+              nm = if curCol < nCols then colNames V.! curCol else ""
+              ty = if curCol < nCols then colTypeName' (colType curCol) else ""
               line = "info: " <> nm <> " : " <> ty
                      <> "  [col " <> tshow (curCol + 1) <> "/" <> tshow nCols <> "]"
           in [C.withAttr attrHint (C.txt line)]
@@ -399,32 +417,34 @@ drawApp st =
 
     -- Status line at h-1: colName on left, stats on right, padded in between.
     statsRight =
-      let c = _naCur (_nsCol ns)
-          nCols = V.length (_tblColNames tbl)
-          r = _naCur (_nsRow ns)
-          n = _tblNRows (_nsTbl ns)
+      let c = ns ^. nsCol % naCur
+          colNames = tbl ^. tblColNames
+          nCols = V.length colNames
+          r = ns ^. nsRow % naCur
+          n = tbl ^. tblNRows
           nSel = IS.size rowSelSet
       in "c" <> tshow c <> "/" <> tshow nCols
          <> " grp=" <> tshow nKeys
          <> " sel=" <> tshow nSel
          <> " r" <> tshow r <> "/" <> tshow n
     colName =
-      if curCol < V.length (_tblColNames tbl)
-        then _tblColNames tbl V.! curCol
-        else ""
-    msgPart = if T.null (asMsg st) then "" else " " <> asMsg st
-    cmdPart = if T.null (asCmd st) then "" else " :" <> asCmd st
+      let names' = tbl ^. tblColNames
+      in if curCol < V.length names' then names' V.! curCol else ""
+    msg = st ^. asMsg
+    cmd = st ^. asCmd
+    msgPart = if T.null msg then "" else " " <> msg
+    cmdPart = if T.null cmd then "" else " :" <> cmd
     leftTxt = colName <> msgPart <> cmdPart
-    w = asVisW st
+    w = st ^. asVisW
     gap = max 1 (w - T.length leftTxt - T.length statsRight)
-    -- When asPendingCmd is Just the whole status line becomes an input
+    -- When asPendingCmd Just the whole status line becomes an input
     -- prompt: "{label}: {buffer}▌" with a block cursor so the user can
     -- see what they're typing. Otherwise the normal colName/stats line.
     promptLine label =
-      let body = label <> ": " <> asCmd st <> "\x258C"
+      let body = label <> ": " <> cmd <> "\x258C"
           pad  = max 0 (w - T.length body)
       in body <> T.replicate pad " "
-    statusW = case asPendingCmd st of
+    statusW = case st ^. asPendingCmd of
       Just c  -> C.withAttr attrStatus (C.txt (promptLine (cmdLabel c)))
       Nothing -> C.withAttr attrStatus
                $ C.txt (leftTxt <> T.replicate gap " " <> statsRight)
