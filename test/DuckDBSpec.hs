@@ -12,6 +12,7 @@ import Control.Exception (bracket)
 import qualified Tv.Data.DuckDB as D
 import qualified Tv.Folder as Folder
 import Tv.Types
+import Tv.Eff (runEff)
 import TestUtil (withMemConn)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
@@ -105,7 +106,7 @@ tests =
                     pure d)
                 removeDirectoryRecursive
                 $ \_ -> do
-          ops <- Folder.listFolder d
+          ops <- runEff (Folder.listFolder d)
           V.toList ((ops ^. tblColNames)) @?= ["name", "size", "modified", "type"]
           (ops ^. tblNRows) @?= 3
           names <- mapM (\r -> (ops ^. tblCellStr) r 0) [0 .. (ops ^. tblNRows) - 1]

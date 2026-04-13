@@ -51,6 +51,7 @@ import System.Process (readProcessWithExitCode)
 
 import Tv.Types
 import qualified Tv.Data.DuckDB as DB
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 
 -- ============================================================================
 -- Config: mirrors Tc.SourceConfig.Config (subset of fields we actually use)
@@ -188,8 +189,8 @@ uriToSql uri
 -- shells out and parses the response. For configured-but-unimplemented
 -- protocols (hf:// root, pg://, osquery://) we return an informative stub
 -- so the UI has something to show.
-listRemote :: Text -> IO (Either String TblOps)
-listRemote uri = case findSource uri of
+listRemote :: IOE :> es => Text -> Eff es (Either String TblOps)
+listRemote uri = liftIO $ case findSource uri of
   Nothing  -> pure (Left ("no source config matches " <> T.unpack uri))
   Just cfg -> dispatch cfg uri
 
@@ -218,9 +219,9 @@ _loadAttach _ _ = pure (Left "TODO: pg:// / attach mode")
 -- | Open a URI as a TblOps. For file-ish URIs this means
 -- `SELECT * FROM read_*('uri')` in an in-memory DuckDB. Browsable roots
 -- fall through to 'listRemote'.
-loadFromUri :: Text -> IO (Either String TblOps)
+loadFromUri :: IOE :> es => Text -> Eff es (Either String TblOps)
 loadFromUri uri = case uriToSql uri of
-  Just sql -> loadViaDuckDb sql
+  Just sql -> liftIO (loadViaDuckDb sql)
   Nothing  -> listRemote uri
 
 -- | Run SQL against an in-memory DuckDB and wrap the result. Catches all

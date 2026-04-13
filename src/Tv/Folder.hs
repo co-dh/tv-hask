@@ -21,6 +21,7 @@ import System.FilePath ((</>))
 import Control.Exception (catch, SomeException)
 
 import Tv.Types
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 
 -- | Row in the folder table.
 data Entry = Entry
@@ -78,14 +79,14 @@ descend base rel remaining n = do
     else pure []
 
 -- | Build a read-only TblOps for a directory at depth 1.
-listFolder :: FilePath -> IO TblOps
+listFolder :: IOE :> es => FilePath -> Eff es TblOps
 listFolder p = listFolderDepth p 1
 
 -- | Build a read-only TblOps for a directory, recursing @depth@ levels.
 -- Columns: name, size, modified, type. Includes a ".." parent entry
 -- first (matching Tc).
-listFolderDepth :: FilePath -> Int -> IO TblOps
-listFolderDepth path depth = do
+listFolderDepth :: IOE :> es => FilePath -> Int -> Eff es TblOps
+listFolderDepth path depth = liftIO $ do
   entries <- collect path "" (max 1 depth)
   let parent = Entry ".." "0" "" "dir"
       rows = V.fromList (parent : entries)
