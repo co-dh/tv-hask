@@ -19,7 +19,8 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.IO (IOMode(..), withFile, hPutStr)
 
-import Tv.Types (TblOps(..), ExportFmt(..))
+import Tv.Types
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | File extension for an 'ExportFmt', matching Tc's @ExportFmt.ext@.
 exportFmtExt :: ExportFmt -> Text
@@ -45,7 +46,7 @@ exportFmtFromText t = case T.strip t of
 exportTable :: TblOps -> ExportFmt -> FilePath -> IO ()
 exportTable tbl fmt path = do
   rows <- materialize tbl
-  let cols = _tblColNames tbl
+  let cols = (tbl ^. tblColNames)
   case fmt of
     EFCsv    -> TIO.writeFile path (renderCsv cols rows)
     EFJson   -> TIO.writeFile path (renderJson cols rows)
@@ -56,9 +57,9 @@ exportTable tbl fmt path = do
 -- pad ragged rows with empty strings.
 materialize :: TblOps -> IO (Vector (Vector Text))
 materialize tbl =
-  let nc = V.length (_tblColNames tbl)
-      nr = _tblNRows tbl
-  in V.generateM nr $ \r -> V.generateM nc (_tblCellStr tbl r)
+  let nc = V.length ((tbl ^. tblColNames))
+      nr = (tbl ^. tblNRows)
+  in V.generateM nr $ \r -> V.generateM nc ((tbl ^. tblCellStr) r)
 
 -- ============================================================================
 -- CSV (RFC 4180-ish: quote cells with ", ,, CR or LF)

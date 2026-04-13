@@ -32,8 +32,9 @@ import qualified Data.Text.IO as TIO
 import Tv.Types
 import Tv.View
 import qualified Tv.Nav as Nav
-import Tv.Render (AppState(..), Name(..), drawApp, appAttrMap, cmdLabel)
+import Tv.Render
 import qualified Tv.Render as R
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 import qualified Tv.Key as Key
 import Tv.Key (evToKey)
 import Tv.CmdConfig (keyLookup, CmdInfo(..))
@@ -75,13 +76,9 @@ type Handler = AppState -> Text -> IO (Maybe AppState)
 
 -- | Apply a NavState transform to the head view.
 withNav :: (NavState -> Maybe NavState) -> Handler
-withNav f st _ =
-  let vs = asStack st
-      hd = _vsHd vs
-      ns = _vNav hd
-  in case f ns of
-       Nothing -> pure (Just st)
-       Just ns' -> Just <$> refreshGrid st { asStack = vs { _vsHd = hd { _vNav = ns' } } }
+withNav f st _ = case f (st ^. headNav) of
+  Nothing  -> pure (Just st)
+  Just ns' -> Just <$> refreshGrid (st & headNav .~ ns')
 
 -- | Quit handler — returning Nothing signals halt.
 quitH :: Handler
@@ -172,50 +169,42 @@ handlerMap = Map.fromList $
   where pageRows = 20  -- TODO: derive from terminal size at draw time
 
 -- | Sort the current table by the current column. Builds a fresh TblOps
--- via _tblSortBy and replaces the head view in place.
+-- via tblSortBy replaces the head view in place.
 sortH :: Bool -> Handler
 sortH asc st _ = do
-  let ns  = _vNav $ _vsHd $ asStack st
-      ops = _nsTbl ns
+  let ns  = st ^. headNav
+      ops = ns ^. nsTbl
       ci  = curColIdx ns
-  ops' <- _tblSortBy ops (V.singleton ci) asc
-  let hd' = (_vsHd (asStack st)) { _vNav = ns { _nsTbl = ops' } }
-  Just <$> refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
+  ops' <- (ops ^. tblSortBy) (V.singleton ci) asc
+  Just <$> refreshGrid (st & headTbl .~ ops')
 
 -- | Drop column(s) from the query: current column + any hidden columns.
 -- Lean View.update ColExclude produces Effect.exclude (hidden ++ [current]).
 excludeH :: Handler
 excludeH st _ = do
-  let ns   = _vNav $ _vsHd $ asStack st
-      ops  = _nsTbl ns
+  let ns   = st ^. headNav
+      ops  = ns ^. nsTbl
       ci   = curColIdx ns
-      names = _tblColNames ops
+      names = ops ^. tblColNames
       -- Hidden column indices (from nav hidden names)
-      hiddenIdxs = V.mapMaybe (`V.elemIndex` names) (_nsHidden ns)
+      hiddenIdxs = V.mapMaybe (`V.elemIndex` names) (ns ^. nsHidden)
       -- Combine hidden + current, dedup
       allIdxs = if V.elem ci hiddenIdxs then hiddenIdxs
                 else V.snoc hiddenIdxs ci
-  ops' <- _tblHideCols ops allIdxs
-  case fromTbl ops' (_vPath (curView st)) 0 V.empty 0 of
-    Nothing -> pure (Just st { asMsg = "exclude: empty result" })
-    Just v  -> Just <$> refreshGrid st { asStack = vsPush v (asStack st) }
+  ops' <- (ops ^. tblHideCols) allIdxs
+  case fromTbl ops' (curView st ^. vPath) 0 V.empty 0 of
+    Nothing -> pure (Just (st & asMsg .~ "exclude: empty result"))
+    Just v  -> Just <$> refreshGrid (st & asStack %~ vsPush v)
 
 -- | Set the heatmap mode on the head view's NavState.
 heatH :: Word8 -> Handler
-heatH m st _ =
-  let ns = _vNav $ _vsHd $ asStack st
-      hd = _vsHd (asStack st)
-      hd' = hd { _vNav = ns { _nsHeatMode = m } }
-  in Just <$> refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
+heatH m st _ = Just <$> refreshGrid (st & headNav % nsHeatMode .~ m)
 
 -- | Adjust decimal precision on the head view's NavState, clamped 0..17.
 precH :: (Int -> Int) -> Handler
 precH f st _ =
-  let ns = _vNav $ _vsHd $ asStack st
-      p' = max 0 (min 17 (f (_nsPrecAdj ns)))
-      hd = _vsHd (asStack st)
-      hd' = hd { _vNav = ns { _nsPrecAdj = p' } }
-  in Just <$> refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
+  let p' = max 0 (min 17 (f (st ^. headNav % nsPrecAdj)))
+  in Just <$> refreshGrid (st & headNav % nsPrecAdj .~ p')
 
 -- | Open the space-bar command menu via fzf. Called from handleEvent under
 -- Brick.suspendAndResume so fzf can grab /dev/tty.  The picker returns a
@@ -223,12 +212,12 @@ precH f st _ =
 -- handler, and return the updated AppState.
 runCmdMenu :: AppState -> IO AppState
 runCmdMenu st = do
-  let vctx = vkCtxStr $ _nsVkind $ _vNav $ _vsHd $ asStack st
+  let vctx = vkCtxStr (st ^. headNav % nsVkind)
   mh <- Fzf.cmdMode vctx
   case mh of
     Nothing -> pure st
     Just h -> case cmdFromStr h of
-      Nothing -> pure st { asMsg = "unknown cmd: " <> h }
+      Nothing -> pure (st & asMsg .~ "unknown cmd: " <> h)
       Just c -> do
         r <- handleCmd c "" st
         pure (maybe st id r)
@@ -236,32 +225,30 @@ runCmdMenu st = do
 -- | Build a fresh View from a newly-produced TblOps and push onto stack.
 pushOps :: AppState -> Text -> ViewKind -> TblOps -> IO (Maybe AppState)
 pushOps st path vk ops = case fromTbl ops path 0 V.empty 0 of
-  Nothing -> pure (Just st { asMsg = "empty result" })
-  Just v ->
-    let v' = v { _vNav = (_vNav v) { _nsVkind = vk } }
-    in Just <$> refreshGrid st { asStack = vsPush v' (asStack st) }
+  Nothing -> pure (Just (st & asMsg .~ "empty result"))
+  Just v  -> Just <$> refreshGrid (st & asStack %~ vsPush (v & vNav % nsVkind .~ vk))
 
 -- | Current TblOps of the top view.
 curOps :: AppState -> TblOps
-curOps st = _nsTbl $ _vNav $ _vsHd $ asStack st
+curOps st = st ^. headTbl
 
 -- | Current top view (for path/disp).
 curView :: AppState -> View
-curView = _vsHd . asStack
+curView st = st ^. headView
 
 -- | Swap top two views in the stack.
 stkSwapH :: Handler
-stkSwapH st _ = Just <$> refreshGrid st { asStack = vsSwap (asStack st) }
+stkSwapH st _ = Just <$> refreshGrid (st & asStack %~ vsSwap)
 
 -- | Duplicate the top view on the stack.
 stkDupH :: Handler
-stkDupH st _ = Just <$> refreshGrid st { asStack = vsDup (asStack st) }
+stkDupH st _ = Just <$> refreshGrid (st & asStack %~ vsDup)
 
 -- | Push a column-metadata view computed from the current table.
 metaPushH :: Handler
 metaPushH st _ = do
   ops' <- Meta.mkMetaOps (curOps st)
-  pushOps st (_vPath (curView st) <> " [meta]") VColMeta ops'
+  pushOps st (curView st ^. vPath <> " [meta]") VColMeta ops'
 
 -- | Open a frequency view on (nav.grp ++ current col). The grouping
 -- columns are resolved to indices against the parent table's column
@@ -270,10 +257,10 @@ metaPushH st _ = do
 -- count (nRows of the freq table).
 freqOpenH :: Handler
 freqOpenH st _ = do
-  let ns      = _vNav (curView st)
-      ops     = _nsTbl ns
-      names   = _tblColNames ops
-      grp     = _nsGrp ns
+  let ns      = ((curView st) ^. vNav)
+      ops     = (ns ^. nsTbl)
+      names   = (ops ^. tblColNames)
+      grp     = (ns ^. nsGrp)
       curName = curColName ns
       -- Group cols = nav.grp + current col (if not already in grp).
       -- Matches Tc.Freq.update:
@@ -282,17 +269,15 @@ freqOpenH st _ = do
         if V.elem curName grp then grp else V.snoc grp curName
       colIdxs = V.mapMaybe (`V.elemIndex` names) colNames
   if V.null colIdxs
-    then pure (Just st { asMsg = "freq: no columns selected" })
+    then pure (Just (st & asMsg .~ "freq: no columns selected"))
     else do
       ops' <- Freq.mkFreqOps ops colIdxs
-      let total = _tblNRows ops'
+      let total = ops' ^. tblNRows
           vk    = VFreq colNames total
-          path  = _vPath (curView st) <> " [freq " <> T.intercalate "," (V.toList colNames) <> "]"
+          path  = curView st ^. vPath <> " [freq " <> T.intercalate "," (V.toList colNames) <> "]"
       case fromTbl ops' path 0 colNames 0 of
-        Nothing -> pure (Just st { asMsg = "freq: empty result" })
-        Just v ->
-          let v' = v { _vNav = (_vNav v) { _nsVkind = vk } }
-          in Just <$> refreshGrid st { asStack = vsPush v' (asStack st) }
+        Nothing -> pure (Just (st & asMsg .~ "freq: empty result"))
+        Just v  -> Just <$> refreshGrid (st & asStack %~ vsPush (v & vNav % nsVkind .~ vk))
 
 -- | Filter the parent table by the current freq-view row. Reads the
 -- group-key values of the focused row, builds a WHERE clause via
@@ -301,66 +286,63 @@ freqOpenH st _ = do
 -- to the PARENT table (stack tail), not the freq table itself. The
 -- filtered result is pushed on top of the parent view.
 freqFilterH :: Handler
-freqFilterH st _ =
-  case _nsVkind (_vNav (curView st)) of
-    VFreq cols _ -> case _vsTl (asStack st) of
-      [] -> pure (Just st { asMsg = "freq.filter: no parent view" })
-      (parent:_) -> do
-        let freqOps   = curOps st
-            parentOps = _nsTbl (_vNav parent)
-            row       = _naCur (_nsRow (_vNav (curView st)))
-        expr <- Freq.filterExpr freqOps cols row
-        mOps <- _tblFilter parentOps expr
-        case mOps of
-          Nothing -> pure (Just st { asMsg = "freq.filter: filter failed" })
-          Just ops' ->
-            case fromTbl ops' (_vPath parent) 0 (_nsGrp (_vNav parent)) 0 of
-              Nothing -> pure (Just st { asMsg = "freq.filter: empty result" })
-              Just v  -> Just <$> refreshGrid st { asStack = vsPush v (asStack st) }
-    _ -> pure (Just st { asMsg = "freq.filter: not a freq view" })
+freqFilterH st _ = case st ^. headNav % nsVkind of
+  VFreq cols _ -> case st ^. asStack % vsTl of
+    [] -> pure (Just (st & asMsg .~ "freq.filter: no parent view"))
+    (parent:_) -> do
+      let freqOps   = curOps st
+          parentOps = parent ^. vNav % nsTbl
+          row       = st ^. headNav % nsRow % naCur
+      expr <- Freq.filterExpr freqOps cols row
+      mOps <- (parentOps ^. tblFilter) expr
+      case mOps of
+        Nothing -> pure (Just (st & asMsg .~ "freq.filter: filter failed"))
+        Just ops' ->
+          case fromTbl ops' (parent ^. vPath) 0 (parent ^. vNav % nsGrp) 0 of
+            Nothing -> pure (Just (st & asMsg .~ "freq.filter: empty result"))
+            Just v  -> Just <$> refreshGrid (st & asStack %~ vsPush v)
+  _ -> pure (Just (st & asMsg .~ "freq.filter: not a freq view"))
 
 -- | Push a transposed-table view.
 xposeH :: Handler
 xposeH st _ = do
   ops' <- Transpose.mkTransposedOps (curOps st)
-  pushOps st (_vPath (curView st) <> " [T]") VTbl ops'
+  pushOps st (((curView st) ^. vPath) <> " [T]") VTbl ops'
 
 -- | Derive a new column from @asCmd == "name = expr"@. No-op + message on
 -- parse failure; fail-soft on DuckDB errors (addDerived returns original).
 deriveH :: Handler
 deriveH st arg = case Derive.parseDerive arg of
-  Nothing -> pure (Just st { asMsg = "derive: usage 'name = expr'" })
+  Nothing -> pure (Just (st & asMsg .~ "derive: usage 'name = expr'"))
   Just (n, e) -> do
     ops' <- Derive.addDerived (curOps st) n e
-    pushOps st (_vPath (curView st) <> " =" <> n) VTbl ops'
+    pushOps st (((curView st) ^. vPath) <> " =" <> n) VTbl ops'
 
 -- | Split the current column by regex taken from @asCmd@.
 splitH :: Handler
 splitH st arg
   | T.null arg = splitH st "-"  -- test mode: fzf picks first suggestion = "-"
   | otherwise = do
-      let ns = _vNav (curView st)
+      let ns = ((curView st) ^. vNav)
           ci = curColIdx ns
           colName = curColName ns
-          origNc = V.length (_tblColNames (curOps st))
+          origNc = V.length (((curOps st) ^. tblColNames))
       ops' <- Split.splitColumn (curOps st) ci arg
       -- Position cursor at the first split column (right after original columns).
       -- Lean Split.run does this so the user sees the new columns immediately.
       let startCol = origNc
-          path = _vPath (curView st) <> " :" <> colName
+          path = ((curView st) ^. vPath) <> " :" <> colName
       case fromTbl ops' path startCol V.empty 0 of
-        Nothing -> pure (Just st { asMsg = "split: empty result" })
-        Just v  ->
-          let v' = v { _vNav = (_vNav v) { _nsVkind = VTbl } }
-          in Just <$> refreshGrid st { asStack = vsPush v' (asStack st) }
+        Nothing -> pure (Just (st & asMsg .~ "split: empty result"))
+        Just v  -> Just <$> refreshGrid (st & asStack %~ vsPush (v & vNav % nsVkind .~ VTbl))
 
 -- | Diff top two views on the stack. Requires at least two views.
 diffH :: Handler
-diffH st _ = case _vsTl (asStack st) of
-  [] -> pure (Just st { asMsg = "diff: need 2 views on stack" })
+diffH st _ = case st ^. asStack % vsTl of
+  [] -> pure (Just (st & asMsg .~ "diff: need 2 views on stack"))
   (v2:_) -> do
-    let l = _nsTbl (_vNav (_vsHd (asStack st)))
-        r = _nsTbl (_vNav v2)
+    let l = st ^. headTbl
+        r = v2 ^. vNav % nsTbl
     ops' <- Diff.diffTables l r
     pushOps st "[diff]" VTbl ops'
 
@@ -368,15 +350,15 @@ diffH st _ = case _vsTl (asStack st) of
 -- if both views share non-empty grp columns → all join types available;
 -- otherwise only union/diff.  In test mode fzfIdx picks index 0.
 joinH :: Handler
-joinH st _ = case _vsTl (asStack st) of
-  [] -> pure (Just st { asMsg = "join: need 2 views on stack" })
+joinH st _ = case st ^. asStack % vsTl of
+  [] -> pure (Just (st & asMsg .~ "join: need 2 views on stack"))
   (v2:_) -> do
-    let curNs  = _vNav (_vsHd (asStack st))
-        parNs  = _vNav v2
-        l      = _nsTbl parNs    -- parent = left (Lean convention)
-        r      = _nsTbl curNs    -- current = right
-        leftGrp = _nsGrp parNs
-        joinOk = not (V.null leftGrp) && leftGrp == _nsGrp curNs
+    let curNs = st ^. headNav
+        parNs = v2 ^. vNav
+        l     = parNs ^. nsTbl    -- parent = left (Lean convention)
+        r     = curNs ^. nsTbl    -- current = right
+        leftGrp = (parNs ^. nsGrp)
+        joinOk = not (V.null leftGrp) && leftGrp == (curNs ^. nsGrp)
         allOps = [Join.JInner, Join.JLeft, Join.JRight, Join.JUnion, Join.JDiff]
         availOps = if joinOk then allOps else [Join.JUnion, Join.JDiff]
         labels  = map joinLabel availOps
@@ -407,7 +389,7 @@ exportH st arg
         Just fmt -> do
           -- Generate path: ~/.cache/tv/tv_export_{filename}.{ext}
           dir <- Util.logDir
-          let rawBase = takeWhile (/= '.') (takeFileName (T.unpack (_vPath (curView st))))
+          let rawBase = takeWhile (/= '.') (takeFileName (T.unpack (((curView st) ^. vPath))))
               base = if null rawBase then "export" else rawBase
               ext = T.unpack (Export.exportFmtExt fmt)
               path = dir </> ("tv_export_" ++ base ++ "." ++ ext)
@@ -415,28 +397,28 @@ exportH st arg
           let msg = case r of
                 Left (e :: SomeException) -> "export failed: " <> T.pack (displayException e)
                 Right _ -> "exported to " <> T.pack path
-          pure (Just st { asMsg = msg })
+          pure (Just (st & asMsg .~ msg))
         Nothing -> do
           -- Treat arg as path, infer format from extension
           let path = T.unpack arg
               ext = T.toLower $ T.pack $ drop 1 $ takeExtension path
           case Export.exportFmtFromText ext of
-            Nothing -> pure (Just st { asMsg = "export: unknown fmt " <> arg })
+            Nothing -> pure (Just (st & asMsg .~ "export: unknown fmt " <> arg))
             Just fmt -> do
               r <- try (Export.exportTable (curOps st) fmt path)
               let msg = case r of
                     Left (e :: SomeException) -> "export failed: " <> T.pack (displayException e)
                     Right _ -> "exported to " <> T.pack path
-              pure (Just st { asMsg = msg })
+              pure (Just (st & asMsg .~ msg))
 
 -- | Save the current stack as a named session (name from @asCmd@).
 sessSaveH :: Handler
 sessSaveH st arg = do
-  mp <- Session.saveSession arg (asStack st)
+  mp <- Session.saveSession arg ((st ^. asStack))
   let msg = case mp of
         Just p  -> "saved session " <> T.pack p
         Nothing -> "save failed"
-  pure (Just st { asMsg = msg })
+  pure (Just (st & asMsg .~ msg))
 
 -- | Load a session by name. Haskell cannot rehydrate TblOps without
 -- re-running the source query, so for now we just report the result
@@ -448,14 +430,14 @@ sessLoadH st arg = do
   let msg = case ms of
         Just _  -> "loaded session (rehydrate TODO)"
         Nothing -> "load failed"
-  pure (Just st { asMsg = msg })
+  pure (Just (st & asMsg .~ msg))
 
 -- | Toggle info overlay (asInfoVis). When the flag is on, 'drawApp'
 -- draws a one-line panel just above the status bar showing the current
 -- column's name, type, and (1-indexed) position. Stateless toggle —
 -- everything lives in 'AppState'.
 infoTogH :: Handler
-infoTogH st _ = pure (Just st { asInfoVis = not (asInfoVis st) })
+infoTogH st _ = pure (Just (st & asInfoVis .~ not ((st ^. asInfoVis))))
 
 -- | Push a fresh folder view at the current directory. Unlike
 -- folderEnterH (which follows the row under the cursor into either
@@ -464,19 +446,16 @@ infoTogH st _ = pure (Just st { asInfoVis = not (asInfoVis st) })
 -- stack slot. Matches Tc.Folder.dispatch FolderPush.
 folderPushH :: Handler
 folderPushH st _ = do
-  let ns = _vNav $ _vsHd $ asStack st
-  case _nsVkind ns of
+  case st ^. headNav % nsVkind of
     VFld base depth -> do
       ops <- Folder.listFolderDepth (T.unpack base) depth
       case fromTbl ops base 0 V.empty 0 of
-        Nothing -> pure (Just st { asMsg = "folder.push: empty" })
-        Just v  ->
-          let v' = v { _vNav = (_vNav v) { _nsVkind = VFld base depth } }
-          in Just <$> refreshGrid st { asStack = vsPush v' (asStack st) }
+        Nothing -> pure (Just (st & asMsg .~ "folder.push: empty"))
+        Just v  -> Just <$> refreshGrid (st & asStack %~ vsPush (v & vNav % nsVkind .~ VFld base depth))
     _ -> do
       -- From a file view: push a folder view of the file's parent directory.
       -- Lean Folder.dispatch FolderPush opens curDir (parent of file path).
-      let path = _vPath (curView st)
+      let path = curView st ^. vPath
           dir  = T.pack (takeDirectory (T.unpack path))
       absDir <- canonicalizePath (T.unpack dir)
       openPath st absDir
@@ -486,12 +465,12 @@ folderPushH st _ = do
 -- the accompanying .trashinfo metadata (matches Tc's best-effort).
 folderDelH :: Handler
 folderDelH st _ = do
-  let ns = _vNav $ _vsHd $ asStack st
-  case _nsVkind ns of
+  let ns = st ^. headNav
+  case ns ^. nsVkind of
     VFld base _ -> do
-      let r = _naCur (_nsRow ns)
-      name <- _tblCellStr (_nsTbl ns) r 0
-      if T.null name || name == ".." then pure (Just st { asMsg = "del: nothing to trash" })
+      let r = ns ^. nsRow % naCur
+      name <- (ns ^. nsTbl % tblCellStr) r 0
+      if T.null name || name == ".." then pure (Just (st & asMsg .~ "del: nothing to trash"))
       else do
         home <- getHomeDirectory
         let trashDir = home </> ".local/share/Trash/files"
@@ -502,15 +481,13 @@ folderDelH st _ = do
         r1 <- try (renamePath srcPath dest)
         case r1 of
           Left (e :: SomeException) ->
-            pure (Just st { asMsg = "del failed: " <> T.pack (displayException e) })
+            pure (Just (st & asMsg .~ "del failed: " <> T.pack (displayException e)))
           Right _ -> do
             -- Rebuild the current folder view so the entry disappears.
             ops' <- Folder.listFolderDepth (T.unpack base) 1
-            let hd  = _vsHd (asStack st)
-                hd' = hd { _vNav = (_vNav hd) { _nsTbl = ops' } }
-            s' <- refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
-            pure (Just s' { asMsg = "trashed " <> name })
-    _ -> pure (Just st { asMsg = "del: not in a folder view" })
+            s' <- refreshGrid (st & headTbl .~ ops')
+            pure (Just (s' & asMsg .~ "trashed " <> name))
+    _ -> pure (Just (st & asMsg .~ "del: not in a folder view"))
   where
     uniqueTrashPath dir base n = do
       let cand = if n == 0 then dir </> base else dir </> (base <> "." <> show n)
@@ -520,17 +497,13 @@ folderDelH st _ = do
 -- | Bump the folder recursion depth by @d@ (clamped 1..5), rebuild the
 -- folder TblOps, and update the view kind. Used by Inc/Dec handlers.
 folderDepthAdjH :: Int -> Handler
-folderDepthAdjH d st _ = do
-  let ns = _vNav $ _vsHd $ asStack st
-  case _nsVkind ns of
-    VFld base depth -> do
-      let d' = max 1 (min 5 (depth + d))
-      ops' <- Folder.listFolderDepth (T.unpack base) d'
-      let hd  = _vsHd (asStack st)
-          hd' = hd { _vNav = (_vNav hd) { _nsTbl = ops', _nsVkind = VFld base d' } }
-      s' <- refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
-      pure (Just s' { asMsg = "depth=" <> T.pack (show d') })
-    _ -> pure (Just st { asMsg = "depth: not in a folder view" })
+folderDepthAdjH d st _ = case st ^. headNav % nsVkind of
+  VFld base depth -> do
+    let d' = max 1 (min 5 (depth + d))
+    ops' <- Folder.listFolderDepth (T.unpack base) d'
+    s' <- refreshGrid (st & headTbl .~ ops' & headNav % nsVkind .~ VFld base d')
+    pure (Just (s' & asMsg .~ "depth=" <> T.pack (show d')))
+  _ -> pure (Just (st & asMsg .~ "depth: not in a folder view"))
 
 folderDepthIncH, folderDepthDecH :: Handler
 folderDepthIncH = folderDepthAdjH 1
@@ -542,42 +515,37 @@ folderDepthDecH = folderDepthAdjH (-1)
 -- fails-soft with a status message if not found.
 rowSearchH :: Handler
 rowSearchH st arg
-  | T.null arg = pure (Just st { asMsg = "search: empty query" })
+  | T.null arg = pure (Just (st & asMsg .~ "search: empty query"))
   | otherwise = do
-      let ns  = _vNav $ _vsHd $ asStack st
-          ops = _nsTbl ns
+      let ns  = st ^. headNav
+          ops = ns ^. nsTbl
           ci  = curColIdx ns
-          startRow = _naCur (_nsRow ns) + 1  -- skip current row, matching Lean
-      mr <- _tblFindRow ops ci arg startRow True
+          startRow = ns ^. nsRow % naCur + 1  -- skip current row, matching Lean
+      mr <- (ops ^. tblFindRow) ci arg startRow True
       case mr of
-        Just r ->
-          let hd  = _vsHd (asStack st)
-              ns' = ns { _nsRow = (_nsRow ns) { _naCur = r }, _nsSearch = arg }
-              hd' = hd { _vNav = ns' }
-          in Just <$> refreshGrid st { asStack = (asStack st) { _vsHd = hd' }, asMsg = "" }
-        Nothing -> pure (Just st { asMsg = "not found: " <> arg })
+        Just r -> Just <$> refreshGrid (st & headNav % nsRow % naCur .~ r
+                                           & headNav % nsSearch     .~ arg
+                                           & asMsg                  .~ "")
+        Nothing -> pure (Just (st & asMsg .~ "not found: " <> arg))
 
 -- | n / N: jump to the next / previous search match. Reuses the
--- previously-stored query in @_nsSearch@ and calls _tblFindRow with
+-- previously-stored query in @_nsSearch@ and calls tblFindRow
 -- an advanced starting row.
 rowSearchStepH :: Int -> Handler
 rowSearchStepH step st _ = do
-  let ns = _vNav $ _vsHd $ asStack st
-      q  = _nsSearch ns
-  if T.null q then pure (Just st { asMsg = "no prior search" })
+  let ns = st ^. headNav
+      q  = ns ^. nsSearch
+  if T.null q then pure (Just (st & asMsg .~ "no prior search"))
   else do
-    let ops = _nsTbl ns
+    let ops = ns ^. nsTbl
         ci  = curColIdx ns
-        startRow = _naCur (_nsRow ns) + step
-    mr <- _tblFindRow ops ci q startRow (step > 0)
+        startRow = ns ^. nsRow % naCur + step
+    mr <- (ops ^. tblFindRow) ci q startRow (step > 0)
     case mr of
-      Just r ->
-        let hd  = _vsHd (asStack st)
-            hd' = hd { _vNav = ns { _nsRow = (_nsRow ns) { _naCur = r } } }
-        in do
-             s' <- refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
-             pure (Just s' { asMsg = "" })
-      Nothing -> pure (Just st { asMsg = "no more matches: " <> q })
+      Just r -> do
+        s' <- refreshGrid (st & headNav % nsRow % naCur .~ r)
+        pure (Just (s' & asMsg .~ ""))
+      Nothing -> pure (Just (st & asMsg .~ "no more matches: " <> q))
 
 rowSearchNextH, rowSearchPrevH :: Handler
 rowSearchNextH = rowSearchStepH 1
@@ -591,79 +559,71 @@ rowFilterH st arg
   | T.null arg = do
       -- Fzf path: get distinct values for current column, pick via fzf
       let ops = curOps st
-          ns  = _vNav (_vsHd (asStack st))
+          ns  = st ^. headNav
           colIdx  = curColIdx ns
           colName = curColName ns
-          isNum   = isNumeric (_tblColType ops colIdx)
-      vals <- _tblDistinct ops colIdx
+          isNum   = isNumeric ((ops ^. tblColType) colIdx)
+      vals <- (ops ^. tblDistinct) colIdx
       let sorted = V.fromList (sort (V.toList vals))
           input  = T.intercalate "\n" (V.toList sorted)
       mResult <- Fzf.fzf ["--print-query", "--prompt=filter > "] input
       case mResult of
         Nothing -> pure (Just st)
         Just result -> do
-          let expr = _tblBuildFilter ops colName sorted result isNum
+          let expr = (ops ^. tblBuildFilter) colName sorted result isNum
           applyFilter st ops colName expr
   | otherwise = do
       let ops = curOps st
-          ns  = _vNav (_vsHd (asStack st))
-          colName = curColName ns
+          colName = curColName (st ^. headNav)
       applyFilter st ops colName arg
   where
     applyFilter st' ops' cn expr
       | T.null expr = pure (Just st')
       | otherwise = do
-          mOps <- _tblFilter ops' expr
+          mOps <- (ops' ^. tblFilter) expr
           case mOps of
-            Nothing -> pure (Just st' { asMsg = "filter failed: " <> expr })
+            Nothing -> pure (Just (st' & asMsg .~ "filter failed: " <> expr))
             Just ops'' ->
-              case fromTbl ops'' (_vPath (curView st') <> " \\" <> cn) 0 V.empty 0 of
-                Nothing -> pure (Just st' { asMsg = "filter: empty result" })
-                Just v  -> Just <$> refreshGrid st' { asStack = vsPush v (asStack st') }
+              case fromTbl ops'' (curView st' ^. vPath <> " \\" <> cn) 0 V.empty 0 of
+                Nothing -> pure (Just (st' & asMsg .~ "filter: empty result"))
+                Just v  -> Just <$> refreshGrid (st' & asStack %~ vsPush v)
 
 -- | Goto column by name prefix/substring. First case-insensitive prefix
 -- match wins; falls back to substring match so users can type partial
--- names. Moves _nsCol cursor, no new view.
+-- names. Moves nsCol, no new view.
 colSearchH :: Handler
 colSearchH st arg
-  | T.null arg = pure (Just st { asMsg = "goto: empty name" })
+  | T.null arg = pure (Just (st & asMsg .~ "goto: empty name"))
   | otherwise = do
-      let ns = _vNav $ _vsHd $ asStack st
-          names = _tblColNames (_nsTbl ns)
-          disp  = _nsDispIdxs ns
+      let ns = st ^. headNav
+          names = ns ^. nsTbl % tblColNames
+          disp  = ns ^. nsDispIdxs
           q = T.toLower arg
           at i = T.toLower (names V.! (disp V.! i))
           idxRange = [0 .. V.length disp - 1]
       case find ((q `T.isPrefixOf`) . at) idxRange <|> find ((q `T.isInfixOf`) . at) idxRange of
         Just i  -> moveTo i
-        Nothing -> pure (Just st { asMsg = "no column matches: " <> arg })
+        Nothing -> pure (Just (st & asMsg .~ "no column matches: " <> arg))
   where
-    moveTo i =
-      let hd = _vsHd (asStack st)
-          ns = _vNav hd
-          hd' = hd { _vNav = ns { _nsCol = (_nsCol ns) { _naCur = i } } }
-      in Just <$> refreshGrid st { asStack = (asStack st) { _vsHd = hd' }, asMsg = "" }
+    moveTo i = Just <$> refreshGrid (st & headNav % nsCol % naCur .~ i & asMsg .~ "")
 
 -- | MetaSetKey: in a colMeta view, take the row selections (which are
 -- column indices in the parent) and set them as the parent's group
 -- columns, then pop back to the parent.
 metaSetKeyH :: Handler
-metaSetKeyH st _ =
-  case _nsVkind (_vNav (curView st)) of
-    VColMeta -> case _vsTl (asStack st) of
-      [] -> pure (Just st { asMsg = "meta.key: no parent view" })
-      (parent:_) -> do
-        let metaNs = _vNav (curView st)
-            sels = _naSels (_nsRow metaNs)
-            parentNames = _tblColNames (_nsTbl (_vNav parent))
-            keyNames = V.mapMaybe (\i -> parentNames V.!? i) sels
-            parentNs = _vNav parent
-            parentNs' = parentNs { _nsGrp = keyNames
-                                 , _nsDispIdxs = dispOrder keyNames parentNames }
-            parent' = parent { _vNav = parentNs' }
-            newStack = (asStack st) { _vsHd = parent', _vsTl = drop 1 (_vsTl (asStack st)) }
-        Just <$> refreshGrid st { asStack = newStack }
-    _ -> pure (Just st { asMsg = "meta.key: not a meta view" })
+metaSetKeyH st _ = case st ^. headNav % nsVkind of
+  VColMeta -> case st ^. asStack % vsTl of
+    [] -> pure (Just (st & asMsg .~ "meta.key: no parent view"))
+    (parent:_) -> do
+      let metaNs = st ^. headNav
+          sels = metaNs ^. nsRow % naSels
+          parentNames = parent ^. vNav % nsTbl % tblColNames
+          keyNames = V.mapMaybe (\i -> parentNames V.!? i) sels
+          parent' = parent & vNav % nsGrp .~ keyNames
+                           & vNav % nsDispIdxs .~ dispOrder keyNames parentNames
+      Just <$> refreshGrid (st & asStack % vsHd .~ parent'
+                              & asStack % vsTl %~ drop 1)
+  _ -> pure (Just (st & asMsg .~ "meta.key: not a meta view"))
 
 -- | Meta "select rows where null_pct == 100". Lean Meta.selNull filters
 -- on null_pct == 100 (fully null columns).
@@ -676,28 +636,24 @@ metaSelSingleH :: Handler
 metaSelSingleH = metaSelByColValue "dist" (== 1) "no single-value columns"
 
 metaSelByColValue :: Text -> (Int -> Bool) -> Text -> Handler
-metaSelByColValue colName predFn emptyMsg st _ =
-  case _nsVkind (_vNav (curView st)) of
-    VColMeta -> do
-      let ns = _vNav (curView st)
-          ops = _nsTbl ns
-          names = _tblColNames ops
-      case V.elemIndex colName names of
-        Nothing -> pure (Just st { asMsg = "meta.sel: column '" <> colName <> "' missing" })
-        Just colIdx -> do
-          let nr = _tblNRows ops
-          matches <- V.filterM (\r -> do
-              cell <- _tblCellStr ops r colIdx
-              let v = case reads (T.unpack cell) of [(n,"")] -> n; _ -> (0 :: Int)
-              pure (predFn v)) (V.enumFromN 0 nr)
-          if V.null matches then pure (Just st { asMsg = emptyMsg })
-          else
-            let hd  = _vsHd (asStack st)
-                hd' = hd { _vNav = ns { _nsRow = (_nsRow ns) { _naSels = matches } } }
-            in do
-              s' <- refreshGrid st { asStack = (asStack st) { _vsHd = hd' } }
-              pure (Just s' { asMsg = tshow (V.length matches) <> " columns selected" })
-    _ -> pure (Just st { asMsg = "meta.sel: not a meta view" })
+metaSelByColValue colName predFn emptyMsg st _ = case st ^. headNav % nsVkind of
+  VColMeta -> do
+    let ns = st ^. headNav
+        ops = ns ^. nsTbl
+        names = ops ^. tblColNames
+    case V.elemIndex colName names of
+      Nothing -> pure (Just (st & asMsg .~ "meta.sel: column '" <> colName <> "' missing"))
+      Just colIdx -> do
+        let nr = ops ^. tblNRows
+        matches <- V.filterM (\r -> do
+            cell <- (ops ^. tblCellStr) r colIdx
+            let v = case reads (T.unpack cell) of [(n,"")] -> n; _ -> (0 :: Int)
+            pure (predFn v)) (V.enumFromN 0 nr)
+        if V.null matches then pure (Just (st & asMsg .~ emptyMsg))
+        else do
+          s' <- refreshGrid (st & headNav % nsRow % naSels .~ matches)
+          pure (Just (s' & asMsg .~ tshow (V.length matches) <> " columns selected"))
+  _ -> pure (Just (st & asMsg .~ "meta.sel: not a meta view"))
   where tshow = T.pack . show
 
 -- | ThemeOpen: fzf picker over available themes. Must run under
@@ -713,8 +669,8 @@ runThemePicker st = do
     Nothing -> pure st
     Just sel -> case reads (T.unpack (T.takeWhile (/= ':') sel)) of
       [(i, _)] -> do
-        theme' <- Tv.Theme.applyTheme (Tv.Theme.ThemeState (asStyles st) (asThemeIdx st)) i
-        pure st { asStyles = Tv.Theme.tsStyles theme', asThemeIdx = Tv.Theme.tsThemeIdx theme' }
+        theme' <- Tv.Theme.applyTheme (Tv.Theme.ThemeState ((st ^. asStyles)) ((st ^. asThemeIdx))) i
+        pure (st & asStyles .~ Tv.Theme.tsStyles theme' & asThemeIdx .~ Tv.Theme.tsThemeIdx theme')
       _ -> pure st
 
 -- | Run a plot command: resolve cursor + group columns from the current
@@ -723,36 +679,35 @@ runThemePicker st = do
 -- we don't enter an interactive downsample loop — one plot, one PNG.
 plotH :: PlotKind -> Handler
 plotH kind st _ = do
-  let ns    = _vNav $ _vsHd $ asStack st
-      tbl   = _nsTbl ns
+  let ns    = st ^. headNav
+      tbl   = ns ^. nsTbl
       curC  = curColIdx ns
-      names = _tblColNames tbl
+      names = tbl ^. tblColNames
       -- Resolve group column names -> data indices, dropping any that
       -- don't exist in the current table (defensive: nav state may lag).
-      grpIdx = V.mapMaybe (\n -> V.elemIndex n names) (_nsGrp ns)
+      grpIdx = V.mapMaybe (`V.elemIndex` names) (ns ^. nsGrp)
   r <- Plot.runPlot kind tbl curC grpIdx
   let msg = case r of
         Just p  -> "plot: saved to " <> T.pack p
         Nothing -> "plot: failed (check column types / R install)"
-  pure (Just st { asMsg = msg })
+  pure (Just (st & asMsg .~ msg))
 
 -- | Pop the top view; quit if it was the last.
 stkPopH :: Handler
-stkPopH st _ = case vsPop (asStack st) of
+stkPopH st _ = case vsPop (st ^. asStack) of
   Nothing  -> pure Nothing
-  Just vs' -> Just <$> refreshGrid st { asStack = vs' }
+  Just vs' -> Just <$> refreshGrid (st & asStack .~ vs')
 
 -- | Folder enter: resolve the current row's path cell, load the target as
 -- a new view and push it. Directories → listFolder, files → DuckDB read_*.
 -- Database folder views (.duckdb/.sqlite) → query the named table.
 folderEnterH :: Handler
 folderEnterH st _ = do
-  let hd = _vsHd (asStack st)
-      ns = _vNav hd
-  case _nsVkind ns of
+  let ns = st ^. headNav
+  case ns ^. nsVkind of
     VFld base _ -> do
-      let r = _naCur (_nsRow ns)
-      name <- _tblCellStr (_nsTbl ns) r 0
+      let r = ns ^. nsRow % naCur
+      name <- (ns ^. nsTbl % tblCellStr) r 0
       if T.null name then pure (Just st)
       else if isDbFile (T.unpack base) && name /= ".."
         then enterDbTable st (T.unpack base) name
@@ -767,9 +722,9 @@ enterDbTable :: AppState -> FilePath -> Text -> IO (Maybe AppState)
 enterDbTable st dbPath tblName = do
   r <- try go :: IO (Either SomeException (Maybe View))
   case r of
-    Right (Just v) -> Just <$> refreshGrid st { asStack = vsPush v (asStack st) }
-    Right Nothing -> pure (Just st { asMsg = "empty table: " <> tblName })
-    Left e -> pure (Just st { asMsg = "open table failed: " <> T.pack (displayException e) })
+    Right (Just v) -> Just <$> refreshGrid (st & asStack %~ vsPush v)
+    Right Nothing -> pure (Just (st & asMsg .~ "empty table: " <> tblName))
+    Left e -> pure (Just (st & asMsg .~ "open table failed: " <> T.pack (displayException e)))
   where
     go = do
       conn <- DB.connect ":memory:"
@@ -796,54 +751,48 @@ enterDbTable st dbPath tblName = do
           -- Set grp to primary key if available (name column for table listing)
           let path = T.pack dbPath <> " " <> tblName
               grp = V.singleton "name"  -- Lean sets grp=1 for DuckDB tables
-              grp' = V.filter (`V.elem` _tblColNames ops) grp
+              grp' = V.filter (`V.elem` (ops ^. tblColNames)) grp
           in pure (fromTbl ops path 0 grp' 0)
 
 -- | Parent: replace current folder view with one rooted at parent dir.
 -- Replaces in-place (doesn't push) so backspace chain works correctly.
 folderParentH :: Handler
-folderParentH st _ = do
-  let hd = _vsHd (asStack st)
-      ns = _vNav hd
-  case _nsVkind ns of
-    VFld base _ -> do
-      parentPath <- canonicalizePath (T.unpack base </> "..")
-      (ops, absP) <- loadFolder parentPath
-      let disp = T.pack absP
-          vk = VFld disp 1
-      case fromTbl ops disp 0 V.empty 0 of
-        Nothing -> pure (Just st { asMsg = "parent: empty" })
-        Just v  -> do
-          let v' = v { _vNav = (_vNav v) { _nsVkind = vk } }
-              stk' = (asStack st) { _vsHd = v' }
-          Just <$> refreshGrid st { asStack = stk' }
-    _ -> pure (Just st)
+folderParentH st _ = case st ^. headNav % nsVkind of
+  VFld base _ -> do
+    parentPath <- canonicalizePath (T.unpack base </> "..")
+    (ops, absP) <- loadFolder parentPath
+    let disp = T.pack absP
+        vk = VFld disp 1
+    case fromTbl ops disp 0 V.empty 0 of
+      Nothing -> pure (Just (st & asMsg .~ "parent: empty"))
+      Just v  -> Just <$> refreshGrid (st & asStack % vsHd .~ (v & vNav % nsVkind .~ vk))
+  _ -> pure (Just st)
 
--- | Rebuild asGrid for the visible window. Walks the TblOps _tblCellStr
+-- | Rebuild the asGrid visible window. Walks the TblOps _tblCellStr
 -- IO function for each cell. Called after any handler that could change
 -- the viewport or the underlying table — the single refresh path keeps
 -- drawApp pure and lets it do zero IO.
 refreshGrid :: AppState -> IO AppState
 refreshGrid st = do
-  let ns = _vNav $ _vsHd $ asStack st
-      tbl = _nsTbl ns
-      disp = _nsDispIdxs ns
-      nr = _tblNRows tbl
-      nc = V.length disp
-      curR = _naCur (_nsRow ns)
-      curC = _naCur (_nsCol ns)
-      visH = max 1 (asVisH st)
-      visW = max 1 (asVisW st)
+  let ns   = st ^. headNav
+      tbl  = ns ^. nsTbl
+      disp = ns ^. nsDispIdxs
+      nr   = tbl ^. tblNRows
+      nc   = V.length disp
+      curR = ns ^. nsRow % naCur
+      curC = ns ^. nsCol % naCur
+      visH = max 1 (st ^. asVisH)
+      visW = max 1 (st ^. asVisW)
       -- Scroll viewport to keep cursor visible (mirrors Tc adjOff).
       adjOff cur off page = clamp 0 (max 1 (cur + 1)) (max (cur + 1 - page) (min off cur))
-      r0 = adjOff curR (asVisRow0 st) visH
-      c0 = adjOff curC (asVisCol0 st) visW
+      r0 = adjOff curR (st ^. asVisRow0) visH
+      c0 = adjOff curC (st ^. asVisCol0) visW
       h = min visH (max 0 (nr - r0))
       w = min visW (max 0 (nc - c0))
   grid <- V.generateM h $ \ri ->
             V.generateM w $ \ci ->
-              _tblCellStr tbl (r0 + ri) (disp V.! (c0 + ci))
-  pure st { asGrid = grid, asVisRow0 = r0, asVisCol0 = c0 }
+              (tbl ^. tblCellStr) (r0 + ri) (disp V.! (c0 + ci))
+  pure (st & asGrid .~ grid & asVisRow0 .~ r0 & asVisCol0 .~ c0)
 
 -- | Dispatch: (state, cmdinfo, arg) → IO Action. Matches Lean's dispatch signature.
 -- Returns Nothing to quit, Just to continue. Looks up handlerMap, falls back to no-op.
@@ -863,7 +812,7 @@ handleCmd cmd arg st = do
 -- full arg-passing in -c test mode). Kept for unit tests that drive one key.
 handleKey :: Text -> AppState -> IO (Maybe AppState)
 handleKey key st = do
-  let ctx = vkCtxStr $ _nsVkind $ _vNav $ _vsHd $ asStack st
+  let ctx = vkCtxStr (st ^. headNav % nsVkind)
   mci <- keyLookup key ctx
   case mci of
     Nothing -> pure (Just st)
@@ -879,7 +828,7 @@ app = Brick.App
   , Brick.appChooseCursor = Brick.neverShowCursor
   , Brick.appHandleEvent = handleEvent
   , Brick.appStartEvent = pure ()
-  , Brick.appAttrMap = \st -> appAttrMap (asStyles st)
+  , Brick.appAttrMap = \st -> appAttrMap ((st ^. asStyles))
   }
 
 handleEvent :: Brick.BrickEvent Name () -> Brick.EventM Name AppState ()
@@ -887,29 +836,29 @@ handleEvent (Brick.VtyEvent (Vty.EvResize w h)) = do
   st <- Brick.get
   -- 4 reserved lines: header + footer + tab + status. Floor at 1 visible row.
   let visH = max 1 (h - 4)
-  st' <- liftIO $ refreshGrid st { asVisH = visH, asVisW = max 1 w }
+  st' <- liftIO $ refreshGrid (st & asVisH .~ visH & asVisW .~ max 1 w)
   Brick.put st'
 handleEvent (Brick.VtyEvent ev@(Vty.EvKey k mods)) = do
   st <- Brick.get
-  case asPendingCmd st of
+  case (st ^. asPendingCmd) of
     -- Prompt mode: route keys to the input buffer instead of dispatching.
     Just c -> case (k, mods) of
-      (Vty.KEsc, _) -> Brick.put st { asPendingCmd = Nothing, asCmd = "" }
+      (Vty.KEsc, _) -> Brick.put (st & asPendingCmd .~ Nothing & asCmd .~ "")
       (Vty.KEnter, _) -> do
         -- Commit: dispatch with the prompt buffer as arg.
-        r <- liftIO $ handleCmd c (asCmd st) st { asPendingCmd = Nothing, asCmd = "" }
+        r <- liftIO $ handleCmd c (st ^. asCmd) (st & asPendingCmd .~ Nothing & asCmd .~ "")
         case r of
           Nothing -> BM.halt
-          Just st' -> Brick.put st' { asPendingCmd = Nothing, asCmd = "" }
-      (Vty.KBS, _) -> Brick.put st { asCmd = if T.null (asCmd st) then "" else T.init (asCmd st) }
-      (Vty.KChar ch, _) | ch /= '\t' -> Brick.put st { asCmd = T.snoc (asCmd st) ch }
+          Just st' -> Brick.put (st' & asPendingCmd .~ Nothing & asCmd .~ "")
+      (Vty.KBS, _) -> Brick.put (st & asCmd .~ if T.null ((st ^. asCmd)) then "" else T.init ((st ^. asCmd)))
+      (Vty.KChar ch, _) | ch /= '\t' -> Brick.put (st & asCmd .~ T.snoc ((st ^. asCmd)) ch)
       _ -> pure ()
     -- Normal mode: global Esc quits; everything else goes through keyLookup.
     Nothing -> case (k, mods) of
       (Vty.KEsc, []) -> BM.halt
       _ -> do
         let key = evToKey ev
-            ctx = vkCtxStr $ _nsVkind $ _vNav $ _vsHd $ asStack st
+            ctx = vkCtxStr (st ^. headNav % nsVkind)
         mci <- liftIO $ keyLookup key ctx
         case mci of
           Nothing -> pure ()
@@ -919,7 +868,7 @@ handleEvent (Brick.VtyEvent ev@(Vty.EvKey k mods)) = do
             | otherwise -> do
                 isArg <- liftIO $ CC.isArgCmd (ciCmd ci)
                 if isArg
-                  then Brick.put st { asPendingCmd = Just (ciCmd ci), asCmd = "", asMsg = "" }
+                  then Brick.put (st & asPendingCmd .~ Just (ciCmd ci) & asCmd .~ "" & asMsg .~ "")
                   else do
                     r <- liftIO $ dispatch st ci ""
                     case r of
@@ -1092,12 +1041,10 @@ openPath st p = do
       (ops, absPath) <- loadFolder p
       let disp = T.pack absPath
           vk = VFld disp 1
-          v' = case fromTbl ops disp 0 V.empty 0 of
-                 Nothing -> Nothing
-                 Just v  -> Just v { _vNav = (_vNav v) { _nsVkind = vk } }
+          v' = (\v -> v & vNav % nsVkind .~ vk) <$> fromTbl ops disp 0 V.empty 0
       case v' of
-        Nothing -> pure (Just st { asMsg = "empty folder: " <> T.pack p })
-        Just v  -> Just <$> refreshGrid st { asStack = vsPush v (asStack st) }
+        Nothing -> pure (Just (st & asMsg .~ "empty folder: " <> T.pack p))
+        Just v  -> Just <$> refreshGrid (st & asStack %~ vsPush v)
     else do
       -- Use FileFormat for ATTACH/extension formats (.duckdb, .sqlite, .xlsx, etc.)
       -- Use loadFile (PRQL chain) for regular data files (.csv, .parquet, .json, etc.)
@@ -1108,41 +1055,41 @@ openPath st p = do
         then do
           mv <- try (FF.openFile p) :: IO (Either SomeException (Maybe View))
           case mv of
-            Right (Just v) -> Just <$> refreshGrid st { asStack = vsPush v (asStack st) }
-            _ -> pure (Just st { asMsg = "open failed: " <> T.pack p })
+            Right (Just v) -> Just <$> refreshGrid (st & asStack .~ vsPush v ((st ^. asStack)))
+            _ -> pure (Just (st & asMsg .~ "open failed: " <> T.pack p))
         else do
           r <- loadFile p
           case r of
-            Left e   -> pure (Just st { asMsg = "open failed: " <> T.pack e })
+            Left e   -> pure (Just (st & asMsg .~ "open failed: " <> T.pack e))
             Right ops -> case fromTbl ops (T.pack p) 0 V.empty 0 of
-              Nothing -> pure (Just st { asMsg = "empty: " <> T.pack p })
-              Just v  -> Just <$> refreshGrid st { asStack = vsPush v (asStack st) }
+              Nothing -> pure (Just (st & asMsg .~ "empty: " <> T.pack p))
+              Just v  -> Just <$> refreshGrid (st & asStack .~ vsPush v ((st ^. asStack)))
 
 -- | Build an empty initial AppState. The stack head is a placeholder view
 -- we replace via openPath before running the brick loop.
 initialState :: View -> IO AppState
 initialState v = initialStateSized v 200 80
 
--- | Like 'initialState' but seeds asVisW/asVisH from real terminal bounds
+-- | Like 'initialState' but seeds asVisW/real asVisH terminal bounds
 -- so the first frame is laid out at the correct size.
 initialStateSized :: View -> Int -> Int -> IO AppState
 initialStateSized v tw th = do
   theme <- initTheme
   refreshGrid AppState
-    { asStack = ViewStack v []
-    , asThemeIdx = tsThemeIdx theme
-    , asTestKeys = []
-    , asMsg = ""
-    , asErr = ""
-    , asCmd = ""
-    , asPendingCmd = Nothing
-    , asGrid = V.empty
-    , asVisRow0 = 0
-    , asVisCol0 = 0
-    , asVisH = max 1 (th - 4)
-    , asVisW = max 1 tw
-    , asStyles = tsStyles theme
-    , asInfoVis = False
+    { _asStack = ViewStack v []
+    , _asThemeIdx = tsThemeIdx theme
+    , _asTestKeys = []
+    , _asMsg = ""
+    , _asErr = ""
+    , _asCmd = ""
+    , _asPendingCmd = Nothing
+    , _asGrid = V.empty
+    , _asVisRow0 = 0
+    , _asVisCol0 = 0
+    , _asVisH = max 1 (th - 4)
+    , _asVisW = max 1 tw
+    , _asStyles = tsStyles theme
+    , _asInfoVis = False
     }
 
 -- | Default keybinding + menu table. Ported from Tc/App/Common.lean's
@@ -1246,7 +1193,7 @@ openInitialView path = do
     (ops, absPath) <- loadFolder path
     case fromTbl ops (T.pack absPath) 0 V.empty 0 of
       Nothing -> fail ("empty folder: " ++ path)
-      Just v  -> pure v { _vNav = (_vNav v) { _nsVkind = VFld (T.pack absPath) 1 } }
+      Just v  -> pure (v & vNav % nsVkind .~ VFld (T.pack absPath) 1)
   else do
     let needsFF = case FF.findFormat path of
           Just fmt -> FF.fmtAttach fmt || not (null (FF.fmtDuckdbExt fmt))
@@ -1262,7 +1209,7 @@ openInitialView path = do
         case r of
           Left _ -> viewFileFallback path
           Right ops
-            | _tblNRows ops > 0 -> case fromTbl ops (T.pack path) 0 V.empty 0 of
+            | (ops ^. tblNRows) > 0 -> case fromTbl ops (T.pack path) 0 V.empty 0 of
                 Nothing -> fail ("empty: " ++ path)
                 Just v  -> pure v
             | otherwise -> viewFileFallback path
@@ -1281,38 +1228,36 @@ viewFileFallback path = do
     let rows = V.fromList (map V.singleton ls)
     case fromTbl (mkTextViewOps rows) (T.pack path) 0 V.empty 0 of
       Nothing -> fail ("empty: " ++ path)
-      Just v  -> pure v { _vNav = (_vNav v) { _nsVkind = VViewFile } }
+      Just v  -> pure (v & vNav % nsVkind .~ VViewFile)
 
 -- | Render the AppState as plain text lines (header, data, footer, tab, status).
 -- Mirrors the Lean Term.bufferStr used by -c test mode.
 -- Layout: header, sparkline (if any), data rows, footer, tab, status.
 -- Columns separated by │ (like the Brick UI).
 renderText :: AppState -> IO Text
-renderText st = do
-  let ns   = _vNav $ _vsHd $ asStack st
-  -- VViewFile: raw text output without table chrome (viewFile fallback)
-  case _nsVkind ns of
-    VViewFile -> do
-      let tbl = _nsTbl ns; nr = _tblNRows tbl
-      ls <- mapM (\r -> _tblCellStr tbl r 0) [0..nr-1]
-      pure (T.unlines ls)
-    _ -> renderTextTable st
+renderText st = case st ^. headNav % nsVkind of
+  VViewFile -> do
+    let tbl = st ^. headTbl
+        nr  = tbl ^. tblNRows
+    ls <- mapM (\r -> (tbl ^. tblCellStr) r 0) [0..nr-1]
+    pure (T.unlines ls)
+  _ -> renderTextTable st
 
 -- | Render table view as text (the normal path).
 renderTextTable :: AppState -> IO Text
 renderTextTable st = do
-  let ns   = _vNav $ _vsHd $ asStack st
-      tbl  = _nsTbl ns
-      disp = _nsDispIdxs ns
+  let ns   = st ^. headNav
+      tbl  = ns ^. nsTbl
+      disp = ns ^. nsDispIdxs
       widths = R.visColWidths st
       visNames = R.visColNames st
       nVis = V.length visNames
-      grpNames = _nsGrp ns
+      grpNames = (ns ^. nsGrp)
       nKeys = V.length grpNames
-      isNum ci = let p = asVisCol0 st + ci
+      isNum ci = let p = (st ^. asVisCol0) + ci
                      idx = if p < V.length disp then disp V.! p else 0
-                 in isNumeric (_tblColType tbl idx)
-      isGrp ci = asVisCol0 st + ci < nKeys
+                 in isNumeric ((tbl ^. tblColType) idx)
+      isGrp ci = (st ^. asVisCol0) + ci < nKeys
       -- Column separator: ║ after last key column, │ otherwise
       sep ci | ci + 1 >= nVis = "│"
              | isGrp ci && not (isGrp (ci + 1)) = "║"
@@ -1324,13 +1269,13 @@ renderTextTable st = do
       hdrLine = T.concat [ " " <> T.justifyLeft (max 0 (widths V.! ci - 2)) ' ' (visNames V.! ci)
                             <> " " <> sep ci
                           | ci <- [0 .. nVis - 1] ]
-      grid = asGrid st
+      grid = (st ^. asGrid)
       dataLines = map fmtRow (V.toList grid)
-      infoLines = if asInfoVis st
-        then map (\(k,d) -> T.justifyRight 5 ' ' k <> " " <> d) (Info.viewHints (_nsVkind ns))
+      infoLines = if (st ^. asInfoVis)
+        then map (\(k,d) -> T.justifyRight 5 ' ' k <> " " <> d) (Info.viewHints ((ns ^. nsVkind)))
         else []
       -- Replay ops on tab line (Lean renderTabLine appends ops right-aligned)
-      qops = _tblQueryOps tbl
+      qops = (tbl ^. tblQueryOps)
       replayOps = if V.null qops then "" else " " <> Replay.renderOps qops
       tab  = R.tabText st
       tabLine = tab <> replayOps
@@ -1359,7 +1304,7 @@ loopProg a = do
     Just key
       | T.null key -> loopProg a'
       | otherwise -> do
-          let ctx = vkCtxStr $ _nsVkind $ _vNav $ _vsHd $ asStack a'
+          let ctx = vkCtxStr (a' ^. headNav % nsVkind)
           mci <- liftIO (keyLookup key ctx)
           case mci of
             Nothing -> loopProg a'

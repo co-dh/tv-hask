@@ -13,6 +13,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 
 import Tv.Types
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Cache: (path, colIdx, formatted agg string)
 type Cache = (Text, Int, Text)
@@ -29,10 +30,10 @@ prqlLimit = 1000
 -- For large tables, skip SUM/AVG and show count only.
 compute :: TblOps -> Int -> IO Text
 compute tbl colIdx = do
-  let nr = _tblNRows tbl
-      ct = _tblColType tbl colIdx
-  if _tblTotalRows tbl > prqlLimit
-    then pure ("#" <> T.pack (show (_tblTotalRows tbl)))
+  let nr = (tbl ^. tblNRows)
+      ct = (tbl ^. tblColType) colIdx
+  if (tbl ^. tblTotalRows) > prqlLimit
+    then pure ("#" <> T.pack (show ((tbl ^. tblTotalRows))))
     else if isNumeric ct then do
       -- read all cells, parse as Double, compute sum/avg/count
       vals <- readNumericCol tbl colIdx nr
@@ -53,7 +54,7 @@ readNumericCol tbl col nr = go 0 []
     go r acc
       | r >= nr = pure (reverse acc)
       | otherwise = do
-          v <- _tblCellStr tbl r col
+          v <- (tbl ^. tblCellStr) r col
           if T.null v then go (r + 1) acc
           else case readDouble v of
             Just d  -> go (r + 1) (d : acc)

@@ -21,6 +21,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import Optics.Core ((^.))
 
 import Tv.Types
 import qualified Tv.Derive as Derive
@@ -50,7 +51,7 @@ mkFreqOps src colIdxs
               <> " ORDER BY count DESC LIMIT 1000"
       handle (\(_ :: SomeException) -> pure src) (Derive.rebuildWith src wrap)
   where
-    names = _tblColNames src
+    names = src ^. tblColNames
     nc    = V.length names
     outOfRange i = i < 0 || i >= nc
 
@@ -61,7 +62,7 @@ filterExpr :: TblOps -> Vector Text -> Int -> IO Text
 filterExpr freqOps cols row = do
   let nc = V.length cols
   parts <- V.generateM nc $ \i -> do
-    v <- _tblCellStr freqOps row i
+    v <- (freqOps ^. tblCellStr) row i
     let n = "`" <> (cols V.! i) <> "`"
     pure $ if T.null v
              then n <> " == null"

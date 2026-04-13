@@ -18,6 +18,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import Optics.Core ((^.))
 
 import Tv.Types
 import qualified Tv.Data.DuckDB as DB
@@ -61,12 +62,12 @@ rebuildWith ops wrap = do
 -- original ColType so expressions see typed data.
 reconstructSql :: TblOps -> IO Text
 reconstructSql ops = do
-  let names = _tblColNames ops
-      nr    = _tblNRows ops
+  let names = ops ^. tblColNames
+      nr    = ops ^. tblNRows
       nc    = V.length names
-      tys   = V.generate nc (_tblColType ops)
+      tys   = V.generate nc (ops ^. tblColType)
   rows <- V.generateM nr $ \r ->
-            V.generateM nc $ \c -> _tblCellStr ops r c
+            V.generateM nc $ \c -> (ops ^. tblCellStr) r c
   let castExpr i =
         let n = names V.! i; t = tys V.! i
         in "CAST(c" <> T.pack (show i) <> " AS " <> sqlType t <> ") AS " <> quoteId n

@@ -15,6 +15,7 @@ import Tv.View
 import Tv.Render
 import Tv.App (handleCmd, handleKey)
 import qualified Tv.CmdConfig as CC
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- ============================================================================
 -- Mock TblOps: 5 rows x 3 cols, cell (r,c) = "r,c".
@@ -47,25 +48,25 @@ mockState = do
   let Just v = fromTbl mockOps "mock" 0 V.empty 0
       stack = ViewStack v []
       st0 = AppState
-        { asStack   = stack
-        , asThemeIdx = 0
-        , asTestKeys = []
-        , asMsg = ""
-        , asErr = ""
-        , asCmd = ""
-        , asPendingCmd = Nothing
-        , asGrid = V.empty
-        , asVisRow0 = 0
-        , asVisCol0 = 0
-        , asVisH = 5
-        , asVisW = 3
-        , asStyles = V.empty
-        , asInfoVis = False
+        { _asStack   = stack
+        , _asThemeIdx = 0
+        , _asTestKeys = []
+        , _asMsg = ""
+        , _asErr = ""
+        , _asCmd = ""
+        , _asPendingCmd = Nothing
+        , _asGrid = V.empty
+        , _asVisRow0 = 0
+        , _asVisCol0 = 0
+        , _asVisH = 5
+        , _asVisW = 3
+        , _asStyles = V.empty
+        , _asInfoVis = False
         }
   -- prefetch the grid via the same path the App uses
   grid <- V.generateM 5 $ \r ->
-          V.generateM 3 $ \c -> _tblCellStr mockOps r c
-  pure st0 { asGrid = grid }
+          V.generateM 3 $ \c -> (mockOps ^. tblCellStr) r c
+  pure (st0 & asGrid .~ grid)
 
 -- Minimal command entry set so keyLookup resolves j/k/h/l/q.
 initTestCmds :: IO ()
@@ -94,9 +95,9 @@ tests = testGroup "Render"
       assertBool ("missing c1 in " <> T.unpack hdr) ("c1" `T.isInfixOf` hdr)
       assertBool ("missing c2 in " <> T.unpack hdr) ("c2" `T.isInfixOf` hdr)
 
-  , testCase "asGrid holds 0,0 cell after prefetch" $ do
+  , testCase "(holds ^. asGrid) 0,0 cell after prefetch" $ do
       st <- mockState
-      (asGrid st V.! 0 V.! 0) @?= "0,0"
+      ((st ^. asGrid) V.! 0 V.! 0) @?= "0,0"
 
   , testCase "statusText shows row 1/5 | col 1" $ do
       st <- mockState
@@ -111,7 +112,7 @@ tests = testGroup "Render"
       case r of
         Nothing -> assertFailure "handleKey j: expected state, got halt"
         Just st' ->
-          let cur = _naCur $ _nsRow $ _vNav $ _vsHd $ asStack st'
+          let cur = _naCur $ _nsRow $ _vNav $ _vsHd $ (st' ^. asStack)
           in cur @?= 1
 
   , testCase "handleKey 'l' advances nsCol from 0 to 1" $ do
@@ -121,7 +122,7 @@ tests = testGroup "Render"
       case r of
         Nothing -> assertFailure "handleKey l: expected state, got halt"
         Just st' ->
-          let cur = _naCur $ _nsCol $ _vNav $ _vsHd $ asStack st'
+          let cur = _naCur $ _nsCol $ _vNav $ _vsHd $ (st' ^. asStack)
           in cur @?= 1
 
   , testCase "handleKey 'q' halts (returns Nothing)" $ do

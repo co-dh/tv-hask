@@ -13,18 +13,19 @@ import qualified Data.Vector as V
 
 import Tv.Types
 import Tv.View
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Pure update by Cmd. Returns residual Effect for dispatch to execute.
 -- Mirrors Tc.Freq.update (Runner.lean): builds the column name list
 -- from nav.grp + current column, then pattern-matches the command.
 freqUpdate :: ViewStack -> Cmd -> Maybe (ViewStack, Effect)
 freqUpdate s cmd =
-  let n = _vNav (_vsHd s)
+  let n = (((s ^. vsHd)) ^. vNav)
       curName = curColName n
-      colNames = if V.elem curName (_nsGrp n) then _nsGrp n else V.snoc (_nsGrp n) curName
+      colNames = if V.elem curName ((n ^. nsGrp)) then (n ^. nsGrp) else V.snoc ((n ^. nsGrp)) curName
   in case cmd of
     FreqOpen -> Just (s, EFreq colNames)
-    FreqFilter -> case _nsVkind n of
-      VFreq cols _ -> Just (s, EFreqFilter cols (_naCur (_nsRow n)))
+    FreqFilter -> case (n ^. nsVkind) of
+      VFreq cols _ -> Just (s, EFreqFilter cols ((((n ^. nsRow)) ^. naCur)))
       _ -> Nothing
     _ -> Nothing

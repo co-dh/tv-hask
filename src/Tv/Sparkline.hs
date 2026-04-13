@@ -18,6 +18,7 @@ import qualified Data.Vector.Mutable as MV
 import Control.Monad (forM_)
 
 import Tv.Types
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- 9 levels: space + 8 Unicode block elements
 blocks :: Vector Char
@@ -32,14 +33,14 @@ prqlLimit = 1000
 -- nBars = number of histogram buckets.
 compute :: TblOps -> Int -> IO (Vector Text)
 compute tbl nBars = do
-  let names = _tblColNames tbl
+  let names = (tbl ^. tblColNames)
       nc = V.length names
-      nr = min (_tblNRows tbl) prqlLimit
+      nr = min ((tbl ^. tblNRows)) prqlLimit
       empty = V.replicate nc ""
   if nc == 0 || nr == 0 then pure empty
   else do
     -- identify numeric columns
-    let numIdxs = V.fromList [i | i <- [0..nc-1], isNumeric (_tblColType tbl i)]
+    let numIdxs = V.fromList [i | i <- [0..nc-1], isNumeric ((tbl ^. tblColType) i)]
     if V.null numIdxs then pure empty
     else do
       -- for each numeric column, read values, compute min/max, bucket, build sparkline
@@ -57,7 +58,7 @@ readNumericCol tbl col nr = go 0 []
     go r acc
       | r >= nr = pure (reverse acc)
       | otherwise = do
-          v <- _tblCellStr tbl r col
+          v <- (tbl ^. tblCellStr) r col
           if T.null v then go (r + 1) acc
           else case readDouble v of
             Just d  -> go (r + 1) (d : acc)

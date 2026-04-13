@@ -20,8 +20,9 @@ import Tv.Types
 import Tv.View
 import qualified Tv.Nav as Nav
 import Tv.App (handleKey, handleCmd)
-import Tv.Render (AppState(..))
+import Tv.Render
 import qualified Tv.CmdConfig as CC
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Build an AppState from mockTbl with keymap initialised. Only the
 -- keys with wired handlers in App.hs will actually affect state when
@@ -38,11 +39,11 @@ mkScreen = do
   let Just v = fromTbl mockTbl "data/basic.csv" 0 V.empty 0
       stack = ViewStack v []
   pure AppState
-    { asStack = stack, asThemeIdx = 0, asTestKeys = []
-    , asMsg = "", asErr = "", asCmd = "", asPendingCmd = Nothing
-    , asGrid = V.empty
-    , asVisRow0 = 0, asVisCol0 = 0, asVisH = 5, asVisW = 3
-    , asStyles = V.empty, asInfoVis = False
+    { _asStack = stack, _asThemeIdx = 0, _asTestKeys = []
+    , _asMsg = "", _asErr = "", _asCmd = "", _asPendingCmd = Nothing
+    , _asGrid = V.empty
+    , _asVisRow0 = 0, _asVisCol0 = 0, _asVisH = 5, _asVisW = 3
+    , _asStyles = V.empty, _asInfoVis = False
     }
 
 -- | Replay a sequence of key tokens through the handler pipeline.
@@ -59,8 +60,8 @@ replayNav (c:cs) ns = Nav.execNav c 1 ns >>= replayNav cs
 
 -- Accessors.
 rowAt, colAt :: AppState -> Int
-rowAt = _naCur . _nsRow . _vNav . _vsHd . asStack
-colAt = _naCur . _nsCol . _vNav . _vsHd . asStack
+rowAt st = st ^. headNav % nsRow % naCur
+colAt st = st ^. headNav % nsCol % naCur
 
 tests :: TestTree
 tests = testGroup "Screen (ported from TestScreen.lean)"
@@ -85,29 +86,29 @@ tests = testGroup "Screen (ported from TestScreen.lean)"
     -- === Key/grp columns (TestScreen.lean:41-51) — via pure Nav ===
   , testCase "key_toggle: ColGrp on c0 groups it" $ do
       let Just ns' = Nav.execNav ColGrp 1 mockNav
-      _nsGrp ns' @?= V.singleton "c0"
+      (ns' ^. nsGrp) @?= V.singleton "c0"
   , testCase "key_remove: grp toggle round-trip (!!)" $ do
       let Just ns' = replayNav [ColGrp, ColGrp] mockNav
-      _nsGrp ns' @?= V.empty
+      (ns' ^. nsGrp) @?= V.empty
   , testCase "key_reorder: l! promotes c1 to display position 0" $ do
       let Just ns' = replayNav [ColInc, ColGrp] mockNav
-      V.head (_nsDispIdxs ns') @?= 1
+      V.head ((ns' ^. nsDispIdxs)) @?= 1
 
     -- === Selection (TestScreen.lean:62-67) ===
   , testCase "row_select: RowSel selects row 0" $ do
       let Just ns' = Nav.execNav RowSel 1 mockNav
-      V.length (_naSels (_nsRow ns')) @?= 1
+      V.length ((((ns' ^. nsRow)) ^. naSels)) @?= 1
   , testCase "multi_select: RowSel, RowInc, RowSel = 2 sels (TjT)" $ do
       let Just ns' = replayNav [RowSel, RowInc, RowSel] mockNav
-      V.length (_naSels (_nsRow ns')) @?= 2
+      V.length ((((ns' ^. nsRow)) ^. naSels)) @?= 2
   , testCase "sel_toggle: RowSel,RowSel clears selection" $ do
       let Just ns' = replayNav [RowSel, RowSel] mockNav
-      V.length (_naSels (_nsRow ns')) @?= 0
+      V.length ((((ns' ^. nsRow)) ^. naSels)) @?= 0
 
     -- === Stack (TestScreen.lean:74-84, 106-109) ===
   , testCase "stack_dup: updateViewStack StkDup pushes copy" $ do
       case updateViewStack testStack StkDup of
-        Just (vs, ENone) -> length (_vsTl vs) @?= 1
+        Just (vs, ENone) -> length ((vs ^. vsTl)) @?= 1
         r -> assertFailure ("expected (vs, ENone), got " <> show r)
   , testCase "stack_pop: StkPop on last view → EQuit" $ do
       case updateViewStack testStack StkPop of
@@ -116,7 +117,7 @@ tests = testGroup "Screen (ported from TestScreen.lean)"
   , testCase "stack_pop_dup: Dup then Pop returns to original depth" $ do
       case updateViewStack testStack StkDup of
         Just (vs1, _) -> case updateViewStack vs1 StkPop of
-          Just (vs2, ENone) -> length (_vsTl vs2) @?= 0
+          Just (vs2, ENone) -> length ((vs2 ^. vsTl)) @?= 0
           r -> assertFailure ("expected ENone, got " <> show r)
         _ -> assertFailure "StkDup failed"
 
@@ -131,28 +132,28 @@ tests = testGroup "Screen (ported from TestScreen.lean)"
     -- === Cursor tracking after grp toggle (TestScreen.lean:99) ===
     -- Lean test asserts footer shows "c0/" after l!. Here we verify the
     -- display-position index moves to 0 because the grp col floats to front.
-    -- Nav.execNav ColGrp doesn't currently adjust _nsCol though, so the raw
+    -- Nav.execNav ColGrp doesn't currently adjust nsCol, so the raw
     -- display position stays 1. Confirm the absolute-column is c1 at least.
   , testCase "key_cursor: after l! grouped col c1 maps from display index 0" $ do
       let Just ns' = replayNav [ColInc, ColGrp] mockNav
-      _nsDispIdxs ns' V.! 0 @?= 1
+      (ns' ^. nsDispIdxs) V.! 0 @?= 1
 
     -- === Meta/Freq/Info via handleCmd (now wired) ===
     -- meta_quit (TestScreen.lean:78): MetaPush then StkPop returns to origin.
   , testCase "meta_quit: MetaPush pushes VColMeta; StkPop restores" $ do
       st <- mkScreen
       Just st1 <- handleCmd MetaPush "" st
-      _nsVkind (_vNav (_vsHd (asStack st1))) @?= VColMeta
+      _nsVkind (_vNav ((((st1 ^. asStack)) ^. vsHd))) @?= VColMeta
       Just st2 <- handleCmd StkPop "" st1
-      _nsVkind (_vNav (_vsHd (asStack st2))) @?= VTbl
+      _nsVkind (_vNav ((((st2 ^. asStack)) ^. vsHd))) @?= VTbl
     -- info (TestScreen.lean:91): InfoTog toggles the overlay flag.
   , testCase "info: InfoTog flips asInfoVis" $ do
       st <- mkScreen
-      asInfoVis st @?= False
+      (st ^. asInfoVis) @?= False
       Just st1 <- handleCmd InfoTog "" st
-      asInfoVis st1 @?= True
+      (st1 ^. asInfoVis) @?= True
       Just st2 <- handleCmd InfoTog "" st1
-      asInfoVis st2 @?= False
+      (st2 ^. asInfoVis) @?= False
     -- freq_quit (TestScreen.lean:82): FreqOpen would push a VFreq view, but
     -- requires DuckDB rebuildWith on the underlying table. The pure mock
     -- TblOps here can't round-trip through DuckDB, so Freq.mkFreqOps returns
@@ -161,7 +162,7 @@ tests = testGroup "Screen (ported from TestScreen.lean)"
   , testCase "freq_quit: FreqOpen pushes VFreq kind even on pure mock" $ do
       st <- mkScreen
       Just st1 <- handleCmd FreqOpen "" st
-      case _nsVkind (_vNav (_vsHd (asStack st1))) of
+      case _nsVkind (_vNav ((((st1 ^. asStack)) ^. vsHd))) of
         VFreq _ _ -> pure ()
         k -> assertFailure ("expected VFreq, got " <> show k)
   ]

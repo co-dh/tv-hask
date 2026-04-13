@@ -26,6 +26,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 import Tv.Types
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | The five join operations exposed by the fzf menu in Tc/Join.lean.
 data JoinOp = JInner | JLeft | JRight | JUnion | JDiff
@@ -33,8 +34,8 @@ data JoinOp = JInner | JLeft | JRight | JUnion | JDiff
 
 -- | Materialize every row of a table.
 readAll :: TblOps -> IO (Vector (Vector Text))
-readAll tbl = V.generateM (_tblNRows tbl) readRow
-  where readRow r = V.generateM (V.length (_tblColNames tbl)) (_tblCellStr tbl r)
+readAll tbl = V.generateM ((tbl ^. tblNRows)) readRow
+  where readRow r = V.generateM (V.length ((tbl ^. tblColNames))) ((tbl ^. tblCellStr) r)
 
 -- | Project the values of the named key columns out of a row.
 keyTuple :: Map.Map Text Int -> Vector Text -> Vector Text -> Vector Text
@@ -88,8 +89,8 @@ runJoin :: (Bool -> Bool -> Bool) -> TblOps -> TblOps -> Vector Text -> IO TblOp
 runJoin keep left right keys = do
   lRows <- readAll left
   rRows <- readAll right
-  let lIdx = nameIdx (_tblColNames left)
-      rIdx = nameIdx (_tblColNames right)
+  let lIdx = nameIdx ((left ^. tblColNames))
+      rIdx = nameIdx ((right ^. tblColNames))
       keyL = V.map (\row -> keyTuple lIdx row keys) lRows
       keyR = V.map (\row -> keyTuple rIdx row keys) rRows
       -- Right groups: key → list of row indices (preserves order).
@@ -99,8 +100,8 @@ runJoin keep left right keys = do
       -- Right rows that matched at least one left row (for right-outer).
       matched = V.foldl' ins Set.empty keyL
         where ins s k = maybe s (foldr Set.insert s) (Map.lookup k rMap)
-      emptyL = V.replicate (V.length (_tblColNames left))  T.empty
-      emptyR = V.replicate (V.length (_tblColNames right)) T.empty
+      emptyL = V.replicate (V.length ((left ^. tblColNames)))  T.empty
+      emptyR = V.replicate (V.length ((right ^. tblColNames))) T.empty
       mk l r = l V.++ r
       innerRows = V.concatMap
         (\li -> let k = keyL V.! li
@@ -127,10 +128,10 @@ runJoin keep left right keys = do
            V.++ (if keep False True  then rightOnlyRows else V.empty)
       -- Right column names get "_r" suffix when they would collide with
       -- a left column name. Prevents duplicate header rendering.
-      lNames = _tblColNames left
+      lNames = (left ^. tblColNames)
       lSet   = Set.fromList (V.toList lNames)
       rNames = V.map (\n -> if Set.member n lSet then n <> "_r" else n)
-                     (_tblColNames right)
+                     ((right ^. tblColNames))
       cols   = lNames V.++ rNames
   pure (mkRowOps cols rows)
 
@@ -157,8 +158,8 @@ joinUnion :: TblOps -> TblOps -> IO TblOps
 joinUnion left right = do
   lRows <- readAll left
   rRows <- readAll right
-  let lNames = _tblColNames left
-      rIdx = nameIdx (_tblColNames right)
+  let lNames = (left ^. tblColNames)
+      rIdx = nameIdx ((right ^. tblColNames))
       -- Project each right row onto left's column order.
       rProjected = V.map
         (\row -> V.map (\n -> case Map.lookup n rIdx of
@@ -173,13 +174,13 @@ joinDiff :: TblOps -> TblOps -> Vector Text -> IO TblOps
 joinDiff left right keys = do
   lRows <- readAll left
   rRows <- readAll right
-  let lIdx = nameIdx (_tblColNames left)
-      rIdx = nameIdx (_tblColNames right)
-      effKeys = if V.null keys then _tblColNames left else keys
+  let lIdx = nameIdx ((left ^. tblColNames))
+      rIdx = nameIdx ((right ^. tblColNames))
+      effKeys = if V.null keys then (left ^. tblColNames) else keys
       keyR = V.map (\row -> keyTuple rIdx row effKeys) rRows
       rSet = Set.fromList (V.toList keyR)
       kept = V.filter (\row -> not (Set.member (keyTuple lIdx row effKeys) rSet)) lRows
-  pure (mkRowOps (_tblColNames left) kept)
+  pure (mkRowOps ((left ^. tblColNames)) kept)
 
 -- | Dispatch by 'JoinOp'. Keys are required for inner/left/right; for
 -- union and diff they're optional (diff falls back to full-row equality).

@@ -12,6 +12,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 import Tv.Types
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Max source rows to transpose; matches Tc.Transpose.maxRows.
 maxRows :: Int
@@ -26,14 +27,14 @@ maxRows = 200
 --   returning 'none' from push).
 mkTransposedOps :: TblOps -> IO TblOps
 mkTransposedOps src = do
-  let names = _tblColNames src
+  let names = (src ^. tblColNames)
       nc    = V.length names
-      nr    = min maxRows (_tblNRows src)
+      nr    = min maxRows ((src ^. tblNRows))
   -- Materialize only the rows we'll use; cells are read as Text so mixed
   -- source types collapse uniformly (Lean CASTs to VARCHAR for the same
   -- reason).
   rows <- V.generateM nc $ \c -> do
-    vals <- V.generateM nr (\r -> _tblCellStr src r c)
+    vals <- V.generateM nr (\r -> (src ^. tblCellStr) r c)
     pure (V.cons (names V.! c) vals)
   let outCols = V.cons "column"
               $ V.generate nr (\i -> "row_" <> T.pack (show i))

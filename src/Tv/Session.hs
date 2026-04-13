@@ -44,7 +44,8 @@ import System.FilePath ((</>), takeExtension, dropExtension)
 
 import Tv.Types
 import Tv.Util (logDir, logWrite)
-import Tv.View (View (..), ViewStack (..))
+import Tv.View
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- ============================================================================
 -- SavedView / SavedSession: the serializable projection of a ViewStack
@@ -101,13 +102,13 @@ sessPath name =
 -- Slashes and spaces → underscores; drop first dot-extension; sanitize.
 autoName :: ViewStack -> Text
 autoName vs =
-  let v    = _vsHd vs
-      raw  = case _nsVkind (_vNav v) of
-               VFld p _ | T.null (_vDisp v) || "/" `T.isPrefixOf` p -> p
-               _ | T.null (_vDisp v) ->
-                     let parts = T.splitOn "/" (_vPath v)
-                     in if null parts then _vPath v else last parts
-                 | otherwise -> _vDisp v
+  let v    = (vs ^. vsHd)
+      raw  = case (((v ^. vNav)) ^. nsVkind) of
+               VFld p _ | T.null ((v ^. vDisp)) || "/" `T.isPrefixOf` p -> p
+               _ | T.null ((v ^. vDisp)) ->
+                     let parts = T.splitOn "/" ((v ^. vPath))
+                     in if null parts then (v ^. vPath) else last parts
+                 | otherwise -> (v ^. vDisp)
       name = T.replace " " "_" (T.replace "/" "_" raw)
       stem = case filter (not . T.null) (T.splitOn "." name) of
                (s:_) -> s
@@ -120,28 +121,28 @@ autoName vs =
 
 toSaved :: View -> SavedView
 toSaved v =
-  let ns = _vNav v
+  let ns = (v ^. vNav)
   in SavedView
-       { svPath      = _vPath v
-       , svVkind     = _nsVkind ns
-       , svDisp      = _vDisp v
-       , svPrecAdj   = _nsPrecAdj ns
-       , svWidthAdj  = _nsWidthAdj ns
-       , svRow       = _naCur (_nsRow ns)
-       , svCol       = _naCur (_nsCol ns)
-       , svGrp       = _nsGrp ns
-       , svHidden    = _nsHidden ns
+       { svPath      = (v ^. vPath)
+       , svVkind     = (ns ^. nsVkind)
+       , svDisp      = (v ^. vDisp)
+       , svPrecAdj   = (ns ^. nsPrecAdj)
+       , svWidthAdj  = (ns ^. nsWidthAdj)
+       , svRow       = (((ns ^. nsRow)) ^. naCur)
+       , svCol       = (((ns ^. nsCol)) ^. naCur)
+       , svGrp       = (ns ^. nsGrp)
+       , svHidden    = (ns ^. nsHidden)
        , svColSels   = colSelNames ns
-       , svSearch    = _vSearch v
-       , svQueryBase = "from `" <> _vPath v <> "`"  -- Prql.Query not yet threaded; App builds at load
+       , svSearch    = (v ^. vSearch)
+       , svQueryBase = "from `" <> (v ^. vPath) <> "`"  -- Prql.Query not yet threaded; App builds at load
        , svQueryOps  = V.empty                      -- pipeline lives in App; stub for now
        }
   where
     -- Translate col axis sels (indices into dispIdxs) to concrete column names.
     colSelNames ns =
-      let names = _tblColNames (_nsTbl ns)
-          disp  = _nsDispIdxs ns
-          sels  = _naSels (_nsCol ns)
+      let names = (((ns ^. nsTbl)) ^. tblColNames)
+          disp  = (ns ^. nsDispIdxs)
+          sels  = (((ns ^. nsCol)) ^. naSels)
           toName i = if i >= 0 && i < V.length disp
                        then let j = disp V.! i
                             in if j >= 0 && j < V.length names then Just (names V.! j) else Nothing

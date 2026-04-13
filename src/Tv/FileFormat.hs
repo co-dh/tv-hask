@@ -24,8 +24,9 @@ import qualified Data.Vector as V
 import System.Exit (ExitCode(..))
 import System.Process (readProcessWithExitCode, CreateProcess(..), StdStream(..), createProcess, proc, waitForProcess)
 
+import Optics.Core ((%), (^.), (&), (.~))
 import Tv.Types
-import Tv.View (View(..), fromTbl)
+import Tv.View (View(..), fromTbl, vNav, vDisp)
 import qualified Tv.Data.DuckDB as DB
 import Tv.Util (logWrite)
 
@@ -131,7 +132,7 @@ fromFileWith :: FilePath -> String -> String -> IO (Maybe TblOps)
 fromFileWith path reader ext =
   either (const Nothing) keepNonEmpty <$> (try go :: IO (Either SomeException TblOps))
   where
-    keepNonEmpty ops = if _tblNRows ops > 0 then Just ops else Nothing
+    keepNonEmpty ops = if ops ^. tblNRows > 0 then Just ops else Nothing
     go = do
       conn <- DB.connect ":memory:"
       loadDuckExt conn ext
@@ -161,8 +162,8 @@ attachFile ap fmt = (try go :: IO (Either SomeException (Maybe View))) >>= eithe
       res <- DB.query conn "SELECT table_name AS name FROM information_schema.tables WHERE table_catalog='extdb'"
       ops <- DB.mkDbOps res
       let disp = T.pack (last (filter (not . null) (splitOn '/' ap)))
-          mkFld v = v { _vNav = (_vNav v) { _nsVkind = VFld (T.pack ap) 1 }, _vDisp = disp }
-      pure $ if _tblNRows ops <= 0 then Nothing
+          mkFld v = v & vNav % nsVkind .~ VFld (T.pack ap) 1 & vDisp .~ disp
+      pure $ if ops ^. tblNRows <= 0 then Nothing
              else mkFld <$> fromTbl ops (T.pack ap) 0 (V.singleton "name") 0
     splitOn c = foldr step [[]]
       where step x acc | x == c    = [] : acc

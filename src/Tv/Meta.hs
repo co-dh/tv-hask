@@ -15,6 +15,7 @@ import qualified Data.Vector as V
 import qualified Data.Set as Set
 
 import Tv.Types
+import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Column type name matching Lean's ColType.toString (lowercased tag).
 colTypeName :: ColType -> Text
@@ -43,17 +44,17 @@ colStats cells =
 
 -- | Read one full column from the source table as a Text vector.
 readCol :: TblOps -> Int -> IO (Vector Text)
-readCol t c = V.generateM (_tblNRows t) (\r -> _tblCellStr t r c)
+readCol t c = V.generateM ((t ^. tblNRows)) (\r -> (t ^. tblCellStr) r c)
 
 -- | Build column-metadata TblOps from an underlying table.
 mkMetaOps :: TblOps -> IO TblOps
 mkMetaOps src = do
-  let names = _tblColNames src
+  let names = (src ^. tblColNames)
       nc    = V.length names
   rows <- V.generateM nc $ \i -> do
     cells <- readCol src i
     let (cnt, distN, nullPct, mn, mx) = colStats cells
-        ty = colTypeName (_tblColType src i)
+        ty = colTypeName ((src ^. tblColType) i)
     pure $ V.fromList
       [ names V.! i, ty
       , T.pack (show cnt), T.pack (show distN), T.pack (show nullPct)
