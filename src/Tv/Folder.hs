@@ -89,41 +89,8 @@ listFolderDepth path depth = do
   entries <- collect path "" (max 1 depth)
   let parent = Entry ".." "0" "" "dir"
       rows = V.fromList (parent : entries)
-      rowCell e i = case i of
-        0 -> eName e; 1 -> eSize e; 2 -> eMod e; 3 -> eType e; _ -> T.empty
-      nr = V.length rows
       cols = V.fromList ["name", "size", "modified", "type"]
-      nc = V.length cols
-  let ops = TblOps
-        { _tblNRows       = nr
-        , _tblColNames    = cols
-        , _tblTotalRows   = nr
-        , _tblQueryOps    = V.empty
-        , _tblFilter      = \_ -> pure Nothing
-        , _tblDistinct    = \_ -> pure V.empty
-        , _tblFindRow     = \_ _ _ _ -> pure Nothing
-        , _tblRender      = \_ -> pure V.empty
-        , _tblGetCols     = \_ _ _ -> pure V.empty
-        , _tblColType     = \_ -> CTStr
-        , _tblBuildFilter = \_ _ _ _ -> T.empty
-        , _tblFilterPrompt = \_ _ -> T.empty
-        , _tblPlotExport  = \_ _ _ _ _ _ -> pure Nothing
-        , _tblCellStr     = \r c ->
-            if r < 0 || r >= nr || c < 0 || c >= nc
-              then pure T.empty
-              else pure (rowCell (rows V.! r) c)
-        , _tblFetchMore   = pure Nothing
-        , _tblHideCols    = \_ -> pure ops
-        , _tblSortBy      = \idxs asc -> do
-            -- Sort rows by the given column indices. ".." always stays at row 0.
-            let sortCol = if V.null idxs then 0 else V.head idxs
-                cmpFn = if asc then comparing id else comparing Down
-                sorted = V.cons (V.head rows) $
-                  V.fromList $ sortBy (\a b -> cmpFn (rowCell a sortCol) (rowCell b sortCol))
-                                      (V.toList (V.tail rows))
-            pure (mkFolderOps sorted cols)
-        }
-  pure ops
+  pure (mkFolderOps rows cols)
 
 -- | Build folder TblOps from row data (shared between listFolderDepth and sort).
 mkFolderOps :: Vector Entry -> Vector Text -> TblOps

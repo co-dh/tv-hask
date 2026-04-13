@@ -6,6 +6,7 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Optics.TH (makeLenses)
+import Tv.Nav (execNav)
 import Tv.Types
 
 -- ============================================================================
@@ -31,9 +32,8 @@ mkView ns path = View ns path "" V.empty Nothing V.empty
 tabName :: View -> Text
 tabName v = case _nsVkind (_vNav v) of
   VFld p _ | T.null (_vDisp v) || "/" `T.isPrefixOf` p -> p
-  _ | T.null (_vDisp v) -> maybe (_vPath v) id (safeLast $ T.splitOn "/" (_vPath v))
+  _ | T.null (_vDisp v) -> last (T.splitOn "/" (_vPath v))
     | otherwise -> _vDisp v
-  where safeLast xs = if null xs then Nothing else Just (last xs)
 
 -- | Build View from TblOps + path (returns Nothing if empty)
 fromTbl :: TblOps -> Text -> Int -> Vector Text -> Int -> Maybe View
@@ -50,34 +50,27 @@ fromTbl ops path col grp row
 
 -- | Rebuild with new TblOps, preserving old view attributes
 rebuildView :: View -> TblOps -> Int -> Vector Text -> Int -> Maybe View
-rebuildView old ops col grp row = case fromTbl ops (_vPath old) col grp row of
-  Nothing -> Nothing
-  Just v -> Just $ v { _vNav = (_vNav v) { _nsHidden = _nsHidden (_vNav old)
-                                          , _nsVkind = _nsVkind (_vNav old)
-                                          , _nsSearch = _nsSearch (_vNav old)
-                                          , _nsPrecAdj = _nsPrecAdj (_vNav old)
-                                          , _nsWidthAdj = _nsWidthAdj (_vNav old)
-                                          , _nsHeatMode = _nsHeatMode (_vNav old) }
-                     , _vDisp = _vDisp old, _vSameHide = _vSameHide old }
+rebuildView old ops col grp row = inherit <$> fromTbl ops (_vPath old) col grp row
+  where
+    oldNs = _vNav old
+    inherit v = v { _vNav = (_vNav v) { _nsHidden   = _nsHidden oldNs
+                                      , _nsVkind    = _nsVkind oldNs
+                                      , _nsSearch   = _nsSearch oldNs
+                                      , _nsPrecAdj  = _nsPrecAdj oldNs
+                                      , _nsWidthAdj = _nsWidthAdj oldNs
+                                      , _nsHeatMode = _nsHeatMode oldNs }
+                  , _vDisp = _vDisp old, _vSameHide = _vSameHide old }
 
 -- | Pure update by command
 updateView :: View -> Cmd -> Int -> Maybe (View, Effect)
 updateView v cmd rowPg =
   let ns = _vNav v
       curCol = curColIdx ns
-      names = _tblColNames (_nsTbl ns)
       nr = _tblNRows (_nsTbl ns)
   in case cmd of
     SortAsc  -> Just (v, ESort curCol (selColIdxs' ns) (grpIdxs ns) True)
     SortDesc -> Just (v, ESort curCol (selColIdxs' ns) (grpIdxs ns) False)
-    ColExclude ->
-      let name = curColName ns
-          cols = if V.null (_nsHidden ns) then V.singleton name
-                 else if V.elem name (_nsHidden ns) then _nsHidden ns
-                 else V.snoc (_nsHidden ns) name
-      in Just (v, EExclude (V.map (names V.!) cols'))
-      where cols' = V.empty  -- TODO: map to indices properly
-    _ -> case execNav' cmd rowPg ns of
+    _ -> case execNav cmd rowPg ns of
       Nothing -> Nothing
       Just ns' ->
         let needsMore = _naCur (_nsRow ns') + 1 >= nr
@@ -88,33 +81,6 @@ updateView v cmd rowPg =
     selColIdxs' ns = V.mapMaybe (`V.elemIndex` _tblColNames (_nsTbl ns))
                       (V.map (\i -> _tblColNames (_nsTbl ns) V.! (_nsDispIdxs ns V.! i)) (_naSels (_nsCol ns)))
     grpIdxs ns = V.mapMaybe (`V.elemIndex` _tblColNames (_nsTbl ns)) (_nsGrp ns)
-    -- inline nav exec to avoid circular import
-    execNav' cmd' pg ns' = execNavInline cmd' pg ns'
-
--- TODO: move to Nav to avoid duplication
-execNavInline :: Cmd -> Int -> NavState -> Maybe NavState
-execNavInline cmd rowPg ns =
-  let nr = _tblNRows (_nsTbl ns)
-      nc = V.length (_tblColNames (_nsTbl ns))
-      moveRow d = Just $ ns { _nsRow = axisMove nr d (_nsRow ns) }
-      moveCol d = Just $ ns { _nsCol = axisMove nc d (_nsCol ns) }
-  in case cmd of
-    RowInc  -> moveRow 1;        RowDec  -> moveRow (-1)
-    RowPgdn -> moveRow rowPg;    RowPgup -> moveRow (-rowPg)
-    RowTop  -> moveRow (negate $ _naCur (_nsRow ns))
-    RowBot  -> moveRow (nr - 1 - _naCur (_nsRow ns))
-    ColInc  -> moveCol 1;        ColDec  -> moveCol (-1)
-    ColFirst -> moveCol (negate $ _naCur (_nsCol ns))
-    ColLast  -> moveCol (nc - 1 - _naCur (_nsCol ns))
-    RowSel  -> Just $ ns { _nsRow = (_nsRow ns) { _naSels = vToggle (_naCur $ _nsRow ns) (_naSels $ _nsRow ns) } }
-    ColGrp  ->
-      let g' = vToggleT (curColName ns) (_nsGrp ns)
-          names = _tblColNames (_nsTbl ns)
-      in Just $ ns { _nsGrp = g', _nsDispIdxs = dispOrder g' names }
-    ColHide -> Just $ ns { _nsHidden = vToggleT (curColName ns) (_nsHidden ns) }
-    _ -> Nothing
-  where
-    vToggleT x xs = if V.elem x xs then V.filter (/= x) xs else V.snoc xs x
 
 -- ============================================================================
 -- ViewStack: non-empty view stack

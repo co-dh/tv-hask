@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-orphans #-}  -- ToJSON/FromJSON for Agg/Op/ViewKind live here; Types is off-limits
@@ -294,28 +295,22 @@ saveSession nameIn vs = do
 -- NOTE: returns 'SavedSession', not a live 'ViewStack' — the TblOps pipeline
 -- has to be re-executed by App/SourceConfig before a View can exist.
 loadSession :: Text -> IO (Maybe SavedSession)
-loadSession name = do
-  mpath <- sessPath name
-  case mpath of
-    Nothing -> pure Nothing
-    Just p -> do
-      r <- try (BL.readFile p) :: IO (Either SomeException BL.ByteString)
-      case r of
-        Left _   -> pure Nothing
-        Right bs -> case decodeSession bs of
-          Nothing -> logWrite "session" ("parse failed: " <> p) >> pure Nothing
-          Just s  -> pure (Just s)
+loadSession name = sessPath name >>= \case
+  Nothing -> pure Nothing
+  Just p  -> (try (BL.readFile p) :: IO (Either SomeException BL.ByteString)) >>= \case
+    Left _   -> pure Nothing
+    Right bs -> case decodeSession bs of
+      Nothing -> Nothing <$ logWrite "session" ("parse failed: " <> p)
+      Just s  -> pure (Just s)
 
 -- | List available session names (*.json stems) in ~/.cache/tv/sessions/.
 listSessions :: IO [Text]
 listSessions = do
   d <- sessDir
   exists <- doesDirectoryExist d
-  if not exists then pure [] else do
-    r <- try (listDirectory d) :: IO (Either SomeException [FilePath])
-    pure $ case r of
-      Left _     -> []
-      Right ents -> mapMaybe stem ents
+  if not exists then pure [] else
+    either (const []) (mapMaybe stem) <$>
+      (try (listDirectory d) :: IO (Either SomeException [FilePath]))
   where
     stem f | takeExtension f == ".json" = Just (T.pack (dropExtension f))
            | otherwise                  = Nothing

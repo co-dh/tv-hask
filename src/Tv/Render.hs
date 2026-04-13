@@ -13,6 +13,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Read as TR
+import qualified Data.IntSet as IS
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Bits (xor, (.&.))
@@ -289,8 +290,8 @@ drawApp st =
     disp = _nsDispIdxs ns
     curCol = _naCur (_nsCol ns)
     curRow = _naCur (_nsRow ns)
-    rowSels = _naSels (_nsRow ns)
-    colSels = _naSels (_nsCol ns)
+    rowSelSet = IS.fromList $ V.toList $ _naSels (_nsRow ns)
+    colSelSet = IS.fromList $ V.toList $ _naSels (_nsCol ns)
     grpNames = _nsGrp ns
     nKeys = V.length grpNames
     names = visColNames st
@@ -308,7 +309,7 @@ drawApp st =
     isNumCol ci = isNumeric (_tblColType tbl (origIdx ci))
     isGrpCol ci = absDispPos ci < nKeys
     isCurCol ci = origIdx ci == curCol
-    isSelCol ci = V.elem (origIdx ci) colSels
+    isSelCol ci = IS.member (origIdx ci) colSelSet
 
     -- Separator widget: ║ immediately after the last key column, │ otherwise.
     -- Rightmost column omits its trailing separator.
@@ -345,7 +346,7 @@ drawApp st =
           inner = max 0 (w - 2)
           padded = padCell inner (isNumCol ci) cell
           txt = " " <> padded <> " "
-          isSelR = V.elem absRow rowSels
+          isSelR = IS.member absRow rowSelSet
           isCurR = absRow == curRow
           isSelC = isSelCol ci
           isCurC = isCurCol ci
@@ -402,7 +403,7 @@ drawApp st =
           nCols = V.length (_tblColNames tbl)
           r = _naCur (_nsRow ns)
           n = _tblNRows (_nsTbl ns)
-          nSel = V.length rowSels
+          nSel = IS.size rowSelSet
       in "c" <> tshow c <> "/" <> tshow nCols
          <> " grp=" <> tshow nKeys
          <> " sel=" <> tshow nSel

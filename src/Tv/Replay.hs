@@ -12,24 +12,14 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
+import Tv.Data.Prql (quote, dqQuote, renderSort)
 import Tv.Types
-
--- | Quote column name with backticks (PRQL identifier quoting)
-quote :: Text -> Text
-quote s = "`" <> s <> "`"
-
--- | DuckDB-quote for use inside PRQL s-strings
-dqQuote :: Text -> Text
-dqQuote s = "\\\"" <> s <> "\\\""
-
-renderSort :: (Text, Bool) -> Text
-renderSort (col, asc) = let qc = quote col in if asc then qc else "-" <> qc
 
 -- | Render single Op to PRQL string. Mirrors Tc.Data.ADBC.Prql.Op.render.
 renderOp :: Op -> Text
 renderOp = \case
   OpFilter e -> "filter " <> e
-  OpSort cols -> "sort {" <> T.intercalate ", " (V.toList (V.map renderSort cols)) <> "}"
+  OpSort cols -> "sort {" <> T.intercalate ", " (V.toList (V.map (uncurry renderSort) cols)) <> "}"
   OpSel cols -> "select {" <> T.intercalate ", " (V.toList (V.map quote cols)) <> "}"
   OpExclude cols -> "select s\"* EXCLUDE (" <> T.intercalate ", " (V.toList (V.map dqQuote cols)) <> ")\""
   OpDerive bs -> "derive {" <> T.intercalate ", " (V.toList (V.map (\(n, e) -> quote n <> " = " <> e) bs)) <> "}"

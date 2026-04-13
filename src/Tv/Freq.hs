@@ -16,7 +16,7 @@ module Tv.Freq
   , filterExpr
   ) where
 
-import Control.Exception (try, SomeException)
+import Control.Exception (SomeException, handle)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
@@ -48,10 +48,7 @@ mkFreqOps src colIdxs
             "SELECT " <> groupSql <> ", COUNT(*) AS count FROM ("
               <> sub <> ") GROUP BY " <> groupSql
               <> " ORDER BY count DESC LIMIT 1000"
-      r <- try (Derive.rebuildWith src wrap)
-      case r of
-        Right ops -> pure ops
-        Left (_ :: SomeException) -> pure src
+      handle (\(_ :: SomeException) -> pure src) (Derive.rebuildWith src wrap)
   where
     names = _tblColNames src
     nc    = V.length names

@@ -44,14 +44,6 @@ isTime CTTime = True; isTime CTTimestamp = True; isTime CTDate = True; isTime _ 
 data Cell = CNull | CInt !Int64 | CFloat !Double | CStr !Text | CBool !Bool
   deriving (Eq, Show)
 
-cellToRaw :: Cell -> Text
-cellToRaw CNull = ""; cellToRaw (CInt n) = T.pack (show n); cellToRaw (CFloat f) = T.pack (show f)
-cellToRaw (CStr s) = s; cellToRaw (CBool b) = if b then "true" else "false"
-
-cellToPrql :: Cell -> Text
-cellToPrql CNull = "null"; cellToPrql (CInt n) = T.pack (show n); cellToPrql (CFloat f) = T.pack (show f)
-cellToPrql (CStr s) = "'" <> T.replace "'" "''" s <> "'"; cellToPrql (CBool b) = if b then "true" else "false"
-
 -- | Opaque handle to one DuckDB @duckdb_data_chunk@. Defined here (rather
 -- than in Tv.Data.DuckDB) to break an import cycle: 'Column' stores a list
 -- of these and lives in Tv.Types, but Tv.Data.DuckDB also imports from
@@ -297,7 +289,7 @@ axisMove :: Int -> Int -> NavAxis -> NavAxis
 axisMove n d ax = ax { _naCur = clamp 0 n (_naCur ax + d) }
 
 -- | Toggle element in vector (add if absent, remove if present)
-vToggle :: Int -> Vector Int -> Vector Int
+vToggle :: Eq a => a -> Vector a -> Vector a
 vToggle x xs = if V.elem x xs then V.filter (/= x) xs else V.snoc xs x
 
 -- | Display order: group columns first, then rest

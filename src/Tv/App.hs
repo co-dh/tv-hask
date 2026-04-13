@@ -26,7 +26,8 @@ import System.Process (readProcessWithExitCode)
 import System.Exit (ExitCode(..))
 import Control.Exception (try, SomeException, displayException)
 import Data.Char (toLower)
-import Data.List (sort)
+import Control.Applicative ((<|>))
+import Data.List (find, isSuffixOf, sort)
 import qualified Data.Text.IO as TIO
 import Tv.Types
 import Tv.View
@@ -631,14 +632,11 @@ colSearchH st arg
           names = _tblColNames (_nsTbl ns)
           disp  = _nsDispIdxs ns
           q = T.toLower arg
-          hit i = q `T.isPrefixOf` T.toLower (names V.! (disp V.! i))
-          hitSub i = q `T.isInfixOf` T.toLower (names V.! (disp V.! i))
+          at i = T.toLower (names V.! (disp V.! i))
           idxRange = [0 .. V.length disp - 1]
-      case foldr (\i acc -> if hit i then Just i else acc) Nothing idxRange of
-        Just i -> moveTo i
-        Nothing -> case foldr (\i acc -> if hitSub i then Just i else acc) Nothing idxRange of
-          Just i -> moveTo i
-          Nothing -> pure (Just st { asMsg = "no column matches: " <> arg })
+      case find ((q `T.isPrefixOf`) . at) idxRange <|> find ((q `T.isInfixOf`) . at) idxRange of
+        Just i  -> moveTo i
+        Nothing -> pure (Just st { asMsg = "no column matches: " <> arg })
   where
     moveTo i =
       let hd = _vsHd (asStack st)
@@ -979,8 +977,7 @@ loadFile p
 
 -- | Check if file is .gz
 isGz :: FilePath -> Bool
-isGz p = ".gz" `isSuffixOf'` map toLower p
-  where isSuffixOf' sfx s = drop (length s - length sfx) s == sfx
+isGz p = ".gz" `isSuffixOf` map toLower p
 
 -- | Load .gz file: decompress with zcat, then try CSV → text → viewFile fallback.
 -- For .csv.gz, DuckDB handles natively via loadFile. For .txt.gz, decompress first.

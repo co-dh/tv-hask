@@ -3,7 +3,6 @@
 module Tv.Nav where
 
 import qualified Data.Vector as V
-import Data.Text (Text)
 import Tv.Types
 
 -- | Execute a navigation command. Returns Nothing if command not handled.
@@ -20,10 +19,10 @@ execNav cmd rowPg ns = case cmd of
   ColFirst -> Just $ moveCol (negate $ _naCur (_nsCol ns))
   ColLast  -> Just $ moveCol (nc - 1 - _naCur (_nsCol ns))
   RowSel  -> Just $ ns { _nsRow = (_nsRow ns) { _naSels = vToggle (_naCur $ _nsRow ns) (_naSels $ _nsRow ns) } }
-  ColGrp  -> Just $ let g' = vToggleText (curColName ns) (_nsGrp ns)
+  ColGrp  -> Just $ let g' = vToggle (curColName ns) (_nsGrp ns)
                         names = _tblColNames (_nsTbl ns)
                     in ns { _nsGrp = g', _nsDispIdxs = dispOrder g' names }
-  ColHide -> Just $ ns { _nsHidden = vToggleText (curColName ns) (_nsHidden ns) }
+  ColHide -> Just $ ns { _nsHidden = vToggle (curColName ns) (_nsHidden ns) }
   ColShiftL -> shiftGrp (-1)
   ColShiftR -> shiftGrp 1
   _ -> Nothing
@@ -45,7 +44,3 @@ execNav cmd rowPg ns = case cmd of
                    names = _tblColNames (_nsTbl ns)
                in Just $ ns { _nsGrp = g', _nsDispIdxs = dispOrder g' names
                             , _nsCol = axisMove nc dir (_nsCol ns) }
-
--- | Toggle text element in vector
-vToggleText :: Text -> V.Vector Text -> V.Vector Text
-vToggleText x xs = if V.elem x xs then V.filter (/= x) xs else V.snoc xs x
