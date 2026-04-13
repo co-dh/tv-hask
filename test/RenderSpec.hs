@@ -95,7 +95,7 @@ tests = testGroup "Render"
       assertBool ("missing c1 in " <> T.unpack hdr) ("c1" `T.isInfixOf` hdr)
       assertBool ("missing c2 in " <> T.unpack hdr) ("c2" `T.isInfixOf` hdr)
 
-  , testCase "(holds ^. asGrid) 0,0 cell after prefetch" $ do
+  , testCase "asGrid holds 0,0 cell after prefetch" $ do
       st <- mockState
       ((st ^. asGrid) V.! 0 V.! 0) @?= "0,0"
 

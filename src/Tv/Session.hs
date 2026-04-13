@@ -102,13 +102,13 @@ sessPath name =
 -- Slashes and spaces → underscores; drop first dot-extension; sanitize.
 autoName :: ViewStack -> Text
 autoName vs =
-  let v    = (vs ^. vsHd)
-      raw  = case (((v ^. vNav)) ^. nsVkind) of
-               VFld p _ | T.null ((v ^. vDisp)) || "/" `T.isPrefixOf` p -> p
-               _ | T.null ((v ^. vDisp)) ->
-                     let parts = T.splitOn "/" ((v ^. vPath))
-                     in if null parts then (v ^. vPath) else last parts
-                 | otherwise -> (v ^. vDisp)
+  let v    = vs ^. vsHd
+      raw  = case v ^. vNav % nsVkind of
+               VFld p _ | T.null (v ^. vDisp) || "/" `T.isPrefixOf` p -> p
+               _ | T.null (v ^. vDisp) ->
+                     let parts = T.splitOn "/" (v ^. vPath)
+                     in if null parts then v ^. vPath else last parts
+                 | otherwise -> v ^. vDisp
       name = T.replace " " "_" (T.replace "/" "_" raw)
       stem = case filter (not . T.null) (T.splitOn "." name) of
                (s:_) -> s
@@ -121,28 +121,28 @@ autoName vs =
 
 toSaved :: View -> SavedView
 toSaved v =
-  let ns = (v ^. vNav)
+  let ns = v ^. vNav
   in SavedView
-       { svPath      = (v ^. vPath)
-       , svVkind     = (ns ^. nsVkind)
-       , svDisp      = (v ^. vDisp)
-       , svPrecAdj   = (ns ^. nsPrecAdj)
-       , svWidthAdj  = (ns ^. nsWidthAdj)
-       , svRow       = (((ns ^. nsRow)) ^. naCur)
-       , svCol       = (((ns ^. nsCol)) ^. naCur)
-       , svGrp       = (ns ^. nsGrp)
-       , svHidden    = (ns ^. nsHidden)
+       { svPath      = v ^. vPath
+       , svVkind     = ns ^. nsVkind
+       , svDisp      = v ^. vDisp
+       , svPrecAdj   = ns ^. nsPrecAdj
+       , svWidthAdj  = ns ^. nsWidthAdj
+       , svRow       = ns ^. nsRow % naCur
+       , svCol       = ns ^. nsCol % naCur
+       , svGrp       = ns ^. nsGrp
+       , svHidden    = ns ^. nsHidden
        , svColSels   = colSelNames ns
-       , svSearch    = (v ^. vSearch)
-       , svQueryBase = "from `" <> (v ^. vPath) <> "`"  -- Prql.Query not yet threaded; App builds at load
-       , svQueryOps  = V.empty                      -- pipeline lives in App; stub for now
+       , svSearch    = v ^. vSearch
+       , svQueryBase = "from `" <> v ^. vPath <> "`"  -- Prql.Query not yet threaded; App builds at load
+       , svQueryOps  = V.empty                        -- pipeline lives in App; stub for now
        }
   where
     -- Translate col axis sels (indices into dispIdxs) to concrete column names.
     colSelNames ns =
-      let names = (((ns ^. nsTbl)) ^. tblColNames)
-          disp  = (ns ^. nsDispIdxs)
-          sels  = (((ns ^. nsCol)) ^. naSels)
+      let names = ns ^. nsTbl % tblColNames
+          disp  = ns ^. nsDispIdxs
+          sels  = ns ^. nsCol % naSels
           toName i = if i >= 0 && i < V.length disp
                        then let j = disp V.! i
                             in if j >= 0 && j < V.length names then Just (names V.! j) else Nothing

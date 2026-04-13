@@ -169,7 +169,7 @@ handlerMap = Map.fromList $
   where pageRows = 20  -- TODO: derive from terminal size at draw time
 
 -- | Sort the current table by the current column. Builds a fresh TblOps
--- via tblSortBy replaces the head view in place.
+-- via tblSortBy and replaces the head view in place.
 sortH :: Bool -> Handler
 sortH asc st _ = do
   let ns  = st ^. headNav
@@ -510,7 +510,7 @@ folderDepthIncH = folderDepthAdjH 1
 folderDepthDecH = folderDepthAdjH (-1)
 
 -- | Search the current column for the buffer in @asCmd@ and jump the row
--- cursor to the first row whose value contains it.  Uses _tblFindRow
+-- cursor to the first row whose value contains it.  Uses tblFindRow
 -- which the DuckDB ops implement as a SELECT rowid WHERE col LIKE …;
 -- fails-soft with a status message if not found.
 rowSearchH :: Handler
@@ -529,7 +529,7 @@ rowSearchH st arg
         Nothing -> pure (Just (st & asMsg .~ "not found: " <> arg))
 
 -- | n / N: jump to the next / previous search match. Reuses the
--- previously-stored query in @_nsSearch@ and calls tblFindRow
+-- previously-stored query in @nsSearch@ and calls tblFindRow with
 -- an advanced starting row.
 rowSearchStepH :: Int -> Handler
 rowSearchStepH step st _ = do
@@ -590,7 +590,7 @@ rowFilterH st arg
 
 -- | Goto column by name prefix/substring. First case-insensitive prefix
 -- match wins; falls back to substring match so users can type partial
--- names. Moves nsCol, no new view.
+-- names. Moves the nsCol cursor, no new view.
 colSearchH :: Handler
 colSearchH st arg
   | T.null arg = pure (Just (st & asMsg .~ "goto: empty name"))
@@ -768,7 +768,7 @@ folderParentH st _ = case st ^. headNav % nsVkind of
       Just v  -> Just <$> refreshGrid (st & asStack % vsHd .~ (v & vNav % nsVkind .~ vk))
   _ -> pure (Just st)
 
--- | Rebuild the asGrid visible window. Walks the TblOps _tblCellStr
+-- | Rebuild asGrid for the visible window. Walks the TblOps tblCellStr
 -- IO function for each cell. Called after any handler that could change
 -- the viewport or the underlying table — the single refresh path keeps
 -- drawApp pure and lets it do zero IO.
@@ -1070,7 +1070,7 @@ openPath st p = do
 initialState :: View -> IO AppState
 initialState v = initialStateSized v 200 80
 
--- | Like 'initialState' but seeds asVisW/real asVisH terminal bounds
+-- | Like 'initialState' but seeds asVisW/asVisH from real terminal bounds
 -- so the first frame is laid out at the correct size.
 initialStateSized :: View -> Int -> Int -> IO AppState
 initialStateSized v tw th = do

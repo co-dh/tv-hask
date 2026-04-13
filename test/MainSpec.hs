@@ -208,7 +208,7 @@ freqTests = testGroup "freq"
     testCase "freq_shows: FreqOpen pushes VFreq view" $ do
       let t = mkGridTblTy ["c"] [["a"],["b"],["a"]] (const CTStr)
       Just st' <- handleCmd FreqOpen "" (mkAppState t)
-      case _nsVkind (_vNav ((((st' ^. asStack)) ^. vsHd))) of
+      case st' ^. headNav % nsVkind of
         VFreq cs _ -> cs @?= V.singleton "c"
         k -> assertFailure ("expected VFreq, got " <> show k)
   , -- Test.lean:63 test_freq_by_key — with grp set to c0, FreqOpen groups
@@ -218,7 +218,7 @@ freqTests = testGroup "freq"
           st0 = mkAppState t
           st  = st0 & headNav % nsGrp .~ V.singleton "c0"
       Just st' <- handleCmd FreqOpen "" st
-      case _nsVkind (_vNav ((((st' ^. asStack)) ^. vsHd))) of
+      case st' ^. headNav % nsVkind of
         VFreq cs _ -> cs @?= V.singleton "c0"
         k -> assertFailure ("expected VFreq, got " <> show k)
   , -- Test.lean:67 test_freq_multi_key — grp=[c0,c1] → VFreq carries both.
@@ -227,7 +227,7 @@ freqTests = testGroup "freq"
           st0 = mkAppState t
           st  = st0 & headNav % nsGrp .~ V.fromList ["c0","c1"]
       Just st' <- handleCmd FreqOpen "" st
-      case _nsVkind (_vNav ((((st' ^. asStack)) ^. vsHd))) of
+      case st' ^. headNav % nsVkind of
         VFreq cs _ -> cs @?= V.fromList ["c0","c1"]
         k -> assertFailure ("expected VFreq, got " <> show k)
   , -- Test.lean:71 test_freq_keeps_grp — parent (tail) view keeps its grp.
@@ -236,19 +236,19 @@ freqTests = testGroup "freq"
           st0 = mkAppState t
           st  = st0 & headNav % nsGrp .~ V.singleton "c0"
       Just st' <- handleCmd FreqOpen "" st
-      case (((st' ^. asStack)) ^. vsTl) of
-        (parent:_) -> (((parent ^. vNav)) ^. nsGrp) @?= V.singleton "c0"
+      case st' ^. asStack % vsTl of
+        (parent:_) -> parent ^. vNav % nsGrp @?= V.singleton "c0"
         [] -> assertFailure "expected parent view on stack"
   , -- Test.lean:58 test_freq_after_meta — MetaPush then FreqOpen chains.
     testCase "freq_after_meta: MetaPush then FreqOpen produces VFreq on top" $ do
       let t = mkGridTblTy ["x"] [["a"],["b"]] (const CTStr)
       Just st1 <- handleCmd MetaPush "" (mkAppState t)
       Just st2 <- handleCmd FreqOpen "" st1
-      case _nsVkind (_vNav ((((st2 ^. asStack)) ^. vsHd))) of
+      case st2 ^. headNav % nsVkind of
         VFreq _ _ -> pure ()
         k -> assertFailure ("expected VFreq on top, got " <> show k)
       -- tail should contain the meta view
-      length ((((st2 ^. asStack)) ^. vsTl)) @?= 2
+      length (st2 ^. asStack % vsTl) @?= 2
   , -- Test.lean:105 test_freq_enter — after FreqOpen, FreqFilter filters
     -- the parent table. The parent mock filter returns Nothing, so we get
     -- a "filter failed" asMsg a new view. That still exercises
@@ -258,9 +258,9 @@ freqTests = testGroup "freq"
       Just st1 <- handleCmd FreqOpen "" (mkAppState t)
       Just st2 <- handleCmd FreqFilter "" st1
       -- The parent table comes from mkGridTbl which has _tblFilter = \_ -> pure Nothing,
-      -- so the handler surfaces an does asMsg not halt.
-      assertBool "(non ^. asMsg)-empty after freq.filter"
-        (not (T.null ((st2 ^. asMsg))))
+      -- so the handler surfaces an asMsg and does not halt.
+      assertBool "non-empty asMsg after freq.filter"
+        (not (T.null (st2 ^. asMsg)))
   ]
 
 -- ============================================================================
@@ -295,11 +295,11 @@ searchTests =
         let st0 = withCol1 (mkAppState mk)
         Just st1 <- handleCmd RowSearch "apri" st0
         rowCur st1 @?= 2
-    , testCase "search_jump: miss sets (and ^. asMsg) leaves row at 0" $ do
+    , testCase "search_jump: miss sets asMsg and leaves row at 0" $ do
         let st0 = withCol1 (mkAppState mk)
         Just st1 <- handleCmd RowSearch "zzz" st0
         rowCur st1 @?= 0
-        assertBool "(non ^. asMsg)-empty on miss" (not (T.null ((st1 ^. asMsg))))
+        assertBool "non-empty asMsg on miss" (not (T.null (st1 ^. asMsg)))
     , testCase "search_next: advances past current hit" $ do
         let st0 = withCol1 (mkAppState mk)
         Just s1 <- handleCmd RowSearch "ap" st0  -- lands on row 0 ("apple")
@@ -312,7 +312,7 @@ searchTests =
         Just s2 <- handleCmd RowSearchNext "" s1           -- row 2
         Just s3 <- handleCmd RowSearchPrev "" s2           -- back to row 0
         rowCur s3 @?= 0
-    , testCase "search_after_sort: (persists ^. nsSearch) across handler calls" $ do
+    , testCase "search_after_sort: nsSearch persists across handler calls" $ do
         let st0 = withCol1 (mkAppState mk)
         Just s1 <- handleCmd RowSearch "cherry" st0
         ((nsOf s1) ^. nsSearch) @?= "cherry"
@@ -328,7 +328,7 @@ searchTests =
         let st0 = mkAppState mk
         Just s1 <- handleCmd ColSearch "zzz" st0
         colCur s1 @?= 0
-        assertBool "(non ^. asMsg)-empty" (not (T.null ((s1 ^. asMsg))))
+        assertBool "non-empty asMsg" (not (T.null (s1 ^. asMsg)))
     ]
 
 -- ============================================================================
@@ -382,7 +382,7 @@ folderTests =
         let st0 = mkAppState t
             st1 = st0 & headNav % nsVkind .~ VFld (T.pack d) 1
         Just st2 <- handleCmd FolderEnter "" st1
-        case _nsVkind (_vNav ((((st2 ^. asStack)) ^. vsHd))) of
+        case st2 ^. headNav % nsVkind of
           VFld _ _ -> pure ()
           _        -> assertFailure "expected VFld after FolderEnter on '..'"
     , testCase "folder_pop: pushing then StkPop returns to original" $ do
@@ -393,17 +393,17 @@ folderTests =
         Just st2 <- handleCmd FolderPush "" st1
         -- push succeeded: stack now has 2 frames
         assertBool "stack grew after FolderPush"
-          (length ((((st2 ^. asStack)) ^. vsTl)) >= 1)
+          (length (st2 ^. asStack % vsTl) >= 1)
         Just st3 <- handleCmd StkPop "" st2
         -- pop succeeded: stack back to 1 frame
-        length ((((st3 ^. asStack)) ^. vsTl)) @?= 0
+        length (st3 ^. asStack % vsTl) @?= 0
     , testCase "folder_depth: DepthInc raises depth in VFld" $ do
         d <- mkTmpDir "dinc"
         t <- Folder.listFolder d
         let st0 = mkAppState t
             st1 = st0 & headNav % nsVkind .~ VFld (T.pack d) 1
         Just st2 <- handleCmd FolderDepthInc "" st1
-        case _nsVkind (_vNav ((((st2 ^. asStack)) ^. vsHd))) of
+        case st2 ^. headNav % nsVkind of
           VFld _ 2 -> pure ()
           vk -> assertFailure ("expected VFld depth=2, got " <> show vk)
     , testCase "folder_depth: DepthDec clamps at 1" $ do
@@ -412,7 +412,7 @@ folderTests =
         let st0 = mkAppState t
             st1 = st0 & headNav % nsVkind .~ VFld (T.pack d) 1
         Just st2 <- handleCmd FolderDepthDec "" st1
-        case _nsVkind (_vNav ((((st2 ^. asStack)) ^. vsHd))) of
+        case st2 ^. headNav % nsVkind of
           VFld _ 1 -> pure ()
           vk -> assertFailure ("expected VFld depth=1 (clamped), got " <> show vk)
     , pending "folder_no_args" "needs tv-binary spawn + cwd folder open (binary-level test)"
@@ -859,11 +859,11 @@ plotExportTests = testGroup "plot"
       -- only care that the handler returned *some* non-empty asMsg
       -- of crashing or silently no-opping.
       Just st1 <- handleCmd PlotHist "" (mkAppState mockTbl)
-      assertBool "(set ^. asMsg) after PlotHist dispatch"
+      assertBool "asMsg set after PlotHist dispatch"
         (not (T.null ((st1 ^. asMsg))))
-  , pending "plot_export_string_col"  "needs (impl ^. tblPlotExport) in DuckDB backend (stub in mockTbl)"
-  , pending "plot_export_data"        "needs (impl ^. tblPlotExport) in DuckDB backend (stub in mockTbl)"
-  , pending "plot_export_cat"         "needs (impl ^. tblPlotExport) in DuckDB backend (stub in mockTbl)"
+  , pending "plot_export_string_col"  "needs tblPlotExport impl in DuckDB backend (stub in mockTbl)"
+  , pending "plot_export_data"        "needs tblPlotExport impl in DuckDB backend (stub in mockTbl)"
+  , pending "plot_export_cat"         "needs tblPlotExport impl in DuckDB backend (stub in mockTbl)"
   , pending "plot_time_downsample"    "needs (time ^. tblPlotExport) downsample path in DuckDB backend"
   , pending "plot_downsample_step"    "needs Plot.maxPoints downsample step in plotExport path"
   , pending "plot_render_line"        "needs R subprocess rendering wired into Plot.runPlot (uses system R)"
@@ -1050,29 +1050,29 @@ navExtraTests :: TestTree
 navExtraTests = testGroup "nav"
   [ testCase "RowInc at 0 → 1" $ do
       let Just ns' = Nav.execNav RowInc 1 mockNav
-      (((ns' ^. nsRow)) ^. naCur) @?= 1
+      ns' ^. nsRow % naCur @?= 1
   , testCase "RowDec at 0 stays 0" $ do
       let Just ns' = Nav.execNav RowDec 1 mockNav
-      (((ns' ^. nsRow)) ^. naCur) @?= 0
+      ns' ^. nsRow % naCur @?= 0
   , testCase "RowPgdn jumps by page size" $ do
       let Just ns' = Nav.execNav RowPgdn 3 mockNav
-      (((ns' ^. nsRow)) ^. naCur) @?= 3
+      ns' ^. nsRow % naCur @?= 3
   , testCase "RowBot → last row" $ do
       let Just ns' = Nav.execNav RowBot 1 mockNav
-      (((ns' ^. nsRow)) ^. naCur) @?= (mockTbl ^. tblNRows) - 1
+      ns' ^. nsRow % naCur @?= (mockTbl ^. tblNRows) - 1
   , testCase "ColLast → last col" $ do
       let Just ns' = Nav.execNav ColLast 1 mockNav
-      (((ns' ^. nsCol)) ^. naCur) @?= V.length ((mockTbl ^. tblColNames)) - 1
+      ns' ^. nsCol % naCur @?= V.length ((mockTbl ^. tblColNames)) - 1
   , testCase "ColFirst → 0" $ do
       -- move then move back
       let Just ns1 = Nav.execNav ColLast  1 mockNav
           Just ns2 = Nav.execNav ColFirst 1 ns1
-      (((ns2 ^. nsCol)) ^. naCur) @?= 0
+      ns2 ^. nsCol % naCur @?= 0
   , testCase "RowInc twice then RowDec once = 1" $ do
       let Just ns1 = Nav.execNav RowInc 1 mockNav
           Just ns2 = Nav.execNav RowInc 1 ns1
           Just ns3 = Nav.execNav RowDec 1 ns2
-      (((ns3 ^. nsRow)) ^. naCur) @?= 1
+      ns3 ^. nsRow % naCur @?= 1
   ]
 
 -- ============================================================================

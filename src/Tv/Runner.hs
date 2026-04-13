@@ -20,12 +20,13 @@ import Optics.Core ((^.), (%), (&), (.~), (%~))
 -- from nav.grp + current column, then pattern-matches the command.
 freqUpdate :: ViewStack -> Cmd -> Maybe (ViewStack, Effect)
 freqUpdate s cmd =
-  let n = (((s ^. vsHd)) ^. vNav)
+  let n = s ^. vsHd % vNav
       curName = curColName n
-      colNames = if V.elem curName ((n ^. nsGrp)) then (n ^. nsGrp) else V.snoc ((n ^. nsGrp)) curName
+      grp = n ^. nsGrp
+      colNames = if V.elem curName grp then grp else V.snoc grp curName
   in case cmd of
     FreqOpen -> Just (s, EFreq colNames)
-    FreqFilter -> case (n ^. nsVkind) of
-      VFreq cols _ -> Just (s, EFreqFilter cols ((((n ^. nsRow)) ^. naCur)))
+    FreqFilter -> case n ^. nsVkind of
+      VFreq cols _ -> Just (s, EFreqFilter cols (n ^. nsRow % naCur))
       _ -> Nothing
     _ -> Nothing

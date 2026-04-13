@@ -97,13 +97,13 @@ tests = testGroup "Screen (ported from TestScreen.lean)"
     -- === Selection (TestScreen.lean:62-67) ===
   , testCase "row_select: RowSel selects row 0" $ do
       let Just ns' = Nav.execNav RowSel 1 mockNav
-      V.length ((((ns' ^. nsRow)) ^. naSels)) @?= 1
+      V.length (ns' ^. nsRow % naSels) @?= 1
   , testCase "multi_select: RowSel, RowInc, RowSel = 2 sels (TjT)" $ do
       let Just ns' = replayNav [RowSel, RowInc, RowSel] mockNav
-      V.length ((((ns' ^. nsRow)) ^. naSels)) @?= 2
+      V.length (ns' ^. nsRow % naSels) @?= 2
   , testCase "sel_toggle: RowSel,RowSel clears selection" $ do
       let Just ns' = replayNav [RowSel, RowSel] mockNav
-      V.length ((((ns' ^. nsRow)) ^. naSels)) @?= 0
+      V.length (ns' ^. nsRow % naSels) @?= 0
 
     -- === Stack (TestScreen.lean:74-84, 106-109) ===
   , testCase "stack_dup: updateViewStack StkDup pushes copy" $ do
@@ -143,9 +143,9 @@ tests = testGroup "Screen (ported from TestScreen.lean)"
   , testCase "meta_quit: MetaPush pushes VColMeta; StkPop restores" $ do
       st <- mkScreen
       Just st1 <- handleCmd MetaPush "" st
-      _nsVkind (_vNav ((((st1 ^. asStack)) ^. vsHd))) @?= VColMeta
+      st1 ^. headNav % nsVkind @?= VColMeta
       Just st2 <- handleCmd StkPop "" st1
-      _nsVkind (_vNav ((((st2 ^. asStack)) ^. vsHd))) @?= VTbl
+      st2 ^. headNav % nsVkind @?= VTbl
     -- info (TestScreen.lean:91): InfoTog toggles the overlay flag.
   , testCase "info: InfoTog flips asInfoVis" $ do
       st <- mkScreen
@@ -162,7 +162,7 @@ tests = testGroup "Screen (ported from TestScreen.lean)"
   , testCase "freq_quit: FreqOpen pushes VFreq kind even on pure mock" $ do
       st <- mkScreen
       Just st1 <- handleCmd FreqOpen "" st
-      case _nsVkind (_vNav ((((st1 ^. asStack)) ^. vsHd))) of
+      case st1 ^. headNav % nsVkind of
         VFreq _ _ -> pure ()
         k -> assertFailure ("expected VFreq, got " <> show k)
   ]

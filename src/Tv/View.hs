@@ -31,10 +31,10 @@ mkView ns path = View ns path "" V.empty Nothing V.empty
 
 -- | Tab display name: custom disp or filename from path
 tabName :: View -> Text
-tabName v = case (((v ^. vNav)) ^. nsVkind) of
-  VFld p _ | T.null ((v ^. vDisp)) || "/" `T.isPrefixOf` p -> p
-  _ | T.null ((v ^. vDisp)) -> last (T.splitOn "/" ((v ^. vPath)))
-    | otherwise -> (v ^. vDisp)
+tabName v = case v ^. vNav % nsVkind of
+  VFld p _ | T.null (v ^. vDisp) || "/" `T.isPrefixOf` p -> p
+  _ | T.null (v ^. vDisp) -> last (T.splitOn "/" (v ^. vPath))
+    | otherwise -> v ^. vDisp
 
 -- | Build View from TblOps + path (returns Nothing if empty)
 fromTbl :: TblOps -> Text -> Int -> Vector Text -> Int -> Maybe View

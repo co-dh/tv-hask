@@ -82,12 +82,6 @@ headNav = headView % vNav
 headTbl :: Lens' AppState TblOps
 headTbl = headNav % nsTbl
 
-headRow :: Lens' AppState NavAxis
-headRow = headNav % nsRow
-
-headCol :: Lens' AppState NavAxis
-headCol = headNav % nsCol
-
 -- ============================================================================
 -- Attribute names (must match Tv.Theme.styleNames)
 -- ============================================================================

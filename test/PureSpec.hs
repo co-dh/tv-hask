@@ -11,6 +11,7 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
+import Optics.Core ((^.), (%), (&), (.~))
 import Tv.Types
 import Tv.View
 import Tv.Key (evToKey, tokenizeKeys, KMod(..), mkArrowEv, mkCharEv, mkEnterEv, mkBsEv)
@@ -156,13 +157,13 @@ viewUpdateTests = testGroup "View.update"
       fmap snd (updateView testView SortDesc 1)
         @?= Just (ESort 0 V.empty V.empty False)
   , testCase "row.inc moves to row 1" $
-      fmap (_naCur . _nsRow . _vNav . fst) (updateView testView RowInc 1)
+      fmap ((^. vNav % nsRow % naCur) . fst) (updateView testView RowInc 1)
         @?= Just 1
   , testCase "row.inc effect ENone" $
       fmap snd (updateView testView RowInc 1)
         @?= Just ENone
   , testCase "row.dec at 0 stays" $
-      fmap (_naCur . _nsRow . _vNav . fst) (updateView testView RowDec 1)
+      fmap ((^. vNav % nsRow % naCur) . fst) (updateView testView RowDec 1)
         @?= Just 0
   ]
 
@@ -172,12 +173,12 @@ viewUpdateTests = testGroup "View.update"
 viewStackUpdateTests :: TestTree
 viewStackUpdateTests = testGroup "ViewStack.update"
   [ testCase "stk.swap on singleton keeps same hd path" $
-      fmap (_vPath . _vsHd . fst) (updateViewStack testStack StkSwap)
+      fmap ((^. vsHd % vPath) . fst) (updateViewStack testStack StkSwap)
         @?= Just "data/test.csv"
   , testCase "stk.swap effect ENone" $
       fmap snd (updateViewStack testStack StkSwap) @?= Just ENone
   , testCase "stk.dup tl length = 1" $
-      fmap (length . _vsTl . fst) (updateViewStack testStack StkDup)
+      fmap (length . (^. vsTl) . fst) (updateViewStack testStack StkDup)
         @?= Just 1
   , testCase "stk.dup effect ENone" $
       fmap snd (updateViewStack testStack StkDup) @?= Just ENone
@@ -185,7 +186,7 @@ viewStackUpdateTests = testGroup "ViewStack.update"
       fmap snd (updateViewStack testStack StkPop) @?= Just EQuit
   , testCase "stk.pop with parent pops" $
       let two = vsDup testStack
-      in fmap (length . _vsTl . fst) (updateViewStack two StkPop)
+      in fmap (length . (^. vsTl) . fst) (updateViewStack two StkPop)
            @?= Just 0
   , testCase "stk.pop with parent → ENone" $
       let two = vsDup testStack
@@ -202,16 +203,16 @@ tabNameTests = testGroup "View.tabName"
   [ testCase "table view shows filename" $
       tabName (mkView mockNav "data/sample.parquet") @?= "sample.parquet"
   , testCase "folder view shows absolute path" $
-      let v = (mkView mockNav "/home/user/Tc")
-                { _vNav = mockNav { _nsVkind = VFld "/home/user/Tc" 1 } }
+      let v = mkView mockNav "/home/user/Tc"
+                & vNav % nsVkind .~ VFld "/home/user/Tc" 1
       in tabName v @?= "/home/user/Tc"
   , testCase "meta disp" $
-      let v = testView { _vDisp = "meta"
-                       , _vNav = mockNav { _nsVkind = VColMeta } }
+      let v = testView & vDisp .~ "meta"
+                       & vNav % nsVkind .~ VColMeta
       in tabName v @?= "meta"
   , testCase "freq disp" $
-      let v = testView { _vDisp = "freq"
-                       , _vNav = mockNav { _nsVkind = VFreq (V.singleton "c0") 5 } }
+      let v = testView & vDisp .~ "freq"
+                       & vNav % nsVkind .~ VFreq (V.singleton "c0") 5
       in tabName v @?= "freq"
   ]
 
