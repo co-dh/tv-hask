@@ -16,6 +16,7 @@ module Tv.Join
   , joinUnion
   , joinDiff
   , joinWith
+  , joinH
   ) where
 
 import Data.Text (Text)
@@ -26,8 +27,44 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
 import Tv.Types
-import Tv.Eff (Eff, IOE, (:>), liftIO)
+import Tv.View (vNav, vsTl)
+import Tv.Render (asStack, headNav)
+import qualified Tv.Fzf as Fzf
+import Tv.Eff (Eff, IOE, (:>), use, liftIO)
+import Tv.Handler (Handler, cont, pushOps, setMsg)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
+
+-- | Join top two views via fzf-selected operation. If both views share
+-- non-empty grp columns → all join types available; otherwise only
+-- union/diff. In test mode 'fzfIdx' picks index 0.
+joinH :: Handler
+joinH _ = do
+  tl <- use (asStack % vsTl)
+  case tl of
+    [] -> setMsg "join: need 2 views on stack"
+    (v2:_) -> do
+      curNs <- use headNav
+      let parNs = v2 ^. vNav
+          l     = parNs ^. nsTbl
+          r     = curNs ^. nsTbl
+          leftGrp = parNs ^. nsGrp
+          joinOk = not (V.null leftGrp) && leftGrp == (curNs ^. nsGrp)
+          allOps = [JInner, JLeft, JRight, JUnion, JDiff]
+          availOps = if joinOk then allOps else [JUnion, JDiff]
+          labels  = map joinLabel availOps
+      mIdx <- Fzf.fzfIdx ["--prompt=join> "] labels
+      case mIdx of
+        Nothing -> cont
+        Just idx -> do
+          let op = availOps !! min idx (length availOps - 1)
+          ops' <- joinWith op l r leftGrp
+          pushOps "[join]" VTbl ops'
+  where
+    joinLabel JInner = "join inner"
+    joinLabel JLeft  = "join left"
+    joinLabel JRight = "join right"
+    joinLabel JUnion = "append (union)"
+    joinLabel JDiff  = "remove (diff)"
 
 -- | The five join operations exposed by the fzf menu in Tc/Join.lean.
 data JoinOp = JInner | JLeft | JRight | JUnion | JDiff

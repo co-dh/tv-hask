@@ -4,7 +4,7 @@
 -- SQL against DuckDB; here the input TblOps is already a materialized grid,
 -- so we transpose it directly. Capped at 'maxRows' source rows (each becomes
 -- a column). Original column order is preserved via the "column" name column.
-module Tv.Transpose (mkTransposedOps) where
+module Tv.Transpose (mkTransposedOps, xposeH) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -12,8 +12,19 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 import Tv.Types
-import Tv.Eff (Eff, IOE, (:>), liftIO)
-import Optics.Core ((^.), (%), (&), (.~), (%~))
+import Tv.View (vPath)
+import Tv.Render (headView)
+import Tv.Eff (Eff, IOE, (:>), use, liftIO)
+import Tv.Handler (Handler, pushOps, curOps)
+import Optics.Core ((^.), (%))
+
+-- | Push a transposed-table view.
+xposeH :: Handler
+xposeH _ = do
+  ops  <- curOps
+  path <- use (headView % vPath)
+  ops' <- mkTransposedOps ops
+  pushOps (path <> " [T]") VTbl ops'
 
 -- | Max source rows to transpose; matches Tc.Transpose.maxRows.
 maxRows :: Int

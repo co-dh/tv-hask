@@ -10,18 +10,56 @@ module Tv.Export
   ( exportTable
   , exportFmtExt
   , exportFmtFromText
+  , exportH
   ) where
 
+import Control.Exception (displayException)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import System.FilePath (takeExtension, takeFileName, (</>))
 import System.IO (IOMode(..), withFile, hPutStr)
 
 import Tv.Types
-import Tv.Eff (Eff, IOE, (:>), liftIO)
-import Optics.Core ((^.), (%), (&), (.~), (%~))
+import Tv.View (vPath)
+import Tv.Render (headView)
+import qualified Tv.Util as Util
+import Tv.Eff (Eff, IOE, (:>), use, liftIO, tryEitherE)
+import Tv.Handler (Handler, curOps, setMsg)
+import Optics.Core ((^.), (%))
+
+-- | Export the current table. Arg can be a format name (csv/parquet/json/ndjson)
+-- or a full path. Format name → auto-generates path under ~/.cache/tv/.
+-- Matches Lean export: arg is the fzf-selected format, path is generated.
+exportH :: Handler
+exportH arg
+  | T.null arg = exportH "csv"
+  | otherwise = case exportFmtFromText (T.toLower arg) of
+      Just fmt -> do
+        ops  <- curOps
+        path <- use (headView % vPath)
+        dir  <- Util.logDir
+        let rawBase = takeWhile (/= '.') (takeFileName (T.unpack path))
+            base = if null rawBase then "export" else rawBase
+            ext = T.unpack (exportFmtExt fmt)
+            outPath = dir </> ("tv_export_" ++ base ++ "." ++ ext)
+        r <- tryEitherE (exportTable ops fmt outPath)
+        setMsg $ case r of
+          Left e  -> "export failed: " <> T.pack (displayException e)
+          Right _ -> "exported to " <> T.pack outPath
+      Nothing -> do
+        let outPath = T.unpack arg
+            ext = T.toLower $ T.pack $ drop 1 $ takeExtension outPath
+        case exportFmtFromText ext of
+          Nothing -> setMsg ("export: unknown fmt " <> arg)
+          Just fmt -> do
+            ops <- curOps
+            r <- tryEitherE (exportTable ops fmt outPath)
+            setMsg $ case r of
+              Left e  -> "export failed: " <> T.pack (displayException e)
+              Right _ -> "exported to " <> T.pack outPath
 
 -- | File extension for an 'ExportFmt', matching Tc's @ExportFmt.ext@.
 exportFmtExt :: ExportFmt -> Text

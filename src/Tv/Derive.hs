@@ -11,17 +11,32 @@ module Tv.Derive
   , rebuildWith
   , rebuildOrKeep
   , quoteId
+  , deriveH
   ) where
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
-import Optics.Core ((^.))
+import Optics.Core ((^.), (%))
 
 import Tv.Types
+import Tv.View (vPath)
+import Tv.Render (headView)
 import qualified Tv.Data.DuckDB as DB
-import Tv.Eff (Eff, IOE, (:>), liftIO, tryE)
+import Tv.Eff (Eff, IOE, (:>), use, liftIO, tryE)
+import Tv.Handler (Handler, pushOps, curOps, setMsg)
+
+-- | Derive a new column from @asCmd == "name = expr"@. No-op + message on
+-- parse failure; fail-soft on DuckDB errors (addDerived returns original).
+deriveH :: Handler
+deriveH arg = case parseDerive arg of
+  Nothing -> setMsg "derive: usage 'name = expr'"
+  Just (n, e) -> do
+    ops  <- curOps
+    path <- use (headView % vPath)
+    ops' <- addDerived ops n e
+    pushOps (path <> " =" <> n) VTbl ops'
 
 -- | Parse "name = expr". Splits on the first @" = "@; rejoins the rest
 -- so expressions containing @=@ survive. Returns Nothing if either side

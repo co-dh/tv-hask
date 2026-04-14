@@ -13,17 +13,72 @@
 module Tv.Freq
   ( mkFreqOps
   , filterExpr
+  , freqOpenH
+  , freqFilterH
   ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Optics.Core ((^.))
+import Optics.Core ((^.), (%), (&), (.~))
 
 import Tv.Types
+import Tv.View (vNav, vPath, vsTl)
+import Tv.Render (asStack, headNav, headView)
 import qualified Tv.Derive as Derive
-import Tv.Eff (Eff, IOE, (:>), liftIO)
+import Tv.Eff (Eff, IOE, (:>), use, liftIO)
+import Tv.Handler (Handler, curOps, pushOpsAt, setMsg)
+
+-- | Open a frequency view on (nav.grp ++ current col). The grouping
+-- columns are resolved to indices against the parent table's column
+-- names and passed to 'mkFreqOps'. The new view is pushed with a VFreq
+-- vkind carrying the group column names and total distinct-group count.
+freqOpenH :: Handler
+freqOpenH _ = do
+  ns   <- use headNav
+  path <- use (headView % vPath)
+  let ops     = ns ^. nsTbl
+      names   = ops ^. tblColNames
+      grp     = ns ^. nsGrp
+      curName = curColName ns
+      colNames =
+        if V.elem curName grp then grp else V.snoc grp curName
+      colIdxs = V.mapMaybe (`V.elemIndex` names) colNames
+  if V.null colIdxs
+    then setMsg "freq: no columns selected"
+    else do
+      ops' <- mkFreqOps ops colIdxs
+      let total = ops' ^. tblNRows
+          vk    = VFreq colNames total
+          path' = path <> " [freq " <> T.intercalate "," (V.toList colNames) <> "]"
+      pushOpsAt path' 0 colNames "freq: empty result" vk ops'
+
+-- | Filter the parent table by the current freq-view row. Reads the
+-- group-key values of the focused row, builds a WHERE clause via
+-- 'filterExpr', and calls the parent table's _tblFilter. The filter is
+-- applied to the PARENT table (stack tail), not the freq table itself;
+-- the filtered result is pushed on top of the parent view.
+freqFilterH :: Handler
+freqFilterH _ = do
+  vk  <- use (headNav % nsVkind)
+  case vk of
+    VFreq cols _ -> do
+      tl <- use (asStack % vsTl)
+      case tl of
+        [] -> setMsg "freq.filter: no parent view"
+        (parent:_) -> do
+          freqOps <- curOps
+          row     <- use (headNav % nsRow % naCur)
+          let parentOps = parent ^. vNav % nsTbl
+          expr <- filterExpr freqOps cols row
+          mOps <- liftIO ((parentOps ^. tblFilter) expr)
+          case mOps of
+            Nothing -> setMsg "freq.filter: filter failed"
+            Just ops' ->
+              pushOpsAt (parent ^. vPath) 0 (parent ^. vNav % nsGrp)
+                        "freq.filter: empty result" VTbl ops'
+    _ -> setMsg "freq.filter: not a freq view"
 
 -- | Build a frequency-table TblOps. Given a source table and the column
 -- indices to group on (from @NavState._nsGrp@ + current column), produce
