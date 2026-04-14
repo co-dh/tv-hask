@@ -539,18 +539,16 @@ colTests = testGroup "col"
       V.elem "b" ((ns2 ^. nsHidden)) @?= True
   , testCase "key_cursor: ColInc then ColGrp, cursor visits keyed col" $ do
       -- 3-col table: a b c. Move to b (ColInc), then group b (!).
-      -- After grouping, dispIdxs = [1,0,2] (b first). Cursor at display 1 = col a.
-      -- Then ColDec should move to display 0 = col b (the keyed col).
+      -- After grouping, dispIdxs = [1,0,2] (b first). col.cur stays at
+      -- visual pos 1, so curColIdx = dispIdxs[1] = 0 = col a. ColDec
+      -- moves to display pos 0 = col b (the keyed col).
       let t = mkGridTbl ["a","b","c"] [["1","2","3"]]
           ns0 = mockNavFor t
           Just ns1 = Nav.execNav ColInc 1 ns0   -- cursor at display pos 1 (col b)
           Just ns2 = Nav.execNav ColGrp 1 ns1   -- group b; dispIdxs=[1,0,2]
-      -- After grouping, cursor is still at display pos 1, which now maps to col a
       curColName ns2 @?= "a"
-      -- Navigate left: display pos 0 should be col b (the keyed col)
       let Just ns3 = Nav.execNav ColDec 1 ns2
       curColName ns3 @?= "b"
-      -- Navigate right from pos 0 should reach col a, then c
       let Just ns4 = Nav.execNav ColInc 1 ns3
           Just ns5 = Nav.execNav ColInc 1 ns4
       curColName ns4 @?= "a"

@@ -131,13 +131,13 @@ tests = testGroup "Screen (ported from TestScreen.lean)"
         Just _  -> assertFailure "expected Nothing (halt)"
 
     -- === Cursor tracking after grp toggle (TestScreen.lean:99) ===
-    -- Lean test asserts footer shows "c0/" after l!. Here we verify the
-    -- display-position index moves to 0 because the grp col floats to front.
-    -- Nav.execNav ColGrp doesn't currently adjust nsCol, so the raw
-    -- display position stays 1. Confirm the absolute-column is c1 at least.
-  , testCase "key_cursor: after l! grouped col c1 maps from display index 0" $ do
+    -- After l!, the grouped col floats to display pos 0 while nsCol
+    -- stays at visual pos 1 — matching Lean, which asserts "c0/" in
+    -- the footer (curColIdx = dispIdxs[1] = 0 after reorder).
+  , testCase "key_cursor: after l! grouped col at display 0, curColIdx=0" $ do
       let Just ns' = replayNav [ColInc, ColGrp] mockNav
       (ns' ^. nsDispIdxs) V.! 0 @?= 1
+      curColIdx ns' @?= 0
 
     -- === Meta/Freq/Info via handleCmd (now wired) ===
     -- meta_quit (TestScreen.lean:78): MetaPush then StkPop returns to origin.

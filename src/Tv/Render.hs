@@ -306,7 +306,10 @@ drawApp st =
     ns = st ^. headNav
     tbl = ns ^. nsTbl
     disp = ns ^. nsDispIdxs
-    curCol = ns ^. nsCol % naCur
+    -- Data-order column index of the cursor — matches Lean's render
+    -- which passes nav.curColIdx (not col.cur.val) to C. `isCurCol`
+    -- compares against origIdx (also data-order) so these must agree.
+    curCol = curColIdx ns
     curRow = ns ^. nsRow % naCur
     rowSelSet = IS.fromList $ V.toList $ ns ^. nsRow % naSels
     colSelSet = IS.fromList $ V.toList $ ns ^. nsCol % naSels
@@ -419,13 +422,11 @@ drawApp st =
 
     -- Status line at h-1: colName on left, stats on right, padded in between.
     statsRight =
-      let c = ns ^. nsCol % naCur
-          colNames = tbl ^. tblColNames
-          nCols = V.length colNames
+      let nCols = V.length (tbl ^. tblColNames)
           r = ns ^. nsRow % naCur
           n = tbl ^. tblNRows
           nSel = IS.size rowSelSet
-      in "c" <> tshow c <> "/" <> tshow nCols
+      in "c" <> tshow curCol <> "/" <> tshow nCols
          <> " grp=" <> tshow nKeys
          <> " sel=" <> tshow nSel
          <> " r" <> tshow r <> "/" <> tshow n
