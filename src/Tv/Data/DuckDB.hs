@@ -50,6 +50,8 @@ import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Data.Time.Calendar (Day, addDays, fromGregorian, toGregorian)
+import Text.Printf (printf)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word16, Word32, Word64, Word8)
@@ -393,7 +395,57 @@ readCellAny cv row = case cvType cv of
               Just 0 -> "false"; Just _ -> "true"; Nothing -> ""
   CTFloat -> maybe "" (T.pack . show) (readCellDouble cv row)
   CTStr  -> maybe "" id (readCellText cv row)
-  _      -> maybe "" id (readCellText cv row)  -- fallback; TODO date/time fmt
+  CTDate -> maybe "" id (readCellDate cv row)
+  CTTime -> maybe "" id (readCellTime cv row)
+  CTTimestamp -> maybe "" id (readCellTimestamp cv row)
+  _      -> maybe "" id (readCellText cv row)
+
+-- | DuckDB DATE: int32 days since 1970-01-01. Format YYYY-MM-DD.
+readCellDate :: ColumnView -> Int -> Maybe Text
+readCellDate cv row
+  | row < 0 || row >= cvSize cv || cvRawType cv /= DuckDBTypeDate = Nothing
+  | otherwise = U.unsafePerformIO $ do
+      ok <- isValid (cvValidity cv) row
+      if not ok then pure Nothing else do
+        d <- peekElemOff (castPtr (cvData cv) :: Ptr Int32) row
+        let day = addDays (fromIntegral d) (fromGregorian 1970 1 1)
+            (y, m, dd) = toGregorian day
+        pure (Just (T.pack (printf "%04d-%02d-%02d" y m dd)))
+{-# NOINLINE readCellDate #-}
+
+-- | DuckDB TIME: int64 microseconds since midnight. Format HH:MM:SS.
+readCellTime :: ColumnView -> Int -> Maybe Text
+readCellTime cv row
+  | row < 0 || row >= cvSize cv || cvRawType cv /= DuckDBTypeTime = Nothing
+  | otherwise = U.unsafePerformIO $ do
+      ok <- isValid (cvValidity cv) row
+      if not ok then pure Nothing else do
+        us <- peekElemOff (castPtr (cvData cv) :: Ptr Int64) row
+        let s = us `div` 1000000
+            (h, sm) = (s `div` 3600 `mod` 24, s `mod` 3600)
+            (mi, se) = (sm `div` 60, sm `mod` 60)
+        pure (Just (T.pack (printf "%02d:%02d:%02d" h mi se)))
+{-# NOINLINE readCellTime #-}
+
+-- | DuckDB TIMESTAMP / TIMESTAMP_TZ: int64 microseconds since 1970-01-01.
+-- Format YYYY-MM-DD HH:MM:SS.
+readCellTimestamp :: ColumnView -> Int -> Maybe Text
+readCellTimestamp cv row
+  | row < 0 || row >= cvSize cv = Nothing
+  | rt /= DuckDBTypeTimestamp && rt /= DuckDBTypeTimestampTz = Nothing
+  | otherwise = U.unsafePerformIO $ do
+      ok <- isValid (cvValidity cv) row
+      if not ok then pure Nothing else do
+        us <- peekElemOff (castPtr (cvData cv) :: Ptr Int64) row
+        let totalSec = us `div` 1000000
+            (days, secOfDay) = totalSec `divMod` 86400
+            day = addDays (fromIntegral days) (fromGregorian 1970 1 1)
+            (y, m, dd) = toGregorian day
+            (h, sm) = (secOfDay `div` 3600, secOfDay `mod` 3600)
+            (mi, se) = (sm `div` 60, sm `mod` 60)
+        pure (Just (T.pack (printf "%04d-%02d-%02d %02d:%02d:%02d" y m dd h mi se)))
+  where rt = cvRawType cv
+{-# NOINLINE readCellTimestamp #-}
 
 -- | Zero-copy TblOps backed by DuckDB chunks. Rows are NOT materialized;
 -- tblCellStr into the chunk vector storage on demand via readCellAny.
