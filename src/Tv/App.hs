@@ -233,22 +233,39 @@ folderPushH _ = do
 -- cursor to the first row whose value contains it.  Uses tblFindRow
 -- which the DuckDB ops implement as a SELECT rowid WHERE col LIKE …;
 -- fails-soft with a status message if not found.
+-- | Row search: mirrors Tc/Tc/Filter.lean:42 rowSearch. When arg is
+-- empty (normal `/` key) we fzf-pick one of the current column's
+-- distinct values; when arg is non-empty (direct handleCmd from tests)
+-- we treat it as a literal value. Then jump to the first matching row
+-- and store (col, value) in nsSearch so n/N can step through matches.
 rowSearchH :: Handler
-rowSearchH arg
-  | T.null arg = setMsg "search: empty query"
-  | otherwise = do
-      ns <- use headNav
-      let ops = ns ^. nsTbl
-          ci  = curColIdx ns
-          startRow = ns ^. nsRow % naCur + 1
-      mr <- liftIO ((ops ^. tblFindRow) ci arg startRow True)
-      case mr of
-        Just r  -> do
-          headNav % nsRow % naCur .= r
-          headNav % nsSearch      .= arg
-          asMsg                   .= ""
-          refresh
-        Nothing -> setMsg ("not found: " <> arg)
+rowSearchH arg = do
+  ns <- use headNav
+  let ops = ns ^. nsTbl
+      ci  = curColIdx ns
+      cn  = curColName ns
+  query <-
+    if not (T.null arg) then pure (Just arg)
+    else do
+      vals <- liftIO ((ops ^. tblDistinct) ci)
+      let sorted = sort (V.toList vals)
+          input  = T.intercalate "\n" sorted
+          prompt = "--prompt=/" <> cn <> ": "
+      Fzf.fzf [prompt] input
+  case query of
+    Nothing -> cont
+    Just q
+      | T.null q  -> cont
+      | otherwise -> do
+          let startRow = ns ^. nsRow % naCur + 1
+          mr <- liftIO ((ops ^. tblFindRow) ci q startRow True)
+          case mr of
+            Just r  -> do
+              headNav % nsRow % naCur .= r
+              headNav % nsSearch      .= q
+              asMsg                   .= ""
+              refresh
+            Nothing -> setMsg ("not found: " <> q)
 
 -- | n / N: jump to the next / previous search match. Reuses the
 -- previously-stored query in @nsSearch@ and calls tblFindRow with
@@ -649,9 +666,10 @@ renderTextTable st = do
                                        (if ci < V.length row then row V.! ci else "")
                                <> " " <> sep ci
                              | ci <- [0 .. nVis - 1] ]
-      hdrLine = T.concat [ " " <> T.justifyLeft (max 0 (widths V.! ci - 2)) ' ' (visNames V.! ci)
-                            <> " " <> sep ci
-                          | ci <- [0 .. nVis - 1] ]
+      hdrCell ci =
+        let inner = max 0 (widths V.! ci - 2)
+        in T.take inner (T.justifyLeft inner ' ' (visNames V.! ci))
+      hdrLine = T.concat [ " " <> hdrCell ci <> " " <> sep ci | ci <- [0 .. nVis - 1] ]
       grid = (st ^. asGrid)
       dataLines = map fmtRow (V.toList grid)
       infoLines = if (st ^. asInfoVis)

@@ -21,6 +21,7 @@ import Data.Bits (xor, (.&.))
 import Data.Word (Word8, Word32)
 import qualified Brick
 import qualified Brick.AttrMap as A
+import qualified Brick.Types as Brick (Location(..))
 import qualified Brick.Widgets.Core as C
 import qualified Graphics.Vty as Vty
 import Optics.Core (Lens', (%), (^.), (&), (.~), (%~))
@@ -165,18 +166,21 @@ visColNames st =
       slice = V.slice c0 cn disp
   in V.map (names V.!) slice
 
--- | Per-visible-column display width: max(header, cell lengths) + 2
--- (leading space + trailing space/type char), clamped to [minColW,maxColW].
+-- | Per-visible-column display width: max cell length across visible
+-- rows (NOT including header), clamped to [minColW,maxColW] and +2
+-- for the leading/trailing slot. Mirrors Lean's compute_data_width in
+-- Tc/c/render.c:118 — the header name is intentionally omitted so
+-- wide labels get truncated and shown via the cursor tooltip instead.
 visColWidths :: AppState -> Vector Int
 visColWidths st =
-  let names = visColNames st
-      grid = st ^. asGrid
+  let grid = st ^. asGrid
+      nVis = V.length (visColNames st)
       one ci =
         let cellLen r = if ci < V.length r then T.length (r V.! ci) else 0
-            dw = V.foldl' (\a r -> max a (cellLen r)) (T.length (names V.! ci)) grid
+            dw = V.foldl' (\a r -> max a (cellLen r)) 1 grid
             w  = max minColW dw + 2  -- +2 for leading + trailing slot
         in min maxColW w
-  in V.generate (V.length names) one
+  in V.generate nVis one
 
 -- | Pad/clip a cell to fit a column width. Numeric → right-align, else
 -- left-align. Caller adds leading/trailing space and separator.
@@ -301,7 +305,10 @@ heatFg = Vty.Color240 0
 --   row h-1: status line (left: colName+msg, right: stats)
 drawApp :: AppState -> [Brick.Widget Name]
 drawApp st =
-  [C.vBox ([headerW, gridW, footerW, tabW] ++ infoW ++ [statusW])]
+  let main = C.vBox ([headerW, gridW, footerW, tabW] ++ infoW ++ [statusW])
+  in case tooltipOverlay of
+       Just tt -> [tt, main]
+       Nothing -> [main]
   where
     ns = st ^. headNav
     tbl = ns ^. nsTbl
@@ -358,6 +365,30 @@ drawApp st =
       [ [headerCell ci (names V.! ci), sep ci] | ci <- [0 .. nVis - 1] ]
     headerW = headerRow
     footerW = headerRow
+
+    -- Tooltip overlay for the focused column header when its name gets
+    -- truncated by the (data-only) column width. Mirrors Lean's
+    -- Tc/c/render.c:455 which overlays the full name on the header row
+    -- in STYLE_CURSOR when nameLen > colW. Always extends right (the
+    -- Lean code also supports an extend-left path driven by moveDir,
+    -- which we don't track yet).
+    cursorVisCi =
+      let find i | i >= nVis = Nothing
+                 | isCurCol i = Just i
+                 | otherwise = find (i + 1)
+      in find 0
+    tooltipOverlay = do
+      ci <- cursorVisCi
+      let w = widths V.! ci
+          inner = max 0 (w - 2)
+          fullName = (tbl ^. tblColNames) V.! (origIdx ci)
+      if T.length fullName <= inner then Nothing
+        else
+          -- x = sum of widths + separators before ci, plus leading space.
+          let tipX = sum [ (widths V.! j) + 1 | j <- [0 .. ci - 1] ] + 1
+              tipW = C.withAttr attrCursor (C.txt fullName)
+          in Just $ C.translateBy (Brick.Location (tipX, 0))
+                  $ C.padRight C.Max (C.padBottom C.Max tipW)
 
     -- Data cell: " <value padded>[space]" within width w. Right-align for
     -- numerics. Background is chosen by (row, col) selection/cursor state.
