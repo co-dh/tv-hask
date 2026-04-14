@@ -69,35 +69,47 @@ curOps = use headTbl
 -- IO function for each cell. Called after any handler that could change
 -- the viewport or the underlying table — the single refresh path keeps
 -- drawApp pure and lets it do zero IO.
+--
+-- Mirrors Lean's Tc/c/render.c: compute widths for ALL columns across
+-- the visible row range first, THEN pick which columns fit in visW.
+-- Doing it in this order means the viewport decision uses the same
+-- data-only widths that Render.visColWidths reports, so the cursor
+-- never scrolls the screen while the rightmost visible col is still
+-- actually visible.
 refreshGrid :: Eff AppEff ()
 refreshGrid = do
   st <- get
   let ns   = st ^. headNav
       tbl  = ns ^. nsTbl
       disp = ns ^. nsDispIdxs
-      names = tbl ^. tblColNames
       nr   = tbl ^. tblNRows
       nc   = V.length disp
       curR = ns ^. nsRow % naCur
       curC = ns ^. nsCol % naCur
       visH = max 1 (st ^. asVisH)
       visW = max 1 (st ^. asVisW)
-      -- Estimate per-column display slot width from the header name only.
-      -- Matches visColWidths bounds: max(minColW, len) + 2 (padding) + 1 (sep),
-      -- capped at maxColW + 3.
-      slotW i =
-        let n = T.length (names V.! (disp V.! i))
-            w = max minColW n + 2 + 1
-        in min (maxColW + 3) w
-      -- nVisFit: how many columns fit in visW chars starting at c.
+      adjOff cur off page = clamp 0 (max 1 (cur + 1)) (max (cur + 1 - page) (min off cur))
+      r0 = adjOff curR (st ^. asVisRow0) visH
+      h = min visH (max 0 (nr - r0))
+  -- Fetch cells for ALL columns in the visible row range. For wide
+  -- tables this is O(nc * h), matching Lean's compute_data_width
+  -- which also scans the visible rows for every column.
+  fullGrid <- liftIO $ V.generateM h $ \ri ->
+                V.generateM nc $ \dispCi ->
+                  (tbl ^. tblCellStr) (r0 + ri) (disp V.! dispCi)
+  let -- Actual data-only width for col at dispIdxs position dispCi.
+      -- max over visible cells, floor at 1, then max(minColW, .) + 2.
+      widthAt dispCi =
+        let cellLen r = if dispCi < V.length r then T.length (r V.! dispCi) else 0
+            dw = V.foldl' (\a r -> max a (cellLen r)) 1 fullGrid
+        in min maxColW (max minColW dw + 2)
+      slotW i = widthAt i + 1  -- +1 for column separator
       nVisFit c = go c 0
         where
           go i used
             | i >= nc = i - c
             | used + slotW i > visW && i > c = i - c
             | otherwise = go (i + 1) (used + slotW i)
-      -- Walk left from `last` until adding one more column would overflow
-      -- visW; the resulting index is the leftmost c0 keeping `last` visible.
       shrinkLeft lastI =
         let go i used
               | i <= 0 = 0
@@ -113,12 +125,8 @@ refreshGrid = do
         | curC > lastVisAt prevC0Clamped = shrinkLeft curC
         | otherwise        = prevC0Clamped
       visColN = nVisFit newC0
-      adjOff cur off page = clamp 0 (max 1 (cur + 1)) (max (cur + 1 - page) (min off cur))
-      r0 = adjOff curR (st ^. asVisRow0) visH
-      h = min visH (max 0 (nr - r0))
-  grid <- liftIO $ V.generateM h $ \ri ->
-            V.generateM visColN $ \ci ->
-              (tbl ^. tblCellStr) (r0 + ri) (disp V.! (newC0 + ci))
+      -- Slice each row to the visible column range.
+      grid = V.map (\row -> V.slice newC0 (min visColN (V.length row - newC0)) row) fullGrid
   asGrid    .= grid
   asVisRow0 .= r0
   asVisCol0 .= newC0

@@ -476,8 +476,12 @@ handleEvent (Brick.VtyEvent ev@(Vty.EvKey k mods)) = do
     Just c -> case (k, mods) of
       (Vty.KEsc, _) -> Brick.put (st & asPendingCmd .~ Nothing & asCmd .~ "")
       (Vty.KEnter, _) -> do
-        -- Commit: dispatch with the prompt buffer as arg.
-        r <- liftIO $ handleCmd c (st ^. asCmd) (st & asPendingCmd .~ Nothing & asCmd .~ "")
+        -- Commit: dispatch with the prompt buffer as arg. Run through
+        -- suspendAndResume' so handlers that call Fzf.fzf (rowFilter
+        -- with empty input, rowSearch with empty input) can grab
+        -- /dev/tty while the brick display is paused.
+        let st0 = st & asPendingCmd .~ Nothing & asCmd .~ ""
+        r <- BM.suspendAndResume' (handleCmd c (st ^. asCmd) st0)
         case r of
           Nothing -> BM.halt
           Just st' -> Brick.put (st' & asPendingCmd .~ Nothing & asCmd .~ "")
