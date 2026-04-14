@@ -24,11 +24,11 @@ import qualified Data.Vector as V
 import Optics.Core ((^.), (%), (&), (.~))
 
 import Tv.Types
-import Tv.View (fromTbl, vNav, vPath, vsPush, vsTl)
+import Tv.View (vNav, vPath, vsTl)
 import Tv.Render (asStack, headNav, headView)
 import qualified Tv.Derive as Derive
-import Tv.Eff (Eff, IOE, (:>), use, (%=), liftIO)
-import Tv.Handler (Handler, cont, curOps, refresh, setMsg)
+import Tv.Eff (Eff, IOE, (:>), use, liftIO)
+import Tv.Handler (Handler, curOps, pushOpsAt, setMsg)
 
 -- | Open a frequency view on (nav.grp ++ current col). The grouping
 -- columns are resolved to indices against the parent table's column
@@ -52,9 +52,7 @@ freqOpenH _ = do
       let total = ops' ^. tblNRows
           vk    = VFreq colNames total
           path' = path <> " [freq " <> T.intercalate "," (V.toList colNames) <> "]"
-      case fromTbl ops' path' 0 colNames 0 of
-        Nothing -> setMsg "freq: empty result"
-        Just v  -> asStack %= vsPush (v & vNav % nsVkind .~ vk) >> refresh
+      pushOpsAt path' 0 colNames "freq: empty result" vk ops'
 
 -- | Filter the parent table by the current freq-view row. Reads the
 -- group-key values of the focused row, builds a WHERE clause via
@@ -78,9 +76,8 @@ freqFilterH _ = do
           case mOps of
             Nothing -> setMsg "freq.filter: filter failed"
             Just ops' ->
-              case fromTbl ops' (parent ^. vPath) 0 (parent ^. vNav % nsGrp) 0 of
-                Nothing -> setMsg "freq.filter: empty result"
-                Just v  -> asStack %= vsPush v >> refresh
+              pushOpsAt (parent ^. vPath) 0 (parent ^. vNav % nsGrp)
+                        "freq.filter: empty result" VTbl ops'
     _ -> setMsg "freq.filter: not a freq view"
 
 -- | Build a frequency-table TblOps. Given a source table and the column

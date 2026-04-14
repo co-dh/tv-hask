@@ -1,15 +1,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
--- | Tv.Loader — file/DB/folder open pipeline.
---
--- Resolves a path to a 'View': directories → folder TblOps via
--- 'Tv.Folder'; files → DuckDB read_* / ATTACH via
--- 'Tv.FileFormat' when applicable, else a PRQL chain through
--- 'Tv.Data.DuckDB'; database files → attached table picker via
--- 'enterDbTable'. Gzip + plain-text fallbacks included.
---
--- 'openPath' is an 'Eff' handler helper that pushes the new view
--- onto the stack; 'openInitialView' is the CLI entry that just
--- returns a 'View' without touching state.
+-- | File/DB/folder open pipeline: resolve a path to a 'View'.
+-- Directories → folder listing; files → DuckDB read_* / ATTACH for
+-- recognized formats or a PRQL auto-detect chain for everything else;
+-- database files → attached-table picker via 'enterDbTable'.
+-- 'openPath' pushes into the stack; 'openInitialView' returns a View
+-- for the CLI startup path.
 module Tv.Loader
   ( openPath
   , openInitialView
@@ -219,7 +214,9 @@ openPath p = do
           mv <- tryEitherE (FF.openFile p)
           case mv of
             Right (Just v) -> asStack %= vsPush v >> refresh
-            _ -> setMsg ("open failed: " <> T.pack p)
+            Right Nothing  -> setMsg ("open failed: " <> T.pack p)
+            Left e         -> setMsg ("open failed: " <> T.pack p <> ": "
+                                        <> T.pack (displayException e))
         else do
           r <- liftIO (loadFile p)
           case r of

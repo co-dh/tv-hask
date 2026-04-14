@@ -1,10 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
--- | App: brick application wiring — appDraw, appHandleEvent, appAttrMap.
--- Handler dispatch uses a Map Cmd Handler combinator pattern. Feature
--- handlers live in their respective modules (Tv.Freq, Tv.Split,
--- Tv.Folder, …); App.hs only wires them into 'handlerMap' and hosts
--- the cross-feature glue (nav/stack/search handlers, Brick event
--- dispatch, CLI entry point, file loaders).
+-- | App: brick application wiring, handler dispatch table, CLI entry.
 module Tv.App where
 
 import Data.Text (Text)
@@ -19,7 +14,8 @@ import qualified Graphics.Vty as Vty
 import qualified Graphics.Vty.Platform.Unix as VtyUnix
 import System.Environment (getArgs)
 import System.Directory (canonicalizePath, getCurrentDirectory)
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (takeDirectory, takeExtension, (</>))
+import Data.Char (toLower)
 import System.IO (hPutStrLn, stderr, hFlush, stdout)
 import Control.Exception (SomeException, displayException)
 import Control.Monad (when)
@@ -42,7 +38,7 @@ import Tv.Eff
   ( Eff, AppEff, runEff, runAppEff, tryEitherE
   , use, (.=), (%=)
   )
-import Tv.Handler (Handler, cont, refresh, setMsg, withNav, pushOps, curOps, refreshGrid)
+import Tv.Handler (Handler, cont, refresh, setMsg, withNav, pushOps, pushOpsAt, curOps, refreshGrid)
 import Tv.Loader (openPath, openInitialView, loadFolder, enterDbTable)
 import Tv.Theme (initTheme, ThemeState(..), themeName, themes, applyTheme, tsStyles, tsThemeIdx)
 import qualified Tv.Theme
@@ -67,12 +63,6 @@ import qualified Tv.Sparkline as Sparkline
 import Data.IORef
 import Data.Word (Word8)
 import qualified Tv.AppF as AppF
-
--- ============================================================================
--- Handler combinators (Handler/cont/refresh/setMsg/withNav/pushOps/curOps/refreshGrid)
--- live in 'Tv.Handler' so feature modules can import them without pulling in
--- all of Tv.App.
--- ============================================================================
 
 -- | Quit handler — returning False signals halt.
 quitH :: Handler
@@ -186,9 +176,7 @@ excludeH _ = do
                 else V.snoc hiddenIdxs ci
   ops' <- liftIO ((ops ^. tblHideCols) allIdxs)
   path <- use (headView % vPath)
-  case fromTbl ops' path 0 V.empty 0 of
-    Nothing -> setMsg "exclude: empty result"
-    Just v  -> asStack %= vsPush v >> refresh
+  pushOpsAt path 0 V.empty "exclude: empty result" VTbl ops'
 
 -- | Set the heatmap mode on the head view's NavState.
 heatH :: Word8 -> Handler
@@ -227,26 +215,18 @@ stkSwapH _ = asStack %= vsSwap >> refresh
 stkDupH :: Handler
 stkDupH _ = asStack %= vsDup >> refresh
 
--- | Push a fresh folder view at the current directory. Unlike
--- 'folderEnterH' (which follows the row under the cursor into either a
--- file or a subdirectory), this always opens a *new* folder view at
--- the same path — useful for forking the browser into another stack
--- slot. Kept in App.hs because the non-folder fallback calls
--- 'openPath', and moving it to 'Tv.Folder' would create a cycle
--- through 'Tv.Loader'.
+-- | Push a fresh folder view at the current directory (or the
+-- directory of the current file if we're in a non-folder view).
 folderPushH :: Handler
 folderPushH _ = do
   vk <- use (headNav % nsVkind)
   case vk of
     VFld base depth -> do
       ops <- Folder.listFolderDepth (T.unpack base) depth
-      case fromTbl ops base 0 V.empty 0 of
-        Nothing -> setMsg "folder.push: empty"
-        Just v  -> asStack %= vsPush (v & vNav % nsVkind .~ VFld base depth) >> refresh
+      pushOps base (VFld base depth) ops
     _ -> do
       path <- use (headView % vPath)
-      let dir = T.pack (takeDirectory (T.unpack path))
-      absDir <- liftIO (canonicalizePath (T.unpack dir))
+      absDir <- liftIO (canonicalizePath (takeDirectory (T.unpack path)))
       openPath absDir
 
 -- | Search the current column for the buffer in @asCmd@ and jump the row
@@ -389,12 +369,12 @@ folderEnterH _ = do
       if T.null name then cont
       else if isDbFile (T.unpack base) && name /= ".."
         then enterDbTable (T.unpack base) name
-        else openPath (T.unpack base ++ "/" ++ T.unpack name)
+        else openPath (T.unpack base </> T.unpack name)
     _ -> cont
   where
     isDbFile p =
-      let ext = dropWhile (/= '.') (reverse p)
-      in reverse ext `elem` [".duckdb", ".db", ".sqlite", ".sqlite3"]
+      let ext = map toLower (takeExtension p)
+      in ext `elem` [".duckdb", ".db", ".sqlite", ".sqlite3"]
 
 -- | Parent: replace current folder view with one rooted at parent dir.
 -- Replaces in-place (doesn't push) so backspace chain works correctly.

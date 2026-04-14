@@ -23,15 +23,15 @@ import qualified Data.Set as Set
 
 import Tv.Types
 import Tv.View (vNav, vPath, vsHd, vsTl)
-import Tv.Render (asStack, headNav, headTbl, headView)
+import Tv.Render (asStack, headNav, headView)
 import Tv.Eff (Eff, IOE, (:>), use, (.=), (%=), liftIO)
-import Tv.Handler (Handler, pushOps, refresh, refreshGrid, setMsg)
+import Tv.Handler (Handler, curOps, pushOps, refresh, refreshGrid, setMsg)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Push a column-metadata view computed from the current table.
 metaPushH :: Handler
 metaPushH _ = do
-  tbl  <- use headTbl
+  tbl  <- curOps
   path <- use (headView % vPath)
   ops' <- mkMetaOps tbl
   pushOps (path <> " [meta]") VColMeta ops'

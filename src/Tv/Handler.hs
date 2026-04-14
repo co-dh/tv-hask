@@ -1,35 +1,28 @@
--- | Tv.Handler — handler type and shared combinators.
---
--- Feature modules import this to define their command handlers; App.hs
--- imports it to assemble 'handlerMap'. Keeping the combinators here
--- (instead of App.hs) lets each feature live in its own file without
--- circular imports through App.
+-- | Handler type + shared combinators over 'AppEff'. Feature modules
+-- call these to plug command handlers into the dispatch table.
 module Tv.Handler
-  ( -- * Handler type
-    Handler
-    -- * Combinators
+  ( Handler
   , cont
   , refresh
   , setMsg
   , withNav
   , pushOps
+  , pushOpsAt
   , curOps
-    -- * Grid refresh
   , refreshGrid
   ) where
 
 import Data.Text (Text)
+import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Optics.Core ((^.), (%), (&), (.~))
 
 import Tv.Types
-import Tv.View (View, fromTbl, vNav, vsPush)
+import Tv.View (fromTbl, vNav, vsPush)
 import Tv.Render (asStack, asGrid, asVisRow0, asVisCol0, asVisH, asVisW, asMsg, headNav, headTbl)
 import Tv.Eff (Eff, AppEff, get, use, (.=), (%=), liftIO)
 
 -- | Handler: @arg → Eff AppEff Bool@. True = continue, False = halt.
--- Handlers read/write 'AppState' via the 'State' effect; use 'use',
--- @(.=)@, @(%=)@ from 'Tv.Eff' with optics.
 type Handler = Text -> Eff AppEff Bool
 
 -- | Continue signal (True).
@@ -52,10 +45,17 @@ withNav f _ = do
     Nothing  -> cont
     Just ns' -> headNav .= ns' >> refresh
 
--- | Build a fresh View from a newly-produced TblOps and push onto stack.
+-- | Push a new View (start col 0, no grp) onto the stack. Sets the
+-- view kind and refreshes. Emits "empty result" on 'fromTbl' failure.
 pushOps :: Text -> ViewKind -> TblOps -> Eff AppEff Bool
-pushOps path vk ops = case fromTbl ops path 0 V.empty 0 of
-  Nothing -> setMsg "empty result"
+pushOps path = pushOpsAt path 0 V.empty "empty result"
+
+-- | Like 'pushOps' but with explicit @startCol@, @grp@, and error
+-- message. Used by freq/split/exclude/freq-filter which need a
+-- non-default start column or carry grouping through.
+pushOpsAt :: Text -> Int -> Vector Text -> Text -> ViewKind -> TblOps -> Eff AppEff Bool
+pushOpsAt path startCol grp emptyMsg vk ops = case fromTbl ops path startCol grp 0 of
+  Nothing -> setMsg emptyMsg
   Just v  -> asStack %= vsPush (v & vNav % nsVkind .~ vk) >> refresh
 
 -- | Read the top TblOps from state.

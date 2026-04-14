@@ -15,12 +15,12 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Tv.Types
-import Tv.View (fromTbl, vNav, vPath, vsPush)
-import Tv.Render (asStack, headNav, headView)
+import Tv.View (vPath)
+import Tv.Render (headNav, headView)
 import Tv.Derive (rebuildWith, rebuildOrKeep, quoteId)
-import Tv.Eff (Eff, IOE, (:>), use, (%=), liftIO, tryE)
-import Tv.Handler (Handler, curOps, refresh, setMsg)
-import Optics.Core ((^.), (%), (&), (.~))
+import Tv.Eff (Eff, IOE, (:>), use, liftIO, tryE)
+import Tv.Handler (Handler, curOps, pushOpsAt, setMsg)
+import Optics.Core ((^.), (%))
 
 -- | Split the current column by regex taken from @asCmd@.
 splitH :: Handler
@@ -34,11 +34,8 @@ splitH arg
           colName = curColName ns
           origNc = V.length (ops ^. tblColNames)
       ops' <- splitColumn ops ci arg
-      let startCol = origNc
-          path' = path <> " :" <> colName
-      case fromTbl ops' path' startCol V.empty 0 of
-        Nothing -> setMsg "split: empty result"
-        Just v  -> asStack %= vsPush (v & vNav % nsVkind .~ VTbl) >> refresh
+      pushOpsAt (path <> " :" <> colName) origNc V.empty
+                "split: empty result" VTbl ops'
 
 -- | Split the column at @colIdx@ by regex @pat@ into multiple new
 -- columns. Returns the original TblOps if the column isn't a string,

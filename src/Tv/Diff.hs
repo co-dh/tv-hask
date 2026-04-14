@@ -21,9 +21,9 @@ import qualified Data.Set as Set
 
 import Tv.Types
 import Tv.View (vNav, vsTl)
-import Tv.Render (asStack, headTbl)
+import Tv.Render (asStack)
 import Tv.Eff (Eff, IOE, (:>), use, liftIO)
-import Tv.Handler (Handler, pushOps, setMsg)
+import Tv.Handler (Handler, curOps, pushOps, setMsg)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
 
 -- | Diff top two views on the stack. Requires at least two views.
@@ -33,7 +33,7 @@ diffH _ = do
   case tl of
     [] -> setMsg "diff: need 2 views on stack"
     (v2:_) -> do
-      l <- use headTbl
+      l <- curOps
       let r = v2 ^. vNav % nsTbl
       ops' <- diffTables l r
       pushOps "[diff]" VTbl ops'
