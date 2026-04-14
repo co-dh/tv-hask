@@ -13,13 +13,16 @@ module Tv.Handler
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Optics.Core ((^.), (%), (&), (.~))
 
 import Tv.Types
 import Tv.View (fromTbl, vNav, vsPush)
-import Tv.Render (asStack, asGrid, asVisRow0, asVisCol0, asVisH, asVisW, asMsg, headNav, headTbl)
+import Tv.Render
+  ( asStack, asGrid, asVisRow0, asVisCol0, asVisColN, asVisH, asVisW
+  , asMsg, headNav, headTbl, maxColW, minColW )
 import Tv.Eff (Eff, AppEff, get, use, (.=), (%=), liftIO)
 
 -- | Handler: @arg → Eff AppEff Bool@. True = continue, False = halt.
@@ -72,20 +75,51 @@ refreshGrid = do
   let ns   = st ^. headNav
       tbl  = ns ^. nsTbl
       disp = ns ^. nsDispIdxs
+      names = tbl ^. tblColNames
       nr   = tbl ^. tblNRows
       nc   = V.length disp
       curR = ns ^. nsRow % naCur
       curC = ns ^. nsCol % naCur
       visH = max 1 (st ^. asVisH)
       visW = max 1 (st ^. asVisW)
+      -- Estimate per-column display slot width from the header name only.
+      -- Matches visColWidths bounds: max(minColW, len) + 2 (padding) + 1 (sep),
+      -- capped at maxColW + 3.
+      slotW i =
+        let n = T.length (names V.! (disp V.! i))
+            w = max minColW n + 2 + 1
+        in min (maxColW + 3) w
+      -- nVisFit: how many columns fit in visW chars starting at c.
+      nVisFit c = go c 0
+        where
+          go i used
+            | i >= nc = i - c
+            | used + slotW i > visW && i > c = i - c
+            | otherwise = go (i + 1) (used + slotW i)
+      -- Walk left from `last` until adding one more column would overflow
+      -- visW; the resulting index is the leftmost c0 keeping `last` visible.
+      shrinkLeft lastI =
+        let go i used
+              | i <= 0 = 0
+              | used + slotW (i - 1) > visW = i
+              | otherwise = go (i - 1) (used + slotW (i - 1))
+        in go lastI (slotW lastI)
+      prevC0 = st ^. asVisCol0
+      prevC0Clamped = clamp 0 (max 1 nc) prevC0
+      lastVisAt c = c + max 0 (nVisFit c - 1)
+      newC0
+        | nc == 0          = 0
+        | curC < prevC0Clamped = curC
+        | curC > lastVisAt prevC0Clamped = shrinkLeft curC
+        | otherwise        = prevC0Clamped
+      visColN = nVisFit newC0
       adjOff cur off page = clamp 0 (max 1 (cur + 1)) (max (cur + 1 - page) (min off cur))
       r0 = adjOff curR (st ^. asVisRow0) visH
-      c0 = adjOff curC (st ^. asVisCol0) visW
       h = min visH (max 0 (nr - r0))
-      w = min visW (max 0 (nc - c0))
   grid <- liftIO $ V.generateM h $ \ri ->
-            V.generateM w $ \ci ->
-              (tbl ^. tblCellStr) (r0 + ri) (disp V.! (c0 + ci))
+            V.generateM visColN $ \ci ->
+              (tbl ^. tblCellStr) (r0 + ri) (disp V.! (newC0 + ci))
   asGrid    .= grid
   asVisRow0 .= r0
-  asVisCol0 .= c0
+  asVisCol0 .= newC0
+  asVisColN .= visColN

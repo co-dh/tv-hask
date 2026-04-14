@@ -1,6 +1,7 @@
 # Build artifacts
 dist-newstyle/
 dist/
+cabal.project.local
 .ghc.environment.*
 *.hi
 *.o

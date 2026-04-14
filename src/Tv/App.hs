@@ -511,6 +511,7 @@ initialStateSized v tw th = do
         , _asGrid = V.empty
         , _asVisRow0 = 0
         , _asVisCol0 = 0
+        , _asVisColN = 0
         , _asVisH = max 1 (th - 4)
         , _asVisW = max 1 tw
         , _asStyles = tsStyles theme

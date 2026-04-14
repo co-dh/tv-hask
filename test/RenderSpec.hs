@@ -59,6 +59,7 @@ mockState = do
         , _asGrid = V.empty
         , _asVisRow0 = 0
         , _asVisCol0 = 0
+        , _asVisColN = 3
         , _asVisH = 5
         , _asVisW = 3
         , _asStyles = V.empty

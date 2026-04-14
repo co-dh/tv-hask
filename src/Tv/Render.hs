@@ -61,9 +61,10 @@ data AppState = AppState
   , _asPendingCmd :: !(Maybe Cmd)        -- Just c = prompt mode, pending dispatch of c
   , _asGrid     :: !(Vector (Vector Text))  -- [row][col] pre-fetched cells, visible window
   , _asVisRow0  :: !Int                  -- first visible row (viewport origin row)
-  , _asVisCol0  :: !Int                  -- first visible col
-  , _asVisH     :: !Int                  -- visible row count
-  , _asVisW     :: !Int                  -- visible col count
+  , _asVisCol0  :: !Int                  -- first visible col (in dispIdxs order)
+  , _asVisColN  :: !Int                  -- number of visible columns starting at _asVisCol0
+  , _asVisH     :: !Int                  -- terminal row capacity (lines)
+  , _asVisW     :: !Int                  -- terminal column capacity (characters)
   , _asStyles   :: !(Vector (Maybe Vty.Color, Maybe Vty.Color))  -- theme styles keyed by index; Nothing = terminal default
   , _asInfoVis  :: !Bool                 -- info overlay on current column (name/type/index)
   } deriving (Show)
@@ -158,9 +159,10 @@ visColNames st =
   let ns = st ^. headNav
       names = ns ^. nsTbl % tblColNames
       disp = ns ^. nsDispIdxs
-      slice = V.slice (min (V.length disp) (st ^. asVisCol0))
-                      (min (st ^. asVisW) (max 0 (V.length disp - st ^. asVisCol0)))
-                      disp
+      n = V.length disp
+      c0 = min n (st ^. asVisCol0)
+      cn = max 0 (min (st ^. asVisColN) (n - c0))
+      slice = V.slice c0 cn disp
   in V.map (names V.!) slice
 
 -- | Per-visible-column display width: max(header, cell lengths) + 2

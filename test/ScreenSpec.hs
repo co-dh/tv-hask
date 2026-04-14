@@ -43,7 +43,7 @@ mkScreen = do
     { _asStack = stack, _asThemeIdx = 0, _asTestKeys = []
     , _asMsg = "", _asErr = "", _asCmd = "", _asPendingCmd = Nothing
     , _asGrid = V.empty
-    , _asVisRow0 = 0, _asVisCol0 = 0, _asVisH = 5, _asVisW = 3
+    , _asVisRow0 = 0, _asVisCol0 = 0, _asVisColN = 0, _asVisH = 5, _asVisW = 3
     , _asStyles = V.empty, _asInfoVis = False
     }
 
