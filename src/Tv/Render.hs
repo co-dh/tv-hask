@@ -385,10 +385,13 @@ drawApp st =
       if T.length fullName <= inner then Nothing
         else
           -- x = sum of widths + separators before ci, plus leading space.
+          -- translateBy without padding — the layer is exactly the size
+          -- of the tooltip text (1 row × nameLen cols), so it overlays
+          -- only the truncated header cell and doesn't blank out the
+          -- rest of the screen below/right of it.
           let tipX = sum [ (widths V.! j) + 1 | j <- [0 .. ci - 1] ] + 1
-              tipW = C.withAttr attrCursor (C.txt fullName)
           in Just $ C.translateBy (Brick.Location (tipX, 0))
-                  $ C.padRight C.Max (C.padBottom C.Max tipW)
+                  $ C.withAttr attrCursor (C.txt fullName)
 
     -- Data cell: " <value padded>[space]" within width w. Right-align for
     -- numerics. Background is chosen by (row, col) selection/cursor state.
