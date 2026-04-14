@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
 -- | Tv.Eff — canonical effect stack for every app-level function.
 --
@@ -27,6 +28,7 @@ module Tv.Eff
   , (%=)
     -- * Error helpers
   , tryE
+  , tryEitherE
     -- * Re-exports from effectful
   , Eff
   , IOE
@@ -44,7 +46,8 @@ module Tv.Eff
 import Control.Exception (SomeException)
 import Control.Monad.IO.Class (liftIO)
 import Effectful (Eff, IOE, runEff, (:>))
-import Effectful.Error.Static (Error, catchError, runErrorNoCallStack, throwError)
+import qualified Effectful.Exception as EE
+import Effectful.Error.Static (Error, runErrorNoCallStack, throwError)
 import Effectful.State.Static.Local (State, get, gets, modify, put, runState)
 import Optics.Core (A_Getter, A_Setter, Is, Optic')
 import qualified Optics.Core as O
@@ -97,8 +100,17 @@ l %= f = modify (O.over l f)
 -- Error helpers
 -- ============================================================================
 
--- | Run an action; on error, return 'Nothing'. Equivalent to the
+-- | Catch any synchronous IO exception escaping from @liftIO@ inside the
+-- action and collapse to 'Nothing'. Replaces the
 -- @try \@SomeException@ + @either (const Nothing) Just@ pattern that
--- litters the pre-effectful codebase.
-tryE :: Error SomeException :> es => Eff es a -> Eff es (Maybe a)
-tryE act = catchError (Just <$> act) (\_ (_ :: SomeException) -> pure Nothing)
+-- litters the pre-effectful codebase. Uses 'Effectful.Exception.try'
+-- (not 'Error') because the exceptions we care about live in raw 'IO',
+-- not in the 'Error' effect.
+tryE :: IOE :> es => Eff es a -> Eff es (Maybe a)
+tryE = fmap (either (\(_ :: SomeException) -> Nothing) Just) . EE.try
+
+-- | Like 'tryE' but returns the caught exception on failure. Use this
+-- when the failure message itself matters — e.g. user-visible status
+-- bars that want to surface @displayException e@.
+tryEitherE :: IOE :> es => Eff es a -> Eff es (Either SomeException a)
+tryEitherE = EE.try
