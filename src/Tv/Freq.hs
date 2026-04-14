@@ -23,7 +23,7 @@ import Optics.Core ((^.))
 
 import Tv.Types
 import qualified Tv.Derive as Derive
-import Tv.Eff (Eff, IOE, (:>), liftIO, tryE)
+import Tv.Eff (Eff, IOE, (:>), liftIO)
 
 -- | Build a frequency-table TblOps. Given a source table and the column
 -- indices to group on (from @NavState._nsGrp@ + current column), produce
@@ -48,8 +48,7 @@ mkFreqOps src colIdxs
             "SELECT " <> groupSql <> ", COUNT(*) AS count FROM ("
               <> sub <> ") GROUP BY " <> groupSql
               <> " ORDER BY count DESC LIMIT 1000"
-      r <- tryE (Derive.rebuildWith src wrap)
-      pure (maybe src id r)
+      Derive.rebuildOrKeep src wrap
   where
     names = src ^. tblColNames
     nc    = V.length names

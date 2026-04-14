@@ -7,6 +7,7 @@ module Tv.StatusAgg
   , update
   ) where
 
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -68,5 +69,5 @@ update :: IOE :> es => Cache -> TblOps -> Text -> Int -> Eff es Cache
 update cache@(cachedPath, cachedCol, _) tbl path colIdx =
   if cachedPath == path && cachedCol == colIdx then pure cache
   else do
-    agg' <- maybe "" id <$> tryE (compute tbl colIdx)
+    agg' <- fromMaybe "" <$> tryE (compute tbl colIdx)
     pure (path, colIdx, agg')

@@ -29,6 +29,7 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Char (toLower)
 import Control.Applicative ((<|>))
 import Data.List (find, isSuffixOf, sort)
+import Data.Maybe (fromMaybe)
 import qualified Data.Text.IO as TIO
 import Tv.Types
 import Tv.View
@@ -42,7 +43,7 @@ import Tv.CmdConfig (keyLookup, CmdInfo(..))
 import qualified Tv.CmdConfig as CC
 import Tv.Eff
   ( Eff, AppEff, runEff, runAppEff, tryE, tryEitherE
-  , get, gets, put, modify, use, (.=), (%=)
+  , get, use, (.=), (%=)
   )
 import Tv.Theme (initTheme, toAttrMap, ThemeState(..), themeName, themes, applyTheme, tsStyles, tsThemeIdx)
 import qualified Tv.Theme
@@ -76,9 +77,8 @@ import qualified Tv.AppF as AppF
 -- ============================================================================
 
 -- | Handler: @arg → Eff AppEff Bool@. True = continue, False = halt.
--- State is read/written via the 'State' 'AppState' effect — handlers no
--- longer thread the state as an explicit parameter. Use 'use',
--- @(.=)@, @(%=)@ from 'Tv.Eff' to read and write via optics.
+-- Handlers read/write 'AppState' via the 'State' effect; use 'use',
+-- @(.=)@, @(%=)@ from 'Tv.Eff' with optics.
 type Handler = Text -> Eff AppEff Bool
 
 -- | Continue signal (True).
@@ -244,7 +244,7 @@ runCmdMenu st = do
       Nothing -> pure (st & asMsg .~ "unknown cmd: " <> h)
       Just c -> do
         r <- handleCmd c "" st
-        pure (maybe st id r)
+        pure (fromMaybe st r)
 
 -- | Build a fresh View from a newly-produced TblOps and push onto stack.
 pushOps :: Text -> ViewKind -> TblOps -> Eff AppEff Bool
@@ -255,10 +255,6 @@ pushOps path vk ops = case fromTbl ops path 0 V.empty 0 of
 -- | Read the top TblOps from state.
 curOps :: Eff AppEff TblOps
 curOps = use headTbl
-
--- | Read the top View from state.
-curView :: Eff AppEff View
-curView = use headView
 
 -- | Swap top two views in the stack.
 stkSwapH :: Handler
@@ -840,23 +836,23 @@ refreshGrid = do
   asVisRow0 .= r0
   asVisCol0 .= c0
 
--- | Dispatch: (cmdinfo, arg) → Eff Bool. Returns False to quit, True to
--- continue. Looks up 'handlerMap', falls back to no-op + continue.
+-- | Dispatch @cmdinfo@ + @arg@ to the handler registered in 'handlerMap'.
+-- Returns False to quit, True to continue.
 dispatch :: CmdInfo -> Text -> Eff AppEff Bool
 dispatch ci arg = case Map.lookup (ciCmd ci) handlerMap of
   Nothing -> cont
   Just h  -> h arg
 
 -- | IO-facing wrapper around an Eff action. Runs under 'runAppEff' and
--- collapses exceptions to an @asErr@ message. This is the boundary
--- where Brick and tests cross into the effect world.
+-- collapses exceptions to an @asErr@ message on the pre-dispatch state
+-- so a partially-mutated state from a crashing handler is discarded.
 runDispatchIO :: AppState -> Eff AppEff Bool -> IO (Maybe AppState)
 runDispatchIO st act = do
   (r, st') <- runAppEff st act
   case r of
     Right True  -> pure (Just st')
     Right False -> pure Nothing
-    Left e      -> pure (Just (st' & asErr .~ T.pack (displayException e)))
+    Left e      -> pure (Just (st & asErr .~ T.pack (displayException e)))
 
 -- | Convenience: dispatch by Cmd + arg. IO-facing for tests and
 -- 'suspendAndResume' callbacks.
@@ -1370,7 +1366,7 @@ loopProg i = go
         Just key
           | T.null key -> go
           | otherwise -> do
-              ctx <- gets (\s -> vkCtxStr (s ^. headNav % nsVkind))
+              ctx <- vkCtxStr <$> use (headNav % nsVkind)
               mci <- keyLookup key ctx
               case mci of
                 Nothing -> go

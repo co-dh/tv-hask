@@ -9,9 +9,11 @@ module Tv.Derive
   ( addDerived
   , parseDerive
   , rebuildWith
+  , rebuildOrKeep
   , quoteId
   ) where
 
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
@@ -38,9 +40,13 @@ parseDerive input = case T.splitOn " = " input of
 -- On any failure the original TblOps is returned unchanged — same
 -- fail-soft behaviour as Tc.Derive.runWith.
 addDerived :: IOE :> es => TblOps -> Text -> Text -> Eff es TblOps
-addDerived ops name expr = do
-  r <- tryE (rebuildWith ops (\sub -> "SELECT *, " <> expr <> " AS " <> quoteId name <> " FROM (" <> sub <> ")"))
-  pure (maybe ops id r)
+addDerived ops name expr =
+  rebuildOrKeep ops (\sub -> "SELECT *, " <> expr <> " AS " <> quoteId name <> " FROM (" <> sub <> ")")
+
+-- | Run 'rebuildWith'; on any failure return the original @ops@ unchanged.
+-- Shared fail-soft idiom used by derive, split, and freq.
+rebuildOrKeep :: IOE :> es => TblOps -> (Text -> Text) -> Eff es TblOps
+rebuildOrKeep ops wrap = fromMaybe ops <$> tryE (rebuildWith ops wrap)
 
 -- | Rebuild a TblOps by running @f sub@ where @sub@ is a SELECT that
 -- reconstructs the current table rows. Shared between derive, split,

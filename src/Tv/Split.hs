@@ -14,7 +14,7 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Tv.Types
-import Tv.Derive (rebuildWith, quoteId)
+import Tv.Derive (rebuildWith, rebuildOrKeep, quoteId)
 import Tv.Eff (Eff, IOE, (:>), liftIO, tryE)
 import Optics.Core ((^.))
 
@@ -33,9 +33,7 @@ splitColumn ops colIdx pat
       n <- maxParts ops col ep
       if n <= 1
         then pure ops
-        else do
-          r <- tryE (rebuildWith ops (wrapSplit col ep n))
-          pure (maybe ops id r)
+        else rebuildOrKeep ops (wrapSplit col ep n)
 
 -- | Build @SELECT *, string_split_regex(col,'ep')[i] AS col_i, ...@.
 wrapSplit :: Text -> Text -> Int -> Text -> Text
