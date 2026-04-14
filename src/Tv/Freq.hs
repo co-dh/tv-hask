@@ -1,4 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
 -- | Freq: group by columns, COUNT(*), sort by count desc. Mirrors
 -- Tc.Freq (Tc/Tc/Runner.lean) + Tc.AdbcTable.freqTable.
 --
@@ -16,7 +15,6 @@ module Tv.Freq
   , filterExpr
   ) where
 
-import Control.Exception (SomeException, handle)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
@@ -50,7 +48,7 @@ mkFreqOps src colIdxs
             "SELECT " <> groupSql <> ", COUNT(*) AS count FROM ("
               <> sub <> ") GROUP BY " <> groupSql
               <> " ORDER BY count DESC LIMIT 1000"
-      liftIO (handle (\(_ :: SomeException) -> pure src) (Derive.rebuildWithIO src wrap))
+      Derive.rebuildOrKeep src wrap
   where
     names = src ^. tblColNames
     nc    = V.length names

@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 -- | Split: break a string column into multiple columns by a delimiter
 -- or regex. Mirrors Tc.Split.runWith — probe DuckDB for the max number
 -- of parts (capped at 20), then derive @{col}_1 .. {col}_N@ via
@@ -9,17 +8,15 @@ module Tv.Split
   , maxParts
   ) where
 
-import Control.Exception (try, SomeException)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Tv.Types
-import Tv.Derive (rebuildWithIO, quoteId)
-import qualified Tv.Data.DuckDB as DB
-import Tv.Eff (Eff, IOE, (:>), liftIO)
-import Optics.Core ((^.), (%), (&), (.~), (%~))
+import Tv.Derive (rebuildWith, rebuildOrKeep, quoteId)
+import Tv.Eff (Eff, IOE, (:>), liftIO, tryE)
+import Optics.Core ((^.))
 
 -- | Split the column at @colIdx@ by regex @pat@ into multiple new
 -- columns. Returns the original TblOps if the column isn't a string,
@@ -27,20 +24,16 @@ import Optics.Core ((^.), (%), (&), (.~), (%~))
 -- actually split (n <= 1). Mirrors Tc.Split.runWith.
 splitColumn :: IOE :> es => TblOps -> Int -> Text -> Eff es TblOps
 splitColumn ops colIdx pat
-  | colIdx < 0 || colIdx >= V.length ((ops ^. tblColNames)) = pure ops
+  | colIdx < 0 || colIdx >= V.length (ops ^. tblColNames) = pure ops
   | (ops ^. tblColType) colIdx /= CTStr = pure ops
   | T.null pat = pure ops
-  | otherwise = liftIO $ do
+  | otherwise = do
       let col = (ops ^. tblColNames) V.! colIdx
           ep  = escSql pat
-      n <- maxPartsIO ops col ep
+      n <- maxParts ops col ep
       if n <= 1
         then pure ops
-        else do
-          r <- try (rebuildWithIO ops (wrapSplit col ep n))
-          case r of
-            Right ops' -> pure ops'
-            Left (_ :: SomeException) -> pure ops
+        else rebuildOrKeep ops (wrapSplit col ep n)
 
 -- | Build @SELECT *, string_split_regex(col,'ep')[i] AS col_i, ...@.
 wrapSplit :: Text -> Text -> Int -> Text -> Text
@@ -56,25 +49,17 @@ wrapSplit col ep n sub =
 -- regex, unsupported func, etc.) returns 0, which makes splitColumn a
 -- no-op upstream.
 maxParts :: IOE :> es => TblOps -> Text -> Text -> Eff es Int
-maxParts ops col ep = liftIO (maxPartsIO ops col ep)
-
-maxPartsIO :: TblOps -> Text -> Text -> IO Int
-maxPartsIO ops col ep = do
-  -- Re-materialize the current TblOps into a DuckDB table, then run the
-  -- count query on it. We do the whole thing in one go by wrapping the
-  -- same rebuild logic as derive, but swapping the final SELECT for a
-  -- COALESCE/max aggregate. Failure degrades to 0.
+maxParts ops col ep = do
   let qc = quoteId col
       wrap sub =
         "SELECT COALESCE(max(array_length(string_split_regex(" <> qc <> ", '"
         <> ep <> "'))), 0) AS n FROM (" <> sub <> ")"
-  r <- try (rebuildWithIO ops wrap)
+  r <- tryE (rebuildWith ops wrap)
   case r of
-    Left (_ :: SomeException) -> pure 0
-    Right ops' -> do
-      cell <- (ops' ^. tblCellStr) 0 0
-      let v = fromMaybe 0 (readIntMaybe cell)
-      pure (min v 20)
+    Nothing   -> pure 0
+    Just ops' -> do
+      cell <- liftIO ((ops' ^. tblCellStr) 0 0)
+      pure (min (fromMaybe 0 (readIntMaybe cell)) 20)
 
 -- | Parse a Text as Int; Nothing on failure.
 readIntMaybe :: Text -> Maybe Int
