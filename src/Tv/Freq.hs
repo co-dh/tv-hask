@@ -1,4 +1,3 @@
-{-# LANGUAGE ScopedTypeVariables #-}
 -- | Freq: group by columns, COUNT(*), sort by count desc. Mirrors
 -- Tc.Freq (Tc/Tc/Runner.lean) + Tc.AdbcTable.freqTable.
 --
@@ -16,7 +15,6 @@ module Tv.Freq
   , filterExpr
   ) where
 
-import Control.Exception (SomeException, handle)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
@@ -25,7 +23,7 @@ import Optics.Core ((^.))
 
 import Tv.Types
 import qualified Tv.Derive as Derive
-import Tv.Eff (Eff, IOE, (:>), liftIO)
+import Tv.Eff (Eff, IOE, (:>), liftIO, tryE)
 
 -- | Build a frequency-table TblOps. Given a source table and the column
 -- indices to group on (from @NavState._nsGrp@ + current column), produce
@@ -50,7 +48,8 @@ mkFreqOps src colIdxs
             "SELECT " <> groupSql <> ", COUNT(*) AS count FROM ("
               <> sub <> ") GROUP BY " <> groupSql
               <> " ORDER BY count DESC LIMIT 1000"
-      liftIO (handle (\(_ :: SomeException) -> pure src) (Derive.rebuildWithIO src wrap))
+      r <- tryE (Derive.rebuildWith src wrap)
+      pure (maybe src id r)
   where
     names = src ^. tblColNames
     nc    = V.length names
