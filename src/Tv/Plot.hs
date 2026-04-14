@@ -9,6 +9,7 @@ module Tv.Plot
   , rScript
   , PlotOpt(..)
   , maxPoints
+  , plotH
   ) where
 
 import Data.Text (Text)
@@ -23,8 +24,25 @@ import System.Exit (ExitCode(..))
 import Control.Exception (try, SomeException)
 
 import Tv.Types
-import Tv.Eff (Eff, IOE, (:>), liftIO)
+import Tv.Render (headNav)
+import Tv.Eff (Eff, IOE, (:>), use, liftIO)
+import Tv.Handler (Handler, setMsg)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
+
+-- | Run a plot command: resolve cursor + group columns from the current
+-- 'NavState', hand off to 'runPlot', and surface the resulting PNG path
+-- (or a generic failure message) via @asMsg@.
+plotH :: PlotKind -> Handler
+plotH kind _ = do
+  ns <- use headNav
+  let tbl   = ns ^. nsTbl
+      curC  = curColIdx ns
+      names = tbl ^. tblColNames
+      grpIdx = V.mapMaybe (`V.elemIndex` names) (ns ^. nsGrp)
+  r <- runPlot kind tbl curC grpIdx
+  setMsg $ case r of
+    Just p  -> "plot: saved to " <> T.pack p
+    Nothing -> "plot: failed (check column types / R install)"
 
 -- | Downsampling threshold: rows above this are stride-sampled before plotting.
 -- Mirrors Tc/Tc/Plot.lean's @maxPoints@ (2000).

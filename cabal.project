@@ -14,6 +14,10 @@ library-vanilla: False
 shared: True
 executable-dynamic: True
 
+package *
+  library-vanilla: False
+  shared: True
+
 constraints:
   async source,
   base16-bytestring source,
@@ -28,8 +32,12 @@ constraints:
   lukko source,
   network source,
   network-uri source,
+  OneTuple source,
   os-string source,
+  primitive source,
   random source,
+  tagged source,
+  vector source,
   regex-base source,
   regex-posix source,
   resolv source,

@@ -6,7 +6,14 @@
 -- directly from 'readRow'. Row order follows the input column order so row
 -- index == original column index, matching Lean's rowidx→col mapping used by
 -- meta.setKey / meta.selNull / meta.selSingle.
-module Tv.Meta (mkMetaOps) where
+module Tv.Meta
+  ( mkMetaOps
+  , metaPushH
+  , metaSetKeyH
+  , metaSelNullH
+  , metaSelSingleH
+  , metaSelByColValue
+  ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -15,8 +22,72 @@ import qualified Data.Vector as V
 import qualified Data.Set as Set
 
 import Tv.Types
-import Tv.Eff (Eff, IOE, (:>), liftIO)
+import Tv.View (vNav, vPath, vsHd, vsTl)
+import Tv.Render (asStack, headNav, headTbl, headView)
+import Tv.Eff (Eff, IOE, (:>), use, (.=), (%=), liftIO)
+import Tv.Handler (Handler, pushOps, refresh, refreshGrid, setMsg)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
+
+-- | Push a column-metadata view computed from the current table.
+metaPushH :: Handler
+metaPushH _ = do
+  tbl  <- use headTbl
+  path <- use (headView % vPath)
+  ops' <- mkMetaOps tbl
+  pushOps (path <> " [meta]") VColMeta ops'
+
+-- | MetaSetKey: in a colMeta view, take the row selections (which are
+-- column indices in the parent) and set them as the parent's group
+-- columns, then pop back to the parent.
+metaSetKeyH :: Handler
+metaSetKeyH _ = do
+  vk <- use (headNav % nsVkind)
+  case vk of
+    VColMeta -> do
+      tl <- use (asStack % vsTl)
+      case tl of
+        [] -> setMsg "meta.key: no parent view"
+        (parent:_) -> do
+          sels <- use (headNav % nsRow % naSels)
+          let parentNames = parent ^. vNav % nsTbl % tblColNames
+              keyNames = V.mapMaybe (\i -> parentNames V.!? i) sels
+              parent' = parent & vNav % nsGrp .~ keyNames
+                               & vNav % nsDispIdxs .~ dispOrder keyNames parentNames
+          asStack % vsHd .= parent'
+          asStack % vsTl %= drop 1
+          refresh
+    _ -> setMsg "meta.key: not a meta view"
+
+-- | Meta "select rows where null_pct == 100".
+metaSelNullH :: Handler
+metaSelNullH = metaSelByColValue "null_pct" (== 100) "no null columns"
+
+-- | Meta "select rows where dist == 1".
+metaSelSingleH :: Handler
+metaSelSingleH = metaSelByColValue "dist" (== 1) "no single-value columns"
+
+metaSelByColValue :: Text -> (Int -> Bool) -> Text -> Handler
+metaSelByColValue colName predFn emptyMsg _ = do
+  vk <- use (headNav % nsVkind)
+  case vk of
+    VColMeta -> do
+      ns <- use headNav
+      let ops = ns ^. nsTbl
+          names = ops ^. tblColNames
+      case V.elemIndex colName names of
+        Nothing -> setMsg ("meta.sel: column '" <> colName <> "' missing")
+        Just colIdx -> do
+          let nr = ops ^. tblNRows
+          matches <- liftIO (V.filterM (\r -> do
+              cell <- (ops ^. tblCellStr) r colIdx
+              let v = case reads (T.unpack cell) of [(n,"")] -> n; _ -> (0 :: Int)
+              pure (predFn v)) (V.enumFromN 0 nr))
+          if V.null matches then setMsg emptyMsg
+          else do
+            headNav % nsRow % naSels .= matches
+            refreshGrid
+            setMsg (T.pack (show (V.length matches)) <> " columns selected")
+    _ -> setMsg "meta.sel: not a meta view"
 
 -- | Column type name matching Lean's ColType.toString (lowercased tag).
 colTypeName :: ColType -> Text

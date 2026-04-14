@@ -5,8 +5,16 @@
 --
 -- Mirrors Tc.Folder.listDir in shape (same column names) so navigation
 -- tests written against the mock folder layout stay portable.
-module Tv.Folder (listFolder, listFolderDepth) where
+module Tv.Folder
+  ( listFolder
+  , listFolderDepth
+  , folderDelH
+  , folderDepthAdjH
+  , folderDepthIncH
+  , folderDepthDecH
+  ) where
 
+import Control.Exception (displayException, catch, SomeException)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Format (formatTime, defaultTimeLocale)
@@ -15,13 +23,67 @@ import qualified Data.Vector as V
 import Data.List (sortBy)
 import Data.Ord (comparing, Down(..))
 import System.Directory
-  ( doesDirectoryExist, getModificationTime, getFileSize, listDirectory
-  , pathIsSymbolicLink )
+  ( createDirectoryIfMissing, doesDirectoryExist, doesPathExist
+  , getHomeDirectory, getModificationTime, getFileSize, listDirectory
+  , pathIsSymbolicLink, renamePath )
 import System.FilePath ((</>))
-import Control.Exception (catch, SomeException)
 
 import Tv.Types
-import Tv.Eff (Eff, IOE, (:>), liftIO)
+import Tv.Render (headNav, headTbl)
+import Tv.Eff (Eff, IOE, (:>), use, (.=), liftIO, tryEitherE)
+import Tv.Handler (Handler, refreshGrid, setMsg)
+import Optics.Core ((^.), (%))
+
+-- | Move the current row's file to @~/.local/share/Trash/files/@
+-- (XDG trash). Collisions get @.1@, @.2@, … suffixes.
+folderDelH :: Handler
+folderDelH _ = do
+  ns <- use headNav
+  case ns ^. nsVkind of
+    VFld base _ -> do
+      let r = ns ^. nsRow % naCur
+      name <- liftIO ((ns ^. nsTbl % tblCellStr) r 0)
+      if T.null name || name == ".."
+        then setMsg "del: nothing to trash"
+        else do
+          home <- liftIO getHomeDirectory
+          let trashDir = home </> ".local/share/Trash/files"
+              srcPath = T.unpack base </> T.unpack name
+          liftIO (createDirectoryIfMissing True trashDir)
+          dest <- liftIO (uniqueTrashPath trashDir (T.unpack name) (0 :: Int))
+          r1 <- tryEitherE (liftIO (renamePath srcPath dest))
+          case r1 of
+            Left e -> setMsg ("del failed: " <> T.pack (displayException e))
+            Right _ -> do
+              ops' <- listFolderDepth (T.unpack base) 1
+              headTbl .= ops'
+              refreshGrid
+              setMsg ("trashed " <> name)
+    _ -> setMsg "del: not in a folder view"
+  where
+    uniqueTrashPath dir base n = do
+      let cand = if n == 0 then dir </> base else dir </> (base <> "." <> show n)
+      ex <- doesPathExist cand
+      if ex then uniqueTrashPath dir base (n + 1) else pure cand
+
+-- | Bump the folder recursion depth by @d@ (clamped 1..5), rebuild the
+-- folder TblOps, and update the view kind.
+folderDepthAdjH :: Int -> Handler
+folderDepthAdjH d _ = do
+  vk <- use (headNav % nsVkind)
+  case vk of
+    VFld base depth -> do
+      let d' = max 1 (min 5 (depth + d))
+      ops' <- listFolderDepth (T.unpack base) d'
+      headTbl .= ops'
+      headNav % nsVkind .= VFld base d'
+      refreshGrid
+      setMsg ("depth=" <> T.pack (show d'))
+    _ -> setMsg "depth: not in a folder view"
+
+folderDepthIncH, folderDepthDecH :: Handler
+folderDepthIncH = folderDepthAdjH 1
+folderDepthDecH = folderDepthAdjH (-1)
 
 -- | Row in the folder table.
 data Entry = Entry

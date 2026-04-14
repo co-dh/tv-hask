@@ -9,7 +9,7 @@
 -- via a generated SQL query; here we operate directly on the materialized
 -- row grid exposed by TblOps, since the Haskell TblOps is already a
 -- read-only in-memory view without a live query context.
-module Tv.Diff (diffTables, diffTablesSameHide) where
+module Tv.Diff (diffTables, diffTablesSameHide, diffH) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -20,8 +20,23 @@ import Data.Set (Set)
 import qualified Data.Set as Set
 
 import Tv.Types
-import Tv.Eff (Eff, IOE, (:>), liftIO)
+import Tv.View (vNav, vsTl)
+import Tv.Render (asStack, headTbl)
+import Tv.Eff (Eff, IOE, (:>), use, liftIO)
+import Tv.Handler (Handler, pushOps, setMsg)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
+
+-- | Diff top two views on the stack. Requires at least two views.
+diffH :: Handler
+diffH _ = do
+  tl <- use (asStack % vsTl)
+  case tl of
+    [] -> setMsg "diff: need 2 views on stack"
+    (v2:_) -> do
+      l <- use headTbl
+      let r = v2 ^. vNav % nsTbl
+      ops' <- diffTables l r
+      pushOps "[diff]" VTbl ops'
 
 -- | Column shared by both tables with identical name and type.
 data Common = Common { cmName :: !Text, cmType :: !ColType }

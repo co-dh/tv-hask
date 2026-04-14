@@ -1,14 +1,22 @@
 -- | Info overlay: context-specific key hints per view kind.
 -- Rendered as a bottom-right-aligned block of (key, description) pairs.
 -- The Lean version used termbox2 directly; here we produce a Brick Widget.
-module Tv.UI.Info (viewHints, render) where
+module Tv.UI.Info (viewHints, render, infoTogH) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Brick.Widgets.Core as C
 import qualified Brick
 import Tv.Types (ViewKind(..))
-import Tv.Render (Name, attrHint)
+import Tv.Render (Name, attrHint, asInfoVis)
+import Tv.Eff ((%=))
+import Tv.Handler (Handler, cont)
+
+-- | Toggle info overlay (asInfoVis). When the flag is on, 'drawApp'
+-- draws a one-line panel just above the status bar showing the current
+-- column's name, type, and (1-indexed) position.
+infoTogH :: Handler
+infoTogH _ = asInfoVis %= not >> cont
 
 -- | Context-specific key hints per view kind (no common nav keys).
 viewHints :: ViewKind -> [(Text, Text)]

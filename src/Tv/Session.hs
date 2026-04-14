@@ -25,6 +25,8 @@ module Tv.Session
   , saveSession
   , loadSession
   , listSessions
+  , sessSaveH
+  , sessLoadH
   ) where
 
 import Control.Exception (SomeException, try)
@@ -45,8 +47,29 @@ import System.FilePath ((</>), takeExtension, dropExtension)
 import Tv.Types
 import Tv.Util (logDir, logWrite)
 import Tv.View
-import Tv.Eff (Eff, IOE, (:>), liftIO)
+import Tv.Render (asStack)
+import Tv.Eff (Eff, IOE, (:>), use, liftIO)
+import Tv.Handler (Handler, setMsg)
 import Optics.Core ((^.), (%), (&), (.~), (%~))
+
+-- | Save the current stack as a named session (name from @asCmd@).
+sessSaveH :: Handler
+sessSaveH arg = do
+  stk <- use asStack
+  mp <- saveSession arg stk
+  setMsg $ case mp of
+    Just p  -> "saved session " <> T.pack p
+    Nothing -> "save failed"
+
+-- | Load a session by name. Haskell cannot rehydrate TblOps without
+-- re-running the source query, so for now we just report the result
+-- and leave the live stack alone.
+sessLoadH :: Handler
+sessLoadH arg = do
+  ms <- loadSession arg
+  setMsg $ case ms of
+    Just _  -> "loaded session (rehydrate TODO)"
+    Nothing -> "load failed"
 
 -- ============================================================================
 -- SavedView / SavedSession: the serializable projection of a ViewStack

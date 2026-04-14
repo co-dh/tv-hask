@@ -6,6 +6,7 @@
 module Tv.Split
   ( splitColumn
   , maxParts
+  , splitH
   ) where
 
 import Data.Maybe (fromMaybe)
@@ -14,9 +15,30 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Tv.Types
+import Tv.View (fromTbl, vNav, vPath, vsPush)
+import Tv.Render (asStack, headNav, headView)
 import Tv.Derive (rebuildWith, rebuildOrKeep, quoteId)
-import Tv.Eff (Eff, IOE, (:>), liftIO, tryE)
-import Optics.Core ((^.))
+import Tv.Eff (Eff, IOE, (:>), use, (%=), liftIO, tryE)
+import Tv.Handler (Handler, curOps, refresh, setMsg)
+import Optics.Core ((^.), (%), (&), (.~))
+
+-- | Split the current column by regex taken from @asCmd@.
+splitH :: Handler
+splitH arg
+  | T.null arg = splitH "-"  -- test mode: fzf picks first suggestion = "-"
+  | otherwise = do
+      ns   <- use headNav
+      ops  <- curOps
+      path <- use (headView % vPath)
+      let ci = curColIdx ns
+          colName = curColName ns
+          origNc = V.length (ops ^. tblColNames)
+      ops' <- splitColumn ops ci arg
+      let startCol = origNc
+          path' = path <> " :" <> colName
+      case fromTbl ops' path' startCol V.empty 0 of
+        Nothing -> setMsg "split: empty result"
+        Just v  -> asStack %= vsPush (v & vNav % nsVkind .~ VTbl) >> refresh
 
 -- | Split the column at @colIdx@ by regex @pat@ into multiple new
 -- columns. Returns the original TblOps if the column isn't a string,

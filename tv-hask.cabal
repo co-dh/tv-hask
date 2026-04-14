@@ -36,6 +36,8 @@ library
     Tv.Data.Prql
     Tv.App
     Tv.AppF
+    Tv.Handler
+    Tv.Loader
     Tv.Filter
     Tv.Folder
     Tv.Fzf
