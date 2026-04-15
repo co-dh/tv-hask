@@ -35,6 +35,7 @@ library
     Tv.Derive
     Tv.Diff
     Tv.Export
+    Tv.FileFormat
     Tv.Filter
     Tv.Ftp
     Tv.Fzf
@@ -47,6 +48,7 @@ library
     Tv.Render
     Tv.Replay
     Tv.Runner
+    Tv.SourceConfig
     Tv.Sparkline
     Tv.Split
     Tv.StatusAgg
