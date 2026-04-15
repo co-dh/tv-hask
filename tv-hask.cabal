@@ -25,19 +25,24 @@ library
   -- its deps (Tv.Types, Tv.Data.ADBC.Prql) come online.
   exposed-modules:
     Tv.AppF
+    Tv.CmdConfig
+    Tv.Data.ADBC.Prql
     Tv.Data.Text
     Tv.Ftp
     Tv.Lens
     Tv.Nav
     Tv.StrEnum
     Tv.Stub
+    Tv.Term
     Tv.Types
     Tv.Util
   build-depends:
+    ansi-terminal >= 0.11,
     base >= 4.16 && < 5,
     bytestring,
     directory >= 1.3,
     filepath >= 1.4,
+    hashable >= 1.4,
     process >= 1.6,
     text >= 2.0,
     time >= 1.11,
