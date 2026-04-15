@@ -1,7 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE PatternSynonyms #-}
--- | Zero-copy DuckDB backend.
+-- | Zero-copy DuckDB FFI primitives.
 --
 -- Streams query results as a lazy list of 'DataChunk's wrapped in
 -- 'ForeignPtr's. Each chunk is a direct handle to DuckDB's internal vector
@@ -16,6 +16,9 @@
 --                 @duckdb_destroy_result@; retains 'Conn'.
 --   * 'DataChunk' finalizer calls @duckdb_destroy_data_chunk@; retains
 --                 'Result'.
+--
+-- This module is the FFI layer only. Higher-level PRQL-driven operations
+-- (requery, queryCount, AdbcTable wiring) live in Tv.Data.ADBC.Table.
 module Tv.Data.DuckDB
   ( Conn
   , Result
@@ -33,16 +36,12 @@ module Tv.Data.DuckDB
   , readCellDouble
   , readCellText
   , readCellAny
-  , mkDbOps
-  , mkDbOpsQ
-  , requery
-  , queryCount
-  , prqlQuery
-  , prqlLimit
-  , stripSemi
+  , readCellDate
+  , readCellTime
+  , readCellTimestamp
   ) where
 
-import Control.Exception (Exception, SomeException, mask_, throwIO, try)
+import Control.Exception (Exception, mask_, throwIO)
 import Control.Monad (when)
 import Data.Bits (shiftR, (.&.))
 import qualified Data.ByteString as BS
@@ -50,7 +49,7 @@ import Data.Int (Int16, Int32, Int64, Int8)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Data.Time.Calendar (Day, addDays, fromGregorian, toGregorian)
+import Data.Time.Calendar (addDays, fromGregorian, toGregorian)
 import Text.Printf (printf)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -63,7 +62,6 @@ import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
 import Foreign.Storable (Storable (..))
 import qualified System.IO.Unsafe as U
 
-import qualified Tv.Data.Prql as Prql
 import qualified Database.DuckDB.FFI as C
 import Database.DuckDB.FFI
   ( DuckDBConnection
@@ -92,8 +90,7 @@ import Database.DuckDB.FFI
   , pattern DuckDBTypeVarchar
   )
 
-import Tv.Types hiding (DataChunk)
-import Optics.Core ((^.), (%), (&), (.~), (%~))
+import Tv.Types (ColType(..))
 
 -- ============================================================================
 -- Handle types
@@ -386,19 +383,18 @@ readCellText cv row
 -- Type mapping
 -- ============================================================================
 
--- | Render any cell to text. Used by 'mkDbOps' to materialize a display
--- cache without per-type branching in the caller. NULLs become "".
+-- | Render any cell to text. NULLs become "".
 readCellAny :: ColumnView -> Int -> Text
 readCellAny cv row = case cvType cv of
-  CTInt  -> maybe "" (T.pack . show) (readCellInt cv row)
-  CTBool -> case readCellInt cv row of
-              Just 0 -> "false"; Just _ -> "true"; Nothing -> ""
-  CTFloat -> maybe "" (T.pack . show) (readCellDouble cv row)
-  CTStr  -> maybe "" id (readCellText cv row)
-  CTDate -> maybe "" id (readCellDate cv row)
-  CTTime -> maybe "" id (readCellTime cv row)
-  CTTimestamp -> maybe "" id (readCellTimestamp cv row)
-  _      -> maybe "" id (readCellText cv row)
+  ColTypeInt       -> maybe "" (T.pack . show) (readCellInt cv row)
+  ColTypeBool      -> case readCellInt cv row of
+                        Just 0 -> "false"; Just _ -> "true"; Nothing -> ""
+  ColTypeFloat     -> maybe "" (T.pack . show) (readCellDouble cv row)
+  ColTypeStr       -> maybe "" id (readCellText cv row)
+  ColTypeDate      -> maybe "" id (readCellDate cv row)
+  ColTypeTime      -> maybe "" id (readCellTime cv row)
+  ColTypeTimestamp -> maybe "" id (readCellTimestamp cv row)
+  _                -> maybe "" id (readCellText cv row)
 
 -- | DuckDB DATE: int32 days since 1970-01-01. Format YYYY-MM-DD.
 readCellDate :: ColumnView -> Int -> Maybe Text
@@ -447,205 +443,23 @@ readCellTimestamp cv row
   where rt = cvRawType cv
 {-# NOINLINE readCellTimestamp #-}
 
--- | Zero-copy TblOps backed by DuckDB chunks. Rows are NOT materialized;
--- tblCellStr into the chunk vector storage on demand via readCellAny.
--- The chunk ForeignPtrs keep the underlying DuckDB memory alive as long as
--- the TblOps is reachable.
-mkDbOps :: Result -> IO TblOps
-mkDbOps res = do
-  -- Read chunks once here — duckdb_fetch_chunk is streaming (single-pass),
-  -- so we must avoid calling `chunks res` again in mkDbOpsQ.
-  cs <- chunks res
-  let nr = sum (map chunkSize cs)
-  conn <- connect ":memory:"
-  mkDbOpsQChunks cs res conn (Prql.Query "from df" V.empty) nr
-
--- | Build TblOps from a Result + connection + PRQL Query (for requery chain).
--- Matches Lean AdbcTable.ofQueryResult. The Conn is captured so sort/filter
--- can requery on the same connection where the data lives.
-mkDbOpsQ :: Result -> Conn -> Prql.Query -> Int -> IO TblOps
-mkDbOpsQ res conn q totalRows = do
-  cs <- chunks res
-  mkDbOpsQChunks cs res conn q totalRows
-
--- | Internal: build TblOps from pre-read chunks. Avoids double-consuming
--- the DuckDB streaming chunk iterator.
-mkDbOpsQChunks :: [DataChunk] -> Result -> Conn -> Prql.Query -> Int -> IO TblOps
-mkDbOpsQChunks cs res conn q totalRows = do
-  let names = resColNames res
-      tys   = resColTypes res
-      nc    = V.length names
-  let chunkVec = V.fromList cs
-      sizes = V.map chunkSize chunkVec
-      offsets = V.prescanl' (+) 0 sizes
-      nr = V.sum sizes
-      findChunk r = go 0 (V.length chunkVec - 1)
-        where
-          go lo hi
-            | lo >= hi  = (chunkVec V.! lo, r - offsets V.! lo)
-            | otherwise =
-                let mid = (lo + hi + 1) `div` 2
-                in if offsets V.! mid <= r then go mid hi else go lo (mid - 1)
-  let ops = TblOps
-        { _tblNRows       = nr
-        , _tblColNames    = names
-        , _tblTotalRows   = totalRows
-        , _tblQueryOps    = Prql.ops q
-        -- | Filter: append filter op, requery with new count. Lean Table.lean:341-344
-        , _tblFilter      = \expr -> do
-            let q' = Prql.pfilter q expr
-            total <- queryCount conn q'
-            requery conn q' total
-        -- | Distinct: PRQL uniq. Lean Table.lean:346-354
-        , _tblDistinct    = \col -> do
-            let colName = if col >= 0 && col < nc then names V.! col else ""
-            r <- prqlQuery conn (Prql.render q <> " | uniq " <> Prql.quote colName)
-            case r of
-              Nothing -> pure V.empty
-              Just res' -> do
-                cs' <- chunks res'
-                if null cs' then pure V.empty
-                else pure $ V.concat $ map (\ch ->
-                  let sz = chunkSize ch; cv = chunkColumn ch 0
-                  in V.generate sz (\i -> readCellAny cv i)) cs'
-        -- | FindRow: derive row_number, filter, extract. Lean Table.lean:358-370
-        , _tblFindRow     = \col val start fwd -> do
-            let colName = Prql.quote (if col >= 0 && col < nc then names V.! col else "")
-                prql = Prql.render q <> " | derive {_rn = row_number this} | filter ("
-                       <> colName <> " == '" <> escSql val <> "') | select {_rn}"
-            r <- prqlQuery conn prql
-            case r of
-              Nothing -> pure Nothing
-              Just res' -> do
-                rows <- readIntColumn res'
-                let rows0 = map (\x -> x - 1) rows  -- 1-based → 0-based
-                pure $ if null rows0 then Nothing
-                  else if fwd
-                    then case filter (>= start) rows0 of
-                           (x:_) -> Just x
-                           []    -> Just (head rows0)  -- wrap
-                    else case filter (< start) (reverse rows0) of
-                           (x:_) -> Just x
-                           []    -> Just (last rows0)  -- wrap
-        , _tblRender      = \_ -> pure V.empty
-        , _tblGetCols     = \_ _ _ -> pure V.empty
-        , _tblColType     = \i -> if i < 0 || i >= nc then CTOther else tys V.! i
-        , _tblBuildFilter = buildFilterPrql
-        , _tblFilterPrompt = \col typ ->
-            let num = typ == "int" || typ == "float" || typ == "decimal"
-                eg = if num then "e.g. " <> col <> " > 5,  " <> col <> " >= 10 && " <> col <> " < 100"
-                     else "e.g. " <> col <> " == 'USD',  " <> col <> " ~= 'pattern'"
-            in "PRQL filter on " <> col <> " (" <> typ <> "):  " <> eg
-        , _tblPlotExport  = \_ _ _ _ _ _ -> pure Nothing
-        , _tblCellStr     = \r c ->
-            if r < 0 || r >= nr || c < 0 || c >= nc || nr == 0
-              then pure T.empty
-              else let (ch, local) = findChunk r
-                   in pure (readCellAny (chunkColumn ch c) local)
-        , _tblFetchMore   = pure Nothing
-        -- | HideCols: PRQL select (keep non-hidden). Lean Table.lean:221-223
-        , _tblHideCols    = \hideIdxs -> do
-            let keep = V.ifilter (\i _ -> not (V.elem i hideIdxs)) names
-                q' = Prql.pipe q (OpSel keep)
-            r <- requery conn q' totalRows
-            pure (maybe ops id r)
-        -- | SortBy: PRQL sort op. Lean Table.lean:213-218
-        , _tblSortBy      = \idxs asc -> do
-            let sortCols = V.map (\i -> (if i >= 0 && i < nc then names V.! i else "", asc)) idxs
-                q' = Prql.pipe q (OpSort sortCols)
-            r <- requery conn q' totalRows
-            pure (maybe ops id r)
-        }
-  pure ops
-
--- | Default row limit for PRQL queries (matches Lean prqlLimit = 1000)
-prqlLimit :: Int
-prqlLimit = 1000
-
--- | Trim trailing semicolon from compiled SQL
-stripSemi :: Text -> Text
-stripSemi s = let t = T.strip s in if T.isSuffixOf ";" t then T.init t else t
-
--- | Compile PRQL and execute on a connection. Matches Lean Prql.query.
-prqlQuery :: Conn -> Text -> IO (Maybe Result)
-prqlQuery conn prql = do
-  mSql <- Prql.compile prql
-  case mSql of
-    Nothing -> pure Nothing
-    Just sql -> do
-      r <- try (query conn (stripSemi sql))
-      case r of
-        Right res -> pure (Just res)
-        Left (_ :: SomeException) -> pure Nothing
-
--- | Execute PRQL query on conn, return new TblOps. Lean AdbcTable.requery.
-requery :: Conn -> Prql.Query -> Int -> IO (Maybe TblOps)
-requery conn q total = do
-  let prql = Prql.render q <> " | take " <> T.pack (show prqlLimit)
-  r <- prqlQuery conn prql
-  case r of
-    Nothing -> pure Nothing
-    Just res -> Just <$> mkDbOpsQ res conn q total
-
--- | Query total row count on conn. Lean AdbcTable.queryCount.
-queryCount :: Conn -> Prql.Query -> IO Int
-queryCount conn q = do
-  let prql = Prql.render q <> " | cnt"
-  r <- prqlQuery conn prql
-  case r of
-    Nothing -> pure 0
-    Just res -> do
-      rows <- readIntColumn res
-      pure (if null rows then 0 else head rows)
-
--- | Read all values from a single-column integer result as [Int].
-readIntColumn :: Result -> IO [Int]
-readIntColumn res = do
-  cs <- chunks res
-  pure $ concatMap (\ch ->
-    let n = chunkSize ch; cv = chunkColumn ch 0
-    in map (\i -> case readCellInt cv i of
-              Just v -> fromIntegral v; Nothing -> 0) [0 .. n - 1]) cs
-
--- | Get row count from Result (sum of chunk sizes).
-resNRows :: Result -> Int
-resNRows res = U.unsafePerformIO $ do
-  cs <- chunks res
-  pure (sum (map chunkSize cs))
-
--- | Build PRQL filter expression from fzf result (Lean Types.lean:buildFilterPrql).
--- With --print-query: line 0 = typed query, lines 1+ = selected hints.
-buildFilterPrql :: Text -> V.Vector Text -> Text -> Bool -> Text
-buildFilterPrql col vals result isNum =
-  let lns = filter (not . T.null) (T.splitOn "\n" result)
-      input = case lns of (x:_) -> x; _ -> ""
-      fromHints = filter (`V.elem` vals) (drop 1 lns)
-      selected = if V.elem input vals && notElem input fromHints
-                 then input : fromHints else fromHints
-      q v = if isNum then v else "'" <> T.replace "'" "''" v <> "'"
-  in case selected of
-    [v] -> col <> " == " <> q v
-    (_:_) -> "(" <> T.intercalate " || " (map (\v' -> col <> " == " <> q v') selected) <> ")"
-    [] | not (T.null input) -> input  -- free-form PRQL expression
-       | otherwise -> ""
-
 duckTypeToCol :: DuckDBType -> ColType
 duckTypeToCol t
-  | t == DuckDBTypeBoolean = CTBool
-  | t == DuckDBTypeTinyInt = CTInt
-  | t == DuckDBTypeSmallInt = CTInt
-  | t == DuckDBTypeInteger = CTInt
-  | t == DuckDBTypeBigInt = CTInt
-  | t == DuckDBTypeUTinyInt = CTInt
-  | t == DuckDBTypeUSmallInt = CTInt
-  | t == DuckDBTypeUInteger = CTInt
-  | t == DuckDBTypeUBigInt = CTInt
-  | t == DuckDBTypeFloat = CTFloat
-  | t == DuckDBTypeDouble = CTFloat
-  | t == DuckDBTypeDecimal = CTDecimal
-  | t == DuckDBTypeVarchar = CTStr
-  | t == DuckDBTypeDate = CTDate
-  | t == DuckDBTypeTime = CTTime
-  | t == DuckDBTypeTimestamp = CTTimestamp
-  | t == DuckDBTypeTimestampTz = CTTimestamp
-  | otherwise = CTOther
+  | t == DuckDBTypeBoolean = ColTypeBool
+  | t == DuckDBTypeTinyInt = ColTypeInt
+  | t == DuckDBTypeSmallInt = ColTypeInt
+  | t == DuckDBTypeInteger = ColTypeInt
+  | t == DuckDBTypeBigInt = ColTypeInt
+  | t == DuckDBTypeUTinyInt = ColTypeInt
+  | t == DuckDBTypeUSmallInt = ColTypeInt
+  | t == DuckDBTypeUInteger = ColTypeInt
+  | t == DuckDBTypeUBigInt = ColTypeInt
+  | t == DuckDBTypeFloat = ColTypeFloat
+  | t == DuckDBTypeDouble = ColTypeFloat
+  | t == DuckDBTypeDecimal = ColTypeDecimal
+  | t == DuckDBTypeVarchar = ColTypeStr
+  | t == DuckDBTypeDate = ColTypeDate
+  | t == DuckDBTypeTime = ColTypeTime
+  | t == DuckDBTypeTimestamp = ColTypeTimestamp
+  | t == DuckDBTypeTimestampTz = ColTypeTimestamp
+  | otherwise = ColTypeOther

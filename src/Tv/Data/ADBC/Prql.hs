@@ -1,21 +1,40 @@
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-
   PRQL rendering and compilation
   Uses common Op types from Tv/Types.hs
 
-  Pure PRQL query representation + renderer. PRQL -> SQL compilation and
-  execution live in Tv.Data.DuckDB (the single place allowed to touch SQL).
+  Pure PRQL query representation + renderer. This module also hosts
+  `compile`, which shells out to the `prqlc` CLI — matching Lean's layering
+  where `compile` lives in `Tc/Data/ADBC/Prql.lean`, not the FFI module.
 -}
 module Tv.Data.ADBC.Prql where
 
+import Control.Exception (SomeException, try)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
+import Data.FileEmbed (embedFile)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
+import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import System.Exit (ExitCode (..))
+import System.IO (hClose, hFlush)
+import System.Process
+  ( CreateProcess (..)
+  , StdStream (..)
+  , createProcess
+  , proc
+  , waitForProcess
+  )
 import Tv.Types
   ( Agg (..)
   , Op (..)
   , joinWith
   )
+import qualified Tv.Util as Log
 
 -- | PRQL query: base table + operations (PRQL-specific base format)
 data Query = Query
@@ -94,3 +113,39 @@ ducktabs = "from dtabs | tbl_info"
 
 ducktabsF :: Text
 ducktabsF = "from dtabs | tbl_info_filtered"
+
+-- | PRQL function definitions, embedded at compile time. Mirrors Lean's
+-- @include_str "funcs.prql"@.
+funcsBytes :: ByteString
+funcsBytes = $(embedFile "data/funcs.prql")
+
+funcs :: Text
+funcs = TE.decodeUtf8 funcsBytes
+
+-- | Compile PRQL to SQL by shelling out to the @prqlc@ CLI. Returns
+-- @Nothing@ on compile failure (with stderr logged). The @funcs@ prelude
+-- is prepended so user queries can call ds_trunc, freq, etc.
+compile :: Text -> IO (Maybe Text)
+compile prql = do
+  let full = funcs <> "\n" <> prql
+      cp = (proc "prqlc"
+              [ "compile", "--hide-signature-comment", "-t", "sql.duckdb" ])
+             { std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe }
+  r <- try $ do
+    (Just hin, Just hout, Just herr, ph) <- createProcess cp
+    TIO.hPutStr hin full
+    hFlush hin
+    hClose hin
+    -- Read strict ByteStrings so handles drain before waitForProcess.
+    outBs <- BS.hGetContents hout
+    errBs <- BS.hGetContents herr
+    code <- waitForProcess ph
+    pure (code, TE.decodeUtf8 outBs, TE.decodeUtf8 errBs)
+  case r of
+    Left (e :: SomeException) -> do
+      Log.errorLog (T.pack ("prqlc spawn failed: " <> show e))
+      pure Nothing
+    Right (ExitSuccess, out, _) -> pure (Just out)
+    Right (_, _, err) -> do
+      Log.errorLog ("prqlc: " <> err)
+      pure Nothing
