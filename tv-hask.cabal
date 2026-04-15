@@ -32,16 +32,22 @@ library
     Tv.Data.ADBC.Table
     Tv.Data.DuckDB
     Tv.Data.Text
+    Tv.Derive
+    Tv.Diff
+    Tv.Filter
     Tv.Ftp
     Tv.Fzf
+    Tv.Join
     Tv.Key
     Tv.Lens
     Tv.Nav
     Tv.Render
+    Tv.Split
     Tv.StrEnum
     Tv.Stub
     Tv.Term
     Tv.Theme
+    Tv.Transpose
     Tv.Types
     Tv.UI.Info
     Tv.UI.Preview
