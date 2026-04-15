@@ -39,6 +39,7 @@ module Tv.Term
 import Prelude hiding (init, print)
 import Control.Exception (bracket)
 import Control.Monad (forM, forM_, when, zipWithM_)
+import Data.Bits ((.&.))
 import Data.Char (chr)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
@@ -46,6 +47,7 @@ import Data.Int (Int32, Int64)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import qualified Data.Text.Foreign as TF
 import Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -54,7 +56,7 @@ import qualified Data.Vector.Storable.Mutable as VSM
 import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign.C.String (CString, newCString, withCString)
 import Foreign.C.Types (CChar, CInt(..), CSize(..))
-import Foreign.Marshal.Alloc (free, mallocBytes)
+import Foreign.Marshal.Alloc (alloca, free, mallocBytes)
 import Foreign.Marshal.Array (mallocArray, pokeArray, peekArray, withArray)
 import Foreign.Marshal.Utils (with)
 import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
@@ -62,7 +64,6 @@ import Foreign.Storable (Storable(..))
 import System.IO (stdin, stdout, hSetBuffering, hSetEcho, hFlush,
                   hIsTerminalDevice, BufferMode(..), hGetChar)
 import System.IO.Unsafe (unsafePerformIO)
-import qualified System.Console.ANSI as ANSI
 import Tv.Types (Column(..))
 
 -- | Key codes (from termbox2.h)
@@ -142,6 +143,7 @@ data Event = Event
 -- ============================================================================
 
 data Cell = Cell !Word32 !Word32 !Word32  -- ch, fg, bg
+  deriving (Eq)
 
 instance Storable Cell where
   sizeOf _    = 12
@@ -159,8 +161,13 @@ instance Storable Cell where
 cellCh :: Cell -> Char
 cellCh (Cell c _ _) = chr (fromIntegral c)
 
+-- | `emptyCell` is a default space with default style — matches termbox2's
+-- tb_clear initialization. `present` skips any cell that still equals this
+-- value, mirroring termbox2's front/back buffer diff: cells at the default
+-- space are indistinguishable from "nothing drawn" and don't need to be
+-- emitted to the terminal.
 emptyCell :: Cell
-emptyCell = Cell 0x20 0 0  -- space
+emptyCell = Cell 0x20 0 0
 
 -- | Screen state: width, height, mutable cell buffer (row-major, w*h entries).
 screenBuf :: IORef (Int, Int, VSM.IOVector Cell)
@@ -189,7 +196,11 @@ isattyStdin = hIsTerminalDevice stdin
 reopenTty :: IO Bool
 reopenTty = hIsTerminalDevice stdin
 
--- | Initialize terminal: set raw-ish mode, allocate screen buffer.
+-- | Initialize terminal: raw-ish mode, query size via TIOCGWINSZ, allocate
+-- screen buffer, and emit the termbox2 init sequence (enter alt screen,
+-- save title stack, application cursor keys, application keypad, hide
+-- cursor, clear). Uses `tv_term_size` (ioctl) rather than
+-- `ANSI.getTerminalSize` so the DSR probe doesn't leak into stdout.
 init :: IO Int32
 init = do
   already <- readIORef initedRef
@@ -198,25 +209,40 @@ init = do
     hSetBuffering stdin NoBuffering
     hSetBuffering stdout NoBuffering
     hSetEcho stdin False
-    -- ANSI.getTerminalSize issues a DSR escape and reads stdin; on a
-    -- redirected stdin it blocks on EOF. Fall back to 80x24 when stdin is
-    -- not a tty so the -c test harness can run without a terminal attached.
     isTty <- hIsTerminalDevice stdin
     (w, h) <- if isTty
-                then ANSI.getTerminalSize >>= \case
-                  Just (rows, cols) -> pure (cols, rows)
-                  Nothing           -> pure (80, 24)
+                then queryTermSize
                 else pure (80, 24)
     buf <- VSM.replicate (w * h) emptyCell
     writeIORef screenBuf (w, h, buf)
     writeIORef initedRef True
     writeIORef headlessRef (not isTty)
     when isTty $ do
-      ANSI.hideCursor
-      ANSI.clearScreen
-      ANSI.setCursorPosition 0 0
+      -- Match termbox2 tb_init output: alt screen + XTWINOPS title stack
+      -- save + application cursor keys + keypad application mode + hide
+      -- cursor + clear + home. Byte-identical to what
+      -- Tc/.lake/build/bin/tc emits on startup.
+      -- Lean's tb_init order: cursor hide → charset/SGR reset → home → clear
+      TIO.hPutStr stdout "\x1b[?1049h\x1b[22;0;0t\x1b[?1h\x1b=\x1b[?25l\x1b(B\x1b[m\x1b[H\x1b[2J"
       hFlush stdout
     pure 0
+
+-- | Query terminal dimensions via ioctl(TIOCGWINSZ). Falls back to 80x24
+-- when the call fails (e.g. headless build host without a controlling tty).
+queryTermSize :: IO (Int, Int)
+queryTermSize =
+  alloca $ \pRows ->
+  alloca $ \pCols -> do
+    rc <- c_tv_term_size pRows pCols
+    if rc /= 0
+      then pure (80, 24)
+      else do
+        r <- peek pRows
+        c <- peek pCols
+        pure (fromIntegral c, fromIntegral r)
+
+foreign import ccall unsafe "tv_term_size"
+  c_tv_term_size :: Ptr CInt -> Ptr CInt -> IO CInt
 
 inited :: IO Bool
 inited = readIORef initedRef
@@ -225,8 +251,9 @@ shutdown :: IO ()
 shutdown = do
   on <- readIORef initedRef
   when on $ do
-    ANSI.showCursor
-    ANSI.setSGR [ANSI.Reset]
+    -- Inverse of init: SGR reset, show cursor, exit keypad/cursor-keys
+    -- modes, restore title stack, leave alt screen.
+    TIO.hPutStr stdout "\x1b[m\x1b[?25h\x1b[?1l\x1b>\x1b[23;0;0t\x1b[?1049l"
     hSetEcho stdin True
     hFlush stdout
     writeIORef initedRef False
@@ -248,18 +275,64 @@ clear = do
 
 -- | Flush cell buffer to the terminal. No-op in headless mode (tests, -c
 -- mode) so stdout stays clean for `bufferStr` capture.
+--
+-- Emits a termbox2-compatible stream: per contiguous run of same-style
+-- cells, write `\x1b(B\x1b[m` (charset reset), then bold/underline attrs,
+-- then `\x1b[38;5;FG;48;5;BGm` for 256-color fg/bg, then a cursor position,
+-- then the characters. Attribute bits (bold = 0x01000000,
+-- underline = 0x02000000) are encoded in the high byte of the `fg` word
+-- per cbits/tv_render.c's convention.
 present :: IO ()
 present = do
   headless <- readIORef headlessRef
   when (not headless) $ do
     (w, h, buf) <- readIORef screenBuf
-    ANSI.setCursorPosition 0 0
-    forM_ [0 .. h - 1] $ \y -> do
-      ANSI.setCursorPosition y 0
+    -- Track last emitted (style, cursor) across the entire frame so we
+    -- can elide SGR and cursor-position codes when nothing changed —
+    -- matches termbox2's tb_present output byte-for-byte.
+    styleRef  <- newIORef (Nothing :: Maybe (Word32, Word32))
+    cursorRef <- newIORef ((-1, -1) :: (Int, Int))
+    forM_ [0 .. h - 1] $ \y ->
       forM_ [0 .. w - 1] $ \x -> do
-        c <- VSM.read buf (y * w + x)
-        putChar (cellCh c)
+        cell <- VSM.read buf (y * w + x)
+        -- Skip cells that still match the default (space, default style):
+        -- termbox2's front/back diff collapses those to no-ops, so emitting
+        -- them would just waste bytes and bloat the .cast.
+        when (cell /= emptyCell) $ do
+          let Cell ch fg bg = cell
+          lastStyle <- readIORef styleRef
+          let style = (fg, bg)
+          when (Just style /= lastStyle) $ do
+            TIO.hPutStr stdout (sgrFor fg bg)
+            writeIORef styleRef (Just style)
+          lastCursor <- readIORef cursorRef
+          when (lastCursor /= (y, x)) $
+            TIO.hPutStr stdout (cursorAt y x)
+          putChar (chr (fromIntegral ch))
+          writeIORef cursorRef (y, x + 1)
     hFlush stdout
+
+-- | Build the SGR + charset-reset prefix for a cell. Extracts attr bits
+-- from `fg` before masking off the color. Matches Lean termbox2's output
+-- byte-for-byte: `\x1b(B\x1b[m` (charset reset + SGR reset) then optional
+-- bold/underline, then color codes. A 0 fg or bg is elided because the
+-- preceding `\x1b[m` already set both to default — emitting `38;5;0` or
+-- `48;5;0` after that would be a no-op but cost extra bytes.
+sgrFor :: Word32 -> Word32 -> Text
+sgrFor fg bg =
+  let color   = fg .&. 0x1FF
+      bgColor = bg .&. 0x1FF
+      bold    = if fg .&. 0x01000000 /= 0 then "\x1b[1m" else ""
+      ul      = if fg .&. 0x02000000 /= 0 then "\x1b[4m" else ""
+      colors  = case (color, bgColor) of
+        (0, 0) -> ""
+        (f, 0) -> T.pack ("\x1b[38;5;" ++ show f ++ "m")
+        (0, b) -> T.pack ("\x1b[48;5;" ++ show b ++ "m")
+        (f, b) -> T.pack ("\x1b[38;5;" ++ show f ++ ";48;5;" ++ show b ++ "m")
+  in "\x1b(B\x1b[m" <> bold <> ul <> colors
+
+cursorAt :: Int -> Int -> Text
+cursorAt y x = T.pack ("\x1b[" ++ show (y + 1) ++ ";" ++ show (x + 1) ++ "H")
 
 -- | Poll a single key event. Approximation: read one char, no escape decoding.
 pollEvent :: IO Event

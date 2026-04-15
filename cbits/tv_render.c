@@ -15,6 +15,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+int tv_term_size(int *rows, int *cols) {
+    struct winsize ws;
+    if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) < 0) return -1;
+    if (ws.ws_row == 0 || ws.ws_col == 0) return -1;
+    *rows = ws.ws_row;
+    *cols = ws.ws_col;
+    return 0;
+}
 
 /* === Style indices (shared with Lean reference) === */
 #define STYLE_CURSOR     0

@@ -32,6 +32,15 @@ typedef struct {
     uint32_t bg;
 } TvCell;
 
+/* Query the attached terminal size via ioctl(TIOCGWINSZ). Writes rows/cols
+ * on success and returns 0; returns -1 (leaving out-args untouched) when
+ * stdin is not a terminal. Mirrors how Lean's termbox2 tb_init reads the
+ * size — avoids ANSI.getTerminalSize's DSR probe which leaks an
+ * `\x1b[10000;10000H\x1b[6n` sequence into stdout that the gen_demo.py
+ * PTY recorder then captures into the .cast file.
+ */
+int tv_term_size(int *rows, int *cols);
+
 /* Render a full table grid into `cells`. Cells outside the render rectangle
  * (status, tabs, overlays written from Haskell) are left untouched.
  *

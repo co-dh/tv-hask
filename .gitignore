@@ -31,3 +31,4 @@ cabal.project.local
 .vscode
 .claude/
 test.log
+doc/__pycache__/

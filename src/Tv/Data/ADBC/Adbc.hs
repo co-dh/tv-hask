@@ -117,11 +117,13 @@ nrows qr = pure (fromIntegral (qrNRows qr))
 colName :: QueryResult -> Word64 -> IO Text
 colName qr i = pure (qrColNames qr V.! fromIntegral i)
 
--- | Adbc.colFmt — Lean returns a single-character Arrow format string.
--- DuckDB doesn't surface Arrow format strings directly, so we synthesize
--- one from ColType. The mapping matches Lean's `ColType`-derived format
--- characters so downstream parity holds (`.colFmts` in AdbcTable is only
--- consumed as a single char).
+-- | Adbc.colFmt — Lean returns the Arrow ArrowSchema.format string. DuckDB
+-- doesn't surface that directly, so we synthesize the first character per
+-- Arrow conventions: int = 'l', float = 'g', str = 'u', bool = 'b', and
+-- 'd'/'t'/'s' for decimal/time/timestamp. The downstream consumer in
+-- cbits/tv_render.c reads only the first char, and all date/time types
+-- (Arrow tdD / ttu / tsu:*) must start with 't' so `type_char_fmt` maps
+-- them to the '@' header indicator.
 colFmt :: QueryResult -> Word64 -> IO Text
 colFmt qr i =
   let ty = qrColTypes qr V.! fromIntegral i
@@ -131,8 +133,8 @@ colFmt qr i =
        Tc.ColTypeDecimal   -> 'd'
        Tc.ColTypeStr       -> 'u'
        Tc.ColTypeDate      -> 't'
-       Tc.ColTypeTime      -> 'T'
-       Tc.ColTypeTimestamp -> 's'
+       Tc.ColTypeTime      -> 't'
+       Tc.ColTypeTimestamp -> 't'
        Tc.ColTypeBool      -> 'b'
        Tc.ColTypeOther     -> '?'
 
