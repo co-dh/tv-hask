@@ -201,7 +201,8 @@ test_no_stderr = do
   log "no_stderr"
   -- search for eprintln-equivalent Haskell emissions in src/ (excluding app/)
   -- Lean checks `eprintln` in Tc/ except App.lean; our equivalent is hPutStrLn stderr / TIO.hPutStrLn stderr
-  (_, out, _) <- readProcessWithExitCode "grep" ["-rln", "hPutStrLn stderr", "src/Tv/"] ""
+  (_, out, _) <- readProcessWithExitCode "grep"
+    ["-rn", "hPutStrLn stderr", "src/Tv/", "--exclude-dir=App"] ""
   assert (null (T.unpack (T.strip (T.pack out)))) "No hPutStrLn stderr in src/Tv/"
 
 -- ============================================================================

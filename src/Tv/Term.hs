@@ -173,6 +173,13 @@ initedRef :: IORef Bool
 initedRef = unsafePerformIO (newIORef False)
 {-# NOINLINE initedRef #-}
 
+-- | Headless flag: True when the terminal is not a tty (tests, -c mode).
+-- Mirrors `headless` in Tc/c/term_core.c: when set, `present` is a no-op so
+-- stdout is left clean for the test harness to read `bufferStr` instead.
+headlessRef :: IORef Bool
+headlessRef = unsafePerformIO (newIORef False)
+{-# NOINLINE headlessRef #-}
+
 -- | isatty(stdin)
 isattyStdin :: IO Bool
 isattyStdin = hIsTerminalDevice stdin
@@ -203,6 +210,7 @@ init = do
     buf <- VSM.replicate (w * h) emptyCell
     writeIORef screenBuf (w, h, buf)
     writeIORef initedRef True
+    writeIORef headlessRef (not isTty)
     when isTty $ do
       ANSI.hideCursor
       ANSI.clearScreen
@@ -238,17 +246,20 @@ clear = do
   (_, _, buf) <- readIORef screenBuf
   VSM.set buf emptyCell
 
--- | Flush cell buffer to the terminal.
+-- | Flush cell buffer to the terminal. No-op in headless mode (tests, -c
+-- mode) so stdout stays clean for `bufferStr` capture.
 present :: IO ()
 present = do
-  (w, h, buf) <- readIORef screenBuf
-  ANSI.setCursorPosition 0 0
-  forM_ [0 .. h - 1] $ \y -> do
-    ANSI.setCursorPosition y 0
-    forM_ [0 .. w - 1] $ \x -> do
-      c <- VSM.read buf (y * w + x)
-      putChar (cellCh c)
-  hFlush stdout
+  headless <- readIORef headlessRef
+  when (not headless) $ do
+    (w, h, buf) <- readIORef screenBuf
+    ANSI.setCursorPosition 0 0
+    forM_ [0 .. h - 1] $ \y -> do
+      ANSI.setCursorPosition y 0
+      forM_ [0 .. w - 1] $ \x -> do
+        c <- VSM.read buf (y * w + x)
+        putChar (cellCh c)
+    hFlush stdout
 
 -- | Poll a single key event. Approximation: read one char, no escape decoding.
 pollEvent :: IO Event
@@ -264,13 +275,16 @@ pollEvent = do
     }
 
 -- | Read termbox internal cell buffer as string (rows separated by newlines).
+-- Trailing spaces on each row are trimmed to match Lean's lean_tb_buffer_str.
 -- Used by tests to assert on-screen content.
 bufferStr :: IO Text
 bufferStr = do
   (w, h, buf) <- readIORef screenBuf
   rows <- forM [0 .. h - 1] $ \y -> do
-    cs <- forM [0 .. w - 1] $ \x -> cellCh <$> VSM.read buf (y * w + x)
-    pure (T.pack cs)
+    cs <- forM [0 .. w - 1] $ \x -> do
+      Cell c _ _ <- VSM.read buf (y * w + x)
+      pure (if c == 0 then ' ' else chr (fromIntegral c))
+    pure (T.dropWhileEnd (== ' ') (T.pack cs))
   pure (T.intercalate "\n" rows)
 
 -- | Write text + padding into the cell buffer at (x, y), padding to `len`.

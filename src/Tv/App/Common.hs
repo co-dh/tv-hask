@@ -184,9 +184,7 @@ runViewEffect a ci v' e = do
         Right Nothing  -> pure (ActOk a')
         Left  err      -> errAction a' err
     EffectSort colIdx sels grp asc -> tryStk a ci $ do
-      tbl' <- AdbcTable.sortBy (View.tbl s) sels asc
-      _ <- pure grp  -- grp arg present for parity; sortBy in Haskell uses sels
-      _ <- pure colIdx
+      tbl' <- TblOps.modifyTableSort (View.tbl s) colIdx sels grp asc
       let mrv = View.rebuild v' tbl' colIdx V.empty (Nav.cur (Nav.row (View.nav v')))
       pure (fmap (View.setCur s) mrv)
     EffectExclude cols -> tryStk a ci $ do

@@ -31,16 +31,14 @@ import qualified System.IO as IO
 import System.Process (readProcessWithExitCode)
 import System.Exit (ExitCode (..))
 
--- | Path to the built `tv` binary used by the shell-out based tests.
---   Kept literal to the Lean reference (Lean tests use this path).
+-- | Path to the tv binary the tests shell out to. In the Lean reference this
+--   was `.lake/build/bin/tv`; in the Haskell port it's the cabal-built binary.
 bin :: FilePath
-bin = ".lake/build/bin/tv"
+bin = "dist-newstyle/build/x86_64-linux/ghc-9.6.6/tv-hask-0.1.0.0/x/tv/build/tv/tv"
 
--- | Path to the cabal-built Haskell `tv` binary. Used by the Haskell-side
---   screen tests that need to spawn the ported binary (the Lean `.lake` path
---   does not exist in this repo).
+-- | Alias kept for call sites that explicitly spawn the Haskell binary.
 tvHaskBin :: FilePath
-tvHaskBin = "dist-newstyle/build/x86_64-linux/ghc-9.6.6/tv-hask-0.1.0.0/x/tv/build/tv/tv"
+tvHaskBin = bin
 
 log :: Text -> IO ()
 log msg = withFile "test.log" AppendMode $ \h -> do
