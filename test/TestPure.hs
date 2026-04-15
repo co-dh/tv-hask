@@ -109,6 +109,24 @@ keyMapTests = testGroup "evToKey"
       Key.evToKey (mkEv { eventMod = 2, eventKeyCode = 21 }) @?= "<C-u>"
   , testCase "alt+x printable -> <A-x>" $
       Key.evToKey (mkEv { eventMod = Term.modAlt, eventCh = 120 }) @?= "<A-x>"
+  -- pollEvent path: raw PTY byte → Event → evToKey. This is the path
+  -- demos/interactive sessions take (the -c flag path uses tokenizeKeys
+  -- and skips pollEvent entirely), so the round-trip needs its own test
+  -- or control chars silently come out wrong ("<C-m>" instead of "<ret>").
+  , testCase "byteToEvent CR -> <ret>" $
+      Key.evToKey (Term.byteToEvent '\r') @?= "<ret>"
+  , testCase "byteToEvent LF -> <ret>" $
+      Key.evToKey (Term.byteToEvent '\n') @?= "<ret>"
+  , testCase "byteToEvent 0x7F -> <bs>" $
+      Key.evToKey (Term.byteToEvent '\x7F') @?= "<bs>"
+  , testCase "byteToEvent 0x08 -> <bs>" $
+      Key.evToKey (Term.byteToEvent '\x08') @?= "<bs>"
+  , testCase "byteToEvent ESC -> <esc>" $
+      Key.evToKey (Term.byteToEvent '\x1B') @?= "<esc>"
+  , testCase "byteToEvent 'j' -> j" $
+      Key.evToKey (Term.byteToEvent 'j') @?= "j"
+  , testCase "byteToEvent ' ' -> ' '" $
+      Key.evToKey (Term.byteToEvent ' ') @?= " "
   ]
 
 -- ## View.update Tests

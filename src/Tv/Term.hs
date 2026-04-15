@@ -32,7 +32,7 @@ module Tv.Term
     -- tty / lifecycle
   , isattyStdin, reopenTty, init, inited, shutdown
     -- screen
-  , width, height, clear, present, pollEvent, bufferStr
+  , width, height, clear, present, pollEvent, byteToEvent, bufferStr
   , printPadC, renderTable, print
   ) where
 
@@ -355,12 +355,11 @@ sgrFor fg bg =
 cursorAt :: Int -> Int -> Text
 cursorAt y x = T.pack ("\x1b[" ++ show (y + 1) ++ ";" ++ show (x + 1) ++ "H")
 
--- | Poll a single key event. Approximation: read one char, no escape decoding.
+-- | Pure byte → Event translation (factored out of pollEvent for unit tests).
 -- ASCII control chars map to the termbox key constants so evToKey's keyNames
 -- lookup matches (0x0D → keyEnter → "<ret>", 0x7F → keyBackspace2 → "<bs>", …).
-pollEvent :: IO Event
-pollEvent = do
-  c <- hGetChar stdin
+byteToEvent :: Char -> Event
+byteToEvent c =
   let code = fromIntegral (fromEnum c) :: Word16
       (kCode, kCh) = case code of
         0x0D -> (keyEnter, 0)         -- CR → Enter
@@ -369,14 +368,18 @@ pollEvent = do
         0x7F -> (keyBackspace2, 0)
         0x1B -> (keyEsc, 0)           -- no escape-sequence decoding yet
         _    -> (0, fromIntegral code)
-  pure Event
-    { eventType = eventKey
-    , eventMod = 0
-    , eventKeyCode = kCode
-    , eventCh = kCh
-    , eventW = 0
-    , eventH = 0
-    }
+  in Event
+       { eventType = eventKey
+       , eventMod = 0
+       , eventKeyCode = kCode
+       , eventCh = kCh
+       , eventW = 0
+       , eventH = 0
+       }
+
+-- | Poll a single key event. Approximation: read one char, no escape decoding.
+pollEvent :: IO Event
+pollEvent = byteToEvent <$> hGetChar stdin
 
 -- | Read termbox internal cell buffer as string (rows separated by newlines).
 -- Trailing spaces on each row are trimmed to match Lean's lean_tb_buffer_str.
