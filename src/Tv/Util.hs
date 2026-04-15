@@ -6,14 +6,21 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Util where
 
+import Control.Concurrent (forkIO)
 import Control.Exception (SomeException, try, bracket_)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Control.Monad (forever, void)
+import qualified Data.ByteString as BS
+import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef')
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
+import qualified Data.Text.Encoding.Error as TEE
 import qualified Data.Text.IO as TIO
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Time.LocalTime (getCurrentTimeZone, utcToLocalTime)
+import qualified Network.Socket as NS
+import qualified Network.Socket.ByteString as NSB
 import System.Directory (createDirectoryIfMissing, removeFile, removePathForcibly)
 import System.Environment (lookupEnv, setEnv)
 import System.FilePath ((</>))
@@ -113,17 +120,75 @@ cleanupTmp = do
 
 -- ============================================================================
 -- Socket: unix socket command channel
+--
+-- Matches Tc/c/sock_shim.c's wire protocol: bind a Unix domain socket at
+-- /tmp/tv-<pid>.sock, spawn a listener thread that accepts one-shot
+-- connections, reads up to 256 bytes per connection, and stores the
+-- stripped command string in a single-slot mutex-guarded buffer
+-- (`sockBufRef`). `sockPollCmd` is a destructive read — it returns the
+-- current buffered command and clears it in one atomic step, so main-loop
+-- polling consumes each command exactly once.
+--
+-- Implemented in pure Haskell via the `network` package (no C FFI) to
+-- avoid a second extern, and because a userland thread is enough: tv's
+-- main loop polls every tick, so the listener never needs to be faster
+-- than the render cadence.
 -- ============================================================================
 
--- C externs in Lean; stubbed here (unix socket IPC not yet wired in Haskell port)
+sockBufRef :: IORef Text
+sockBufRef = unsafePerformIO (newIORef T.empty)
+{-# NOINLINE sockBufRef #-}
+
+sockListenSock :: IORef (Maybe NS.Socket)
+sockListenSock = unsafePerformIO (newIORef Nothing)
+{-# NOINLINE sockListenSock #-}
+
 sockStart :: String -> IO Bool
-sockStart _ = pure False
+sockStart p = do
+  -- Stale socket file from a previous run: ignore errors, we'll rebind.
+  tryRemoveFile p
+  r <- try $ do
+    s <- NS.socket NS.AF_UNIX NS.Stream NS.defaultProtocol
+    NS.bind s (NS.SockAddrUnix p)
+    NS.listen s 4
+    _ <- forkIO (acceptLoop s)
+    writeIORef sockListenSock (Just s)
+    pure ()
+  case r of
+    Right () -> pure True
+    Left (e :: SomeException) -> do
+      write "socket" (T.pack ("sockStart " ++ p ++ ": " ++ show e))
+      pure False
+  where
+    acceptLoop s = forever $ do
+      accRes <- try (NS.accept s) :: IO (Either SomeException (NS.Socket, NS.SockAddr))
+      case accRes of
+        Left _          -> pure ()  -- closed; loop dies with the socket
+        Right (conn, _) -> do
+          _ <- forkIO (handleConn conn)
+          pure ()
+    handleConn conn = do
+      bs <- try (NSB.recv conn 256) :: IO (Either SomeException BS.ByteString)
+      case bs of
+        Right b  ->
+          let cmd = T.strip (TE.decodeUtf8With TEE.lenientDecode b)
+          in writeIORef sockBufRef cmd
+        Left _   -> pure ()
+      void (try (NS.close conn) :: IO (Either SomeException ()))
 
 sockPollCmd :: IO String
-sockPollCmd = pure ""
+sockPollCmd = do
+  cmd <- atomicModifyIORef' sockBufRef (\t -> (T.empty, t))
+  pure (T.unpack cmd)
 
 sockClose :: IO ()
-sockClose = pure ()
+sockClose = do
+  m <- readIORef sockListenSock
+  case m of
+    Nothing -> pure ()
+    Just s  -> do
+      void (try (NS.close s) :: IO (Either SomeException ()))
+      writeIORef sockListenSock Nothing
 
 setEnvVar :: String -> String -> IO ()
 setEnvVar = setEnv

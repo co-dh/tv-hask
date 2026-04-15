@@ -117,7 +117,7 @@ ducktabsF = "from dtabs | tbl_info_filtered"
 -- | PRQL function definitions, embedded at compile time. Mirrors Lean's
 -- @include_str "funcs.prql"@.
 funcsBytes :: ByteString
-funcsBytes = $(embedFile "data/funcs.prql")
+funcsBytes = $(embedFile "src/Tv/Data/ADBC/funcs.prql")
 
 funcs :: Text
 funcs = TE.decodeUtf8 funcsBytes

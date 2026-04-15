@@ -1,4 +1,0 @@
-UNIT FILE                   STATE    PRESET
-foo.service                 enabled  enabled
-bar.mount                   disabled -
-baz.timer                   static   -
