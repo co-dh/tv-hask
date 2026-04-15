@@ -10,14 +10,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Tv.View
   ( View(..)
-  , pathL
-  , vkindL
-  , dispL
-  , precL
-  , widthAdjL
-  , widthsL
-  , searchL
-  , sameHideL
   , new
   , curDir
   , tabName
@@ -26,7 +18,6 @@ module Tv.View
   , rebuild
   , update
   , ViewStack(..)
-  , hdL
   , cur
   , tbl
   , hasParent
@@ -45,8 +36,8 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8, Word32)
 
+import Optics.Core ((%), (&), (.~), (^.))
 import Optics.TH (makeFieldLabelsNoPrefix)
-import Tv.Lens (Lens'(..))
 import Tv.Nav (NavState)
 import qualified Tv.Nav as Nav
 import Tv.Render (ViewState)
@@ -75,38 +66,11 @@ data View t = View
   }
 makeFieldLabelsNoPrefix ''View
 
--- | Field lenses for non-dependent View fields, auto-generated in Lean via `gen_lenses`.
--- (nRows/nCols/nav are skipped — their types are mutually dependent, so they can't
--- be expressed as simple Lens' (View t) a — the codomain would depend on the source.)
-pathL :: Lens' (View t) Text
-pathL = Lens' { get = path, set = \a s -> s { path = a } }
-
-vkindL :: Lens' (View t) ViewKind
-vkindL = Lens' { get = vkind, set = \a s -> s { vkind = a } }
-
-dispL :: Lens' (View t) Text
-dispL = Lens' { get = disp, set = \a s -> s { disp = a } }
-
-precL :: Lens' (View t) Int
-precL = Lens' { get = prec, set = \a s -> s { prec = a } }
-
-widthAdjL :: Lens' (View t) Int
-widthAdjL = Lens' { get = widthAdj, set = \a s -> s { widthAdj = a } }
-
-widthsL :: Lens' (View t) (Vector Int)
-widthsL = Lens' { get = widths, set = \a s -> s { widths = a } }
-
-searchL :: Lens' (View t) (Maybe (Int, Text))
-searchL = Lens' { get = search, set = \a s -> s { search = a } }
-
-sameHideL :: Lens' (View t) (Vector Text)
-sameHideL = Lens' { get = sameHide, set = \a s -> s { sameHide = a } }
-
 -- | Create from NavState + path
 new :: TblOps t => NavState t -> Text -> View t
 new nav_ path_ = View
-  { nRows    = TblOps.nRows (Nav.tbl nav_)
-  , nCols    = V.length (TblOps.colNames (Nav.tbl nav_))
+  { nRows    = TblOps.nRows (nav_ ^. #tbl)
+  , nCols    = V.length (TblOps.colNames (nav_ ^. #tbl))
   , nav      = nav_
   , path     = path_
   , vkind    = VkTbl
@@ -120,21 +84,21 @@ new nav_ path_ = View
 
 -- | Current folder directory (or "." for non-folder views)
 curDir :: View t -> Text
-curDir v = case vkind v of
+curDir v = case v ^. #vkind of
   VkFld dir _ -> dir
   _           -> "."
 
 -- | Tab display name: custom disp or filename from path
 tabName :: View t -> Text
-tabName v = case vkind v of
+tabName v = case v ^. #vkind of
   VkFld p _ ->
-    if T.null (disp v) || T.isPrefixOf "/" p then p else disp v
+    if T.null (v ^. #disp) || T.isPrefixOf "/" p then p else v ^. #disp
   _ ->
-    if T.null (disp v)
-      then case reverse (T.splitOn "/" (path v)) of
+    if T.null (v ^. #disp)
+      then case reverse (T.splitOn "/" (v ^. #path)) of
              (x:_) -> x
-             []    -> path v
-      else disp v
+             []    -> v ^. #path
+      else v ^. #disp
 
 -- | Render the view, returns (ViewState, updated View with new widths)
 doRender
@@ -143,12 +107,12 @@ doRender
   -> Word8 -> Vector Text
   -> IO (ViewState, View t)
 doRender v vs styles heatMode sparklines = do
-  let names = TblOps.colNames (Nav.tbl (nav v))
-  let extraHidden = V.mapMaybe (Nav.idxOf names) (sameHide v)
+  let names = TblOps.colNames (v ^. #nav % #tbl)
+  let extraHidden = V.mapMaybe (Nav.idxOf names) (v ^. #sameHide)
   (vs', widths_) <-
-    Render.render (nav v) vs (widths v) styles (prec v) (widthAdj v)
-      (vkind v) heatMode sparklines extraHidden
-  pure (vs', v { widths = widths_ })
+    Render.render (v ^. #nav) vs (v ^. #widths) styles (v ^. #prec) (v ^. #widthAdj)
+      (v ^. #vkind) heatMode sparklines extraHidden
+  pure (vs', v & #widths .~ widths_)
 
 -- | Create View from table + path (returns Nothing if empty)
 fromTbl
@@ -172,8 +136,11 @@ rebuild old tbl_ col_ grp_ row_ =
   in if nCols_ > 0 && nRows_ > 0
        then
          let nav0 = Nav.newAt tbl_ col_ grp_ row_
-             nav1 = set Nav.hiddenL (Nav.hidden (nav old)) nav0
-         in Just old { nRows = nRows_, nCols = nCols_, nav = nav1, widths = V.empty }
+             nav1 = nav0 & #hidden .~ (old ^. #nav % #hidden)
+         in Just (old & #nRows  .~ nRows_
+                      & #nCols  .~ nCols_
+                      & #nav    .~ nav1
+                      & #widths .~ V.empty)
        else Nothing
 
 -- | Pure update by command
@@ -184,7 +151,7 @@ update v h rowPg =
     CmdSortDesc -> sortEff False
     CmdColExclude ->
       let name = Nav.curColName n
-          hid  = Nav.hidden n
+          hid  = n ^. #hidden
           cols =
             if V.null hid then V.singleton name
             else if V.elem name hid then hid
@@ -193,17 +160,17 @@ update v h rowPg =
     _ -> case Nav.exec h n rowPg of
            Nothing -> Nothing
            Just nav' ->
-             let needsMore = Nav.cur (Nav.row nav') + 1 >= nRows v
-                           && TblOps.totalRows (Nav.tbl n) > nRows v
+             let needsMore = nav' ^. #row % #cur + 1 >= v ^. #nRows
+                           && TblOps.totalRows (n ^. #tbl) > v ^. #nRows
                            && (h == CmdRowInc || h == CmdRowPgdn || h == CmdRowBot)
-             in Just (v { nav = nav' }, if needsMore then EffectFetchMore else EffectNone)
+             in Just (v & #nav .~ nav', if needsMore then EffectFetchMore else EffectNone)
   where
-    n       = nav v
+    n       = v ^. #nav
     names   = Nav.colNames n
     curCol  = Nav.curColIdx n
     sortEff asc =
-      let selIdxs = V.mapMaybe (Nav.idxOf names) (Nav.sels (Nav.col n))
-          grpIdxs = V.mapMaybe (Nav.idxOf names) (Nav.grp n)
+      let selIdxs = V.mapMaybe (Nav.idxOf names) (n ^. #col % #sels)
+          grpIdxs = V.mapMaybe (Nav.idxOf names) (n ^. #grp)
       in Just (v, EffectSort curCol selIdxs grpIdxs asc)
 
 {-! ## ViewStack: non-empty view stack -/-}
@@ -215,40 +182,36 @@ data ViewStack t = ViewStack
   }
 makeFieldLabelsNoPrefix ''ViewStack
 
--- | Field lens for the current (head) view on the stack.
-hdL :: Lens' (ViewStack t) (View t)
-hdL = Lens' { get = hd, set = \a s -> s { hd = a } }
-
 cur :: ViewStack t -> View t
-cur s = hd s
+cur s = s ^. #hd
 
 tbl :: ViewStack t -> t
-tbl s = Nav.tbl (nav (hd s))
+tbl s = s ^. #hd % #nav % #tbl
 
 hasParent :: ViewStack t -> Bool
-hasParent s = not (null (tl s))
+hasParent s = not (null (s ^. #tl))
 
 setCur :: ViewStack t -> View t -> ViewStack t
-setCur s v = s { hd = v }
+setCur s v = s & #hd .~ v
 
 push :: ViewStack t -> View t -> ViewStack t
-push s v = ViewStack { hd = v, tl = hd s : tl s }
+push s v = ViewStack { hd = v, tl = (s ^. #hd) : (s ^. #tl) }
 
 pop :: ViewStack t -> Maybe (ViewStack t)
-pop s = case tl s of
+pop s = case s ^. #tl of
   h0 : t0 -> Just (ViewStack { hd = h0, tl = t0 })
   []      -> Nothing
 
 swap :: ViewStack t -> ViewStack t
-swap s = case tl s of
-  h0 : t0 -> ViewStack { hd = h0, tl = hd s : t0 }
+swap s = case s ^. #tl of
+  h0 : t0 -> ViewStack { hd = h0, tl = (s ^. #hd) : t0 }
   []      -> s
 
 dup :: ViewStack t -> ViewStack t
-dup s = ViewStack { hd = hd s, tl = hd s : tl s }
+dup s = ViewStack { hd = s ^. #hd, tl = (s ^. #hd) : (s ^. #tl) }
 
 tabNames :: ViewStack t -> Vector Text
-tabNames s = V.fromList (map tabName (hd s : tl s))
+tabNames s = V.fromList (map tabName ((s ^. #hd) : (s ^. #tl)))
 
 -- | Pure update by command. q on empty stack -> quit
 updateStack :: ViewStack t -> Cmd -> Maybe (ViewStack t, Effect)

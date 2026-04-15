@@ -32,7 +32,7 @@ import qualified Data.Vector as V
 import qualified Data.List as L
 import Text.Read (readMaybe)
 
-import Tv.Lens (modify)
+import Optics.Core ((%), (&), (.~), (^.), over)
 import Tv.Nav (NavState, rowCurL, colCurL, finClamp)
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd(..), TblOps, ColType, colTypeIsNumeric)
@@ -51,22 +51,22 @@ moveRowTo
   => ViewStack t -> Int -> Maybe (Int, Text) -> ViewStack t
 moveRowTo s rowIdx search_ =
   let v      = cur s
-      n      = nav v
-      nRows_ = TblOps.nRows (Nav.tbl n)
-      delta  = rowIdx - Nav.cur (Nav.row n)
-      nav'   = modify rowCurL (\f -> finClamp nRows_ f delta) n
-  in setCur s (v { nav = nav'
-                 , View.search = maybe (View.search v) Just search_ })
+      n      = v ^. #nav
+      nRows_ = TblOps.nRows (n ^. #tbl)
+      delta  = rowIdx - n ^. #row % #cur
+      nav'   = over rowCurL (\f -> finClamp nRows_ f delta) n
+  in setCur s (v & #nav .~ nav'
+                 & #search .~ maybe (v ^. #search) Just search_)
 
 -- | Move col cursor to target index (pure helper)
 moveColTo :: TblOps t => ViewStack t -> Int -> ViewStack t
 moveColTo s colIdx =
   let v      = cur s
-      n      = nav v
-      nCols_ = V.length (TblOps.colNames (Nav.tbl n))
-      delta  = colIdx - Nav.cur (Nav.col n)
-      nav'   = modify colCurL (\f -> finClamp nCols_ f delta) n
-  in setCur s (v { nav = nav' })
+      n      = v ^. #nav
+      nCols_ = V.length (TblOps.colNames (n ^. #tbl))
+      delta  = colIdx - n ^. #col % #cur
+      nav'   = over colCurL (\f -> finClamp nCols_ f delta) n
+  in setCur s (v & #nav .~ nav')
 
 -- | col search: fzf jump to column by name (IO version for backward compat)
 colSearch :: TblOps t => ViewStack t -> IO (ViewStack t)
@@ -84,9 +84,9 @@ withDistinct
   -> IO (ViewStack t)
 withDistinct s f = do
   let v       = cur s
-      curCol  = Nav.curColIdx (nav v)
-      curName = Nav.curColName (nav v)
-  vals <- TblOps.distinct (Nav.tbl (nav v)) curCol
+      curCol  = Nav.curColIdx (v ^. #nav)
+      curName = Nav.curColName (v ^. #nav)
+  vals <- TblOps.distinct (v ^. #nav % #tbl) curCol
   let sorted = V.fromList (L.sort (V.toList vals))
   f curCol curName sorted
 
@@ -98,7 +98,7 @@ rowSearch s = withDistinct s $ \curCol curName vals -> do
   case mr of
     Nothing     -> pure s
     Just result -> do
-      let start = Nav.cur (Nav.row (nav (cur s))) + 1
+      let start = cur s ^. #nav % #row % #cur + 1
       mri <- TblOps.findRow (tbl s) curCol result start True
       case mri of
         Nothing     -> pure s
@@ -213,11 +213,12 @@ rowSearchLive s preview = withDistinct s $ \curCol curName vals -> do
 searchDir :: TblOps t => ViewStack t -> Bool -> IO (ViewStack t)
 searchDir s fwd = do
   let v = cur s
-  case View.search v of
+  case v ^. #search of
     Nothing         -> pure s
     Just (col, val) -> do
-      let start = if fwd then Nav.cur (Nav.row (nav v)) + 1 else Nav.cur (Nav.row (nav v))
-      mri <- TblOps.findRow (Nav.tbl (nav v)) col val start fwd
+      let rowCur = v ^. #nav % #row % #cur
+          start  = if fwd then rowCur + 1 else rowCur
+      mri <- TblOps.findRow (v ^. #nav % #tbl) col val start fwd
       case mri of
         Nothing     -> pure s
         Just rowIdx -> pure (moveRowTo s rowIdx Nothing)
@@ -247,18 +248,18 @@ rowFilter s = withDistinct s $ \_curCol curName vals -> do
               -- `rebuild tbl' (row := 0)` default). Resetting col=0 would
               -- snap the cursor back to the first column.
               let v      = cur s
-                  curCol = Nav.curColIdx (nav v)
-                  grp'   = Nav.grp (nav v)
+                  curCol = Nav.curColIdx (v ^. #nav)
+                  grp'   = v ^. #nav % #grp
               in case View.rebuild v tbl' curCol grp' 0 of
                    Nothing -> pure s
-                   Just v' -> pure (push s (v' { disp = "\\" <> curName }))
+                   Just v' -> pure (push s (v' & #disp .~ ("\\" <> curName)))
 
 -- | Jump to column by name directly (no fzf). Called by socket/dispatch.
 colJumpWith :: TblOps t => ViewStack t -> Text -> IO (ViewStack t)
 colJumpWith s name = do
   if T.null name
     then pure s
-    else case V.findIndex (== name) (Nav.dispColNames (nav (cur s))) of
+    else case V.findIndex (== name) (Nav.dispColNames (cur s ^. #nav)) of
       Just idx -> pure (moveColTo s idx)
       Nothing  -> pure s
 
@@ -277,11 +278,11 @@ filterWith s expr = do
           -- would jump the cursor home, which the filter demo explicitly
           -- asserts should NOT happen (cursor stays on the filtered col).
           let v      = cur s
-              curCol = Nav.curColIdx (nav v)
-              grp'   = Nav.grp (nav v)
+              curCol = Nav.curColIdx (v ^. #nav)
+              grp'   = v ^. #nav % #grp
           in case View.rebuild v tbl' curCol grp' 0 of
                Nothing -> pure s
-               Just v' -> pure (push s (v' { disp = "\\" <> expr }))
+               Just v' -> pure (push s (v' & #disp .~ ("\\" <> expr)))
 
 -- | Search for value directly (no fzf). Called by socket/dispatch.
 searchWith :: TblOps t => ViewStack t -> Text -> IO (ViewStack t)
@@ -290,8 +291,8 @@ searchWith s val = do
     then pure s
     else do
       let v      = cur s
-          curCol = Nav.curColIdx (nav v)
-          start  = Nav.cur (Nav.row (nav v)) + 1
+          curCol = Nav.curColIdx (v ^. #nav)
+          start  = v ^. #nav % #row % #cur + 1
       mri <- TblOps.findRow (tbl s) curCol val start True
       case mri of
         Nothing     -> pure s

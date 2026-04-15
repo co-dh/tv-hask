@@ -20,7 +20,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
 
-import Tv.Lens (set)
+import Optics.Core ((%), (&), (.~), (^.), set)
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd (..), ViewKind (..))
 import qualified Tv.Types as TblOps
@@ -35,7 +35,7 @@ import Tv.Data.ADBC.Table (AdbcTable)
 -- | Extract meta table name from the current view's AdbcTable query base.
 --   e.g. "from tc_meta_3" -> "tc_meta_3"
 metaTblName :: ViewStack AdbcTable -> Text
-metaTblName s = T.strip (T.drop 5 (Prql.base (Table.query (View.tbl s))))  -- drop "from "
+metaTblName s = T.strip (T.drop 5 (Table.query (View.tbl s) ^. #base))  -- drop "from "
 
 -- | Push column metadata view onto stack
 push :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
@@ -45,25 +45,25 @@ push s = do
     Nothing -> pure Nothing
     Just adbc0 -> do
       -- Enrich meta with DuckDB column comments (e.g. osquery views with COMMENT ON COLUMN)
-      let metaBase = T.strip (T.drop 5 (Prql.base (Table.query adbc0)))
-      enriched <- Ops.enrichComments metaBase (View.path (View.cur s))
+      let metaBase = T.strip (T.drop 5 (Table.query adbc0 ^. #base))
+      enriched <- Ops.enrichComments metaBase (View.cur s ^. #path)
       adbc <-
         if enriched
           then fromMaybe adbc0 <$> Table.requery (Table.query adbc0) (Table.totalRows adbc0)
           else pure adbc0
-      let mV = View.fromTbl adbc (View.path (View.cur s)) 0 mempty 0
+      let mV = View.fromTbl adbc (View.cur s ^. #path) 0 mempty 0
       pure $ fmap
-        (\v -> View.push s (v { View.vkind = VkColMeta, View.disp = "meta" }))
+        (\v -> View.push s (v & #vkind .~ VkColMeta & #disp .~ "meta"))
         mV
 
 -- | Select meta rows matching PRQL filter
 selBy :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 selBy s flt =
-  if View.vkind (View.cur s) /= VkColMeta then pure s
+  if View.cur s ^. #vkind /= VkColMeta then pure s
   else do
     rows <- Ops.queryMetaIndices (metaTblName s) flt
     let v = View.cur s
-    pure (View.setCur s (v { View.nav = set Nav.rowSelsL rows (View.nav v) }))
+    pure (View.setCur s (v & #nav .~ set Nav.rowSelsL rows (v ^. #nav)))
 
 selNull :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 selNull s = selBy s "null_pct == 100"
@@ -74,17 +74,17 @@ selSingle s = selBy s "dist == 1"
 -- | Set key cols from meta view selections, pop to parent, select cols
 setKey :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 setKey s =
-  if View.vkind (View.cur s) /= VkColMeta then pure (Just s)
+  if View.cur s ^. #vkind /= VkColMeta then pure (Just s)
   else if not (View.hasParent s) then pure (Just s)
   else do
-    colNames <- Ops.queryMetaColNames (metaTblName s) (Nav.sels (Nav.row (View.nav (View.cur s))))
+    colNames <- Ops.queryMetaColNames (metaTblName s) (View.cur s ^. #nav % #row % #sels)
     case View.pop s of
       Just s' -> do
         let di = Nav.dispOrder colNames (TblOps.colNames (View.tbl s'))
             v  = View.cur s'
             nav' = set Nav.colSelsL colNames
-                     ((View.nav v) { Nav.grp = colNames, Nav.dispIdxs = di })
-        pure (Just (View.setCur s' (v { View.nav = nav' })))
+                     ((v ^. #nav) & #grp .~ colNames & #dispIdxs .~ di)
+        pure (Just (View.setCur s' (v & #nav .~ nav')))
       Nothing -> pure (Just s)
 
 -- | Dispatch meta handler to IO action. Returns Nothing if handler not recognized.
@@ -96,5 +96,5 @@ dispatch s h = case h of
   CmdMetaSelNull   -> Just (Just <$> selNull s)
   CmdMetaSelSingle -> Just (Just <$> selSingle s)
   CmdMetaSetKey ->
-    if View.vkind (View.cur s) == VkColMeta then Just (setKey s) else Nothing
+    if View.cur s ^. #vkind == VkColMeta then Just (setKey s) else Nothing
   _ -> Nothing

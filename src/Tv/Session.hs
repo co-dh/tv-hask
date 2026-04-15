@@ -44,7 +44,7 @@ import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Data.ADBC.Table as AdbcTable
 import qualified Tv.Folder as Folder
 import qualified Tv.Fzf as Fzf
-import Tv.Lens (set)
+import Optics.Core ((%), (&), (.~), (^.), set)
 import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
 import qualified Tv.StrEnum as StrEnum
@@ -293,16 +293,15 @@ restoreView j = do
             then pure Nothing
             else case View.fromTbl tbl path_ (min col_ (nCols_ - 1)) grp_ (min row_ (nRows_ - 1)) of
               Just view ->
-                let nav0 = (View.nav view) { Nav.hidden = hidden_ }
+                let nav0 = (view ^. #nav) & #hidden .~ hidden_
                     nav' = set Nav.colSelsL colSels_ nav0
-                in pure (Just view
-                          { View.vkind = vkind_
-                          , View.disp = disp_
-                          , View.prec = prec_
-                          , View.widthAdj = widthAdj_
-                          , View.search = search_
-                          , View.nav = nav'
-                          })
+                in pure (Just (view
+                          & #vkind    .~ vkind_
+                          & #disp     .~ disp_
+                          & #prec     .~ prec_
+                          & #widthAdj .~ widthAdj_
+                          & #search   .~ search_
+                          & #nav      .~ nav'))
               Nothing -> pure Nothing
   where
     -- | Catch IO exceptions, log, return Nothing (matches Lean's per-view skip).
