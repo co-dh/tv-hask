@@ -37,6 +37,7 @@ library
     Tv.Export
     Tv.FileFormat
     Tv.Filter
+    Tv.Folder
     Tv.Ftp
     Tv.Fzf
     Tv.Join
@@ -48,6 +49,7 @@ library
     Tv.Render
     Tv.Replay
     Tv.Runner
+    Tv.Session
     Tv.SourceConfig
     Tv.Sparkline
     Tv.Split
@@ -63,6 +65,7 @@ library
     Tv.Util
     Tv.View
   build-depends:
+    aeson >= 2.0,
     ansi-terminal >= 0.11,
     base >= 4.16 && < 5,
     bytestring,
