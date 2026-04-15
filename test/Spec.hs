@@ -1,8 +1,14 @@
 module Main where
 
 import Test.Tasty
-import Test.Tasty.HUnit
+
+import qualified TestPure
+import qualified TestScreen
+import qualified TestLargeData
 
 main :: IO ()
 main = defaultMain $ testGroup "tv-hask"
-  [ testCase "placeholder" (pure ()) ]
+  [ TestPure.tests
+  , TestScreen.tests
+  , TestLargeData.tests
+  ]
