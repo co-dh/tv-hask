@@ -29,6 +29,8 @@ library
     Tv.Data.ADBC.Prql
     Tv.Data.Text
     Tv.Ftp
+    Tv.Fzf
+    Tv.Key
     Tv.Lens
     Tv.Nav
     Tv.StrEnum
