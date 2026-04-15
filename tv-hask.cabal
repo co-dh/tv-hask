@@ -33,9 +33,11 @@ library
     Tv.Key
     Tv.Lens
     Tv.Nav
+    Tv.Render
     Tv.StrEnum
     Tv.Stub
     Tv.Term
+    Tv.Theme
     Tv.Types
     Tv.Util
   build-depends:
