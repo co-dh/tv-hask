@@ -15,6 +15,12 @@ common shared
     OverloadedStrings
     LambdaCase
     RecordWildCards
+    OverloadedLabels
+    DataKinds
+    FlexibleInstances
+    MultiParamTypeClasses
+    UndecidableInstances
+    TypeFamilies
   ghc-options: -Wall -Wno-unused-imports -O2
 
 library
@@ -47,7 +53,6 @@ library
     Tv.Fzf
     Tv.Join
     Tv.Key
-    Tv.Lens
     Tv.Meta
     Tv.Nav
     Tv.Plot
@@ -80,6 +85,8 @@ library
     filepath >= 1.4,
     hashable >= 1.4,
     network >= 3.1,
+    optics-core >= 0.4 && < 0.5,
+    optics-th >= 0.4 && < 0.5,
     process >= 1.6,
     text >= 2.0,
     time >= 1.11,
@@ -115,6 +122,7 @@ test-suite tv-hask-test
     tasty >= 1.4,
     tasty-hunit >= 0.10,
     directory >= 1.3,
+    optics-core >= 0.4 && < 0.5,
     process >= 1.6,
     text >= 2.0,
     vector >= 0.13

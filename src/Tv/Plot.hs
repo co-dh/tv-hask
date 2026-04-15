@@ -9,6 +9,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.Plot
   ( maxPoints
   , Interval(..)
@@ -50,6 +51,7 @@ import qualified Tv.Types as TblOps
 import qualified Tv.Util as Log
 import Tv.View (ViewStack)
 import qualified Tv.View as View
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Max data points for plot (more is slow and unreadable)
 maxPoints :: Int
@@ -60,6 +62,7 @@ data Interval = Interval
   { label    :: Text  -- display label (e.g. "1s", "1m", "2x")
   , truncLen :: Int   -- SUBSTRING length for time; step for non-time
   }
+makeFieldLabelsNoPrefix ''Interval
 
 intervalDefault :: Interval
 intervalDefault = Interval { label = "", truncLen = 0 }

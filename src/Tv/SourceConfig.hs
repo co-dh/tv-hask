@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-
   SourceConfig: config-driven file/folder handling for remote sources.
   Inline Haskell config — no SQL file or DuckDB table needed.
@@ -60,6 +61,7 @@ import qualified Tv.Render as Render
 import Tv.Types (escSql)
 import qualified Tv.Util as Log
 import qualified Tv.Util as Remote  -- Remote.parent lives in Tv.Util
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Config entry for a source
 data Config = Config
@@ -83,6 +85,7 @@ data Config = Config
   , fallbackCmd    :: Text  -- shell cmd template if listCmd fails (e.g. org-level listing)
   , fallbackSql    :: Text  -- SQL transform for fallbackCmd output
   }
+makeFieldLabelsNoPrefix ''Config
 
 defaultConfig :: Config
 defaultConfig = Config

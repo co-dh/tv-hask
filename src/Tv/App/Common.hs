@@ -8,6 +8,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.App.Common where
 
 import qualified Control.Concurrent
@@ -35,8 +36,7 @@ import qualified Tv.Folder as Folder
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Join as Join
 import qualified Tv.Key as Key
-import Tv.Lens (Lens'(..), comp, modify)
-import qualified Tv.Lens as Lens
+import Optics.Core (Lens', (%), (&), (.~), (^.), over, set)
 import qualified Tv.Meta as Meta
 import qualified Tv.Nav as Nav
 import qualified Tv.Plot as Plot
@@ -69,6 +69,7 @@ import qualified Tv.Data.ADBC.Table as AdbcTable
 import Tv.Data.ADBC.Table (AdbcTable)
 import Tv.View (View(..), ViewStack(..))
 import qualified Tv.View as View
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | App state: view stack + render state + theme + info + preview scroll
 data AppState = AppState
@@ -82,40 +83,12 @@ data AppState = AppState
   , statusCache :: (Text, Text, Text)       -- (path, col, desc) — avoids per-frame DB query
   , aggCache    :: StatusAgg.Cache
   }
+makeFieldLabelsNoPrefix ''AppState
 
--- | Field lenses for AppState — auto-generated, non-dependent fields only.
-stkL :: Lens' AppState (ViewStack AdbcTable)
-stkL = Lens' { get = stk, set = \a s -> s { stk = a } }
-
-vsL :: Lens' AppState ViewState
-vsL = Lens' { get = vs, set = \a s -> s { vs = a } }
-
-themeL :: Lens' AppState Theme.State
-themeL = Lens' { get = theme, set = \a s -> s { theme = a } }
-
-infoL :: Lens' AppState UIInfo.State
-infoL = Lens' { get = info, set = \a s -> s { info = a } }
-
-prevScrollL :: Lens' AppState Int
-prevScrollL = Lens' { get = prevScroll, set = \a s -> s { prevScroll = a } }
-
-heatModeL :: Lens' AppState Word8
-heatModeL = Lens' { get = heatMode, set = \a s -> s { heatMode = a } }
-
-sparklinesL :: Lens' AppState (Vector Text)
-sparklinesL = Lens' { get = sparklines, set = \a s -> s { sparklines = a } }
-
-aggCacheL :: Lens' AppState StatusAgg.Cache
-aggCacheL = Lens' { get = aggCache, set = \a s -> s { aggCache = a } }
-
--- | Composed lens pointing at the currently-focused view.
-curViewL :: Lens' AppState (View AdbcTable)
-curViewL = stkL `comp` View.hdL
-
--- | Composed lens pointing at the focused view's decimal precision (3 levels deep).
--- Used by precSet/precAdj to avoid triple-nested `{ a with stk := a.stk.setCur { ... } }`.
+-- | Shared by precSet / precAdj — the only lens composition in this module
+-- that's used in more than one place, so it earns a name.
 curPrecL :: Lens' AppState Int
-curPrecL = curViewL `comp` View.precL
+curPrecL = #stk % #hd % #prec
 
 -- | Dispatch result: quit, unhandled, or new state
 data Action
@@ -192,10 +165,7 @@ runViewEffect a ci v' e = do
       let grp'    = V.filter (not . (`V.elem` cols)) (Nav.grp (View.nav v'))
           hidden' = V.filter (not . (`V.elem` cols)) (Nav.hidden (View.nav v'))
           mrv = View.rebuild v' tbl' 0 grp' (Nav.cur (Nav.row (View.nav v')))
-      pure $ fmap (\rv ->
-                    let nav' = Lens.set Nav.hiddenL hidden' (View.nav rv)
-                    in View.setCur s (rv { View.nav = nav' }))
-                  mrv
+      pure $ fmap (\rv -> View.setCur s (rv & #nav % #hidden .~ hidden')) mrv
     EffectFreq colNames -> tryStk a ci $ do
       mft <- AdbcTable.freqTable (View.tbl s) colNames
       case mft of
@@ -311,12 +281,12 @@ runStackIO a f = do
 -- | Handler combinators — build HandlerFn from domain functions
 -- set prec to absolute value
 precSet :: Int -> HandlerFn
-precSet v = \a _ _ -> pure (ActOk (Lens.set curPrecL v a))
+precSet v = \a _ _ -> pure (ActOk (set curPrecL v a))
 
 -- adjust prec by delta, clamped to [0,17]
 precAdj :: Int -> HandlerFn
 precAdj delta = \a _ _ ->
-  pure (ActOk (modify curPrecL (\p -> min 17 (max 0 (p + delta))) a))
+  pure (ActOk (over curPrecL (\p -> min 17 (max 0 (p + delta))) a))
 
 -- domain dispatch with tryStk + viewUp fallback
 domainH

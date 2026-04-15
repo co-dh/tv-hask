@@ -4,6 +4,7 @@
   Literal port of Tc/Tc/UI/Info.lean — same State, viewHints, render.
 -}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.UI.Info
   ( State(..)
   , update
@@ -18,6 +19,8 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word32)
 
+import Optics.TH (makeFieldLabelsNoPrefix)
+
 import Tv.Types (Cmd(..), ViewKind(..))
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
@@ -26,6 +29,7 @@ import qualified Tv.Theme as Theme
 data State = State
   { vis :: Bool
   }
+makeFieldLabelsNoPrefix ''State
 
 -- | Pure update by Cmd
 update :: State -> Cmd -> Maybe State

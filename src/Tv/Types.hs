@@ -3,6 +3,7 @@
   Table stores columns by name (HashMap) for direct name-based access
 -}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.Types where
 
 import Data.Int (Int64)
@@ -11,6 +12,7 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8, Word32)
+import Optics.TH (makeFieldLabelsNoPrefix)
 import Tv.StrEnum (StrEnum(..))
 import qualified Tv.StrEnum as StrEnum
 
@@ -188,6 +190,7 @@ data RenderCtx = RenderCtx
   , heatMode   :: Word8  -- 0=off, 1=numeric, 2=categorical, 3=both
   , sparklines :: Vector Text
   }
+makeFieldLabelsNoPrefix ''RenderCtx
 
 -- | Build PRQL filter expression from fzf result (default for TblOps.buildFilter)
 -- With --print-query: line 0 = query, lines 1+ = selections

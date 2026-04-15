@@ -10,12 +10,14 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.Nav where
 
 import Data.Text (Text)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Tv.Lens (Lens'(..), modify, (|.))
+import Optics.Core (Lens', (%), (&), (.~), (^.), over)
+import Optics.TH (makeFieldLabelsNoPrefix)
 import Tv.Types
   ( Cmd(..)
   , ColType
@@ -47,18 +49,12 @@ data NavAxis elem = NavAxis
   { cur  :: Int          -- cursor position
   , sels :: Vector elem  -- selected elements
   }
+makeFieldLabelsNoPrefix ''NavAxis
 
 -- Default NavAxis (cursor at 0, no selections).
 -- Lean requires `h : n > 0`; caller guarantees this in Haskell.
 navAxisDefault :: NavAxis elem
 navAxisDefault = NavAxis { cur = 0, sels = V.empty }
-
--- | Field lenses for NavAxis — enable composable nested updates via `|.`.
-curL :: Lens' (NavAxis elem) Int
-curL = Lens' { get = cur, set = \a s -> s { cur = a } }
-
-selsL :: Lens' (NavAxis elem) (Vector elem)
-selsL = Lens' { get = sels, set = \a s -> s { sels = a } }
 
 -- Type aliases: Row uses Int (index), Col uses Text (name, stable across deletion)
 type RowNav = NavAxis Int
@@ -106,14 +102,15 @@ data NavState t = NavState
   , hidden   :: Vector Text      -- hidden column names (width=1)
   , dispIdxs :: Vector Int       -- cached display order
   }
+makeFieldLabelsNoPrefix ''NavState
 
 -- | Column names from table
 colNames :: TblOps t => NavState t -> Vector Text
-colNames nav = TblOps.colNames (tbl nav)
+colNames nav = TblOps.colNames (nav ^. #tbl)
 
 -- | Current column index in data order
 curColIdx :: TblOps t => NavState t -> Int
-curColIdx nav = colIdxAt (grp nav) (colNames nav) (cur (col nav))
+curColIdx nav = colIdxAt (nav ^. #grp) (colNames nav) (nav ^. #col % #cur)
 
 -- | Current column name
 curColName :: TblOps t => NavState t -> Text
@@ -121,24 +118,25 @@ curColName nav = maybe "" id (colNames nav V.!? curColIdx nav)
 
 -- | Current column type
 curColType :: TblOps t => NavState t -> ColType
-curColType nav = TblOps.colType (tbl nav) (curColIdx nav)
+curColType nav = TblOps.colType (nav ^. #tbl) (curColIdx nav)
 
 -- | Column names in display order (grouped first, then rest)
 dispColNames :: TblOps t => NavState t -> Vector Text
 dispColNames nav =
-  grp nav V.++ V.filter (not . (`V.elem` grp nav)) (colNames nav)
+  let grp_ = nav ^. #grp
+  in grp_ V.++ V.filter (not . (`V.elem` grp_)) (colNames nav)
 
 -- | Selected column indices
 selColIdxs :: TblOps t => NavState t -> Vector Int
 selColIdxs nav =
   let names = colNames nav
-  in V.mapMaybe (idxOf names) (sels (col nav))
+  in V.mapMaybe (idxOf names) (nav ^. #col % #sels)
 
 -- | Hidden column indices (for C render)
 hiddenIdxs :: TblOps t => NavState t -> Vector Int
 hiddenIdxs nav =
   let names = colNames nav
-  in V.mapMaybe (idxOf names) (hidden nav)
+  in V.mapMaybe (idxOf names) (nav ^. #hidden)
 
 -- Constructor for external use. Lean requires `hr : nRows > 0` / `hc : nCols > 0`;
 -- Haskell callers must likewise ensure the table is non-empty.
@@ -168,44 +166,28 @@ newAt t colIx grp_ rowIx =
        , dispIdxs = dispOrder grp_ (TblOps.colNames t)
        }
 
--- | Field lenses for NavState. Used to express nested `row.cur` / `col.cur`
--- updates as single-line compositions. (`tbl` is skipped — not independently
--- updatable in the lens-driven path.)
-rowL :: Lens' (NavState t) RowNav
-rowL = Lens' { get = row, set = \a s -> s { row = a } }
-
-colL :: Lens' (NavState t) ColNav
-colL = Lens' { get = col, set = \a s -> s { col = a } }
-
-grpL :: Lens' (NavState t) (Vector Text)
-grpL = Lens' { get = grp, set = \a s -> s { grp = a } }
-
-hiddenL :: Lens' (NavState t) (Vector Text)
-hiddenL = Lens' { get = hidden, set = \a s -> s { hidden = a } }
-
-dispIdxsL :: Lens' (NavState t) (Vector Int)
-dispIdxsL = Lens' { get = dispIdxs, set = \a s -> s { dispIdxs = a } }
-
--- | Composite lenses: cursor through row/col axis
+-- | Named composites reused as atoms by `exec` and by Filter (both hot
+-- paths); `rowSelsL` is the atom for `CmdRowSel`.
 rowCurL :: Lens' (NavState t) Int
-rowCurL = rowL |. curL
+rowCurL = #row % #cur
 
 colCurL :: Lens' (NavState t) Int
-colCurL = colL |. curL
+colCurL = #col % #cur
 
 rowSelsL :: Lens' (NavState t) (Vector Int)
-rowSelsL = rowL |. selsL
-
-colSelsL :: Lens' (NavState t) (Vector Text)
-colSelsL = colL |. selsL
+rowSelsL = #row % #sels
 
 -- Execute by command, no (obj,verb) chars
 exec :: TblOps t => Cmd -> NavState t -> Int -> Maybe (NavState t)
 exec h nav rowPg =
-  let nRows_ = TblOps.nRows (tbl nav)
-      nCols_ = V.length (TblOps.colNames (tbl nav))
-      r d = Just (modify rowCurL (\f -> finClamp nRows_ f d) nav)
-      c d = Just (modify colCurL (\f -> finClamp nCols_ f d) nav)
+  let tbl_   = nav ^. #tbl
+      nRows_ = TblOps.nRows tbl_
+      nCols_ = V.length (TblOps.colNames tbl_)
+      rCur   = nav ^. #row % #cur
+      cCur   = nav ^. #col % #cur
+      grp_   = nav ^. #grp
+      r d = Just (over rowCurL (\f -> finClamp nRows_ f d) nav)
+      c d = Just (over colCurL (\f -> finClamp nCols_ f d) nav)
   in case h of
        CmdRowInc   -> r 1
        CmdRowDec   -> r (-1)
@@ -213,36 +195,35 @@ exec h nav rowPg =
        CmdColDec   -> c (-1)
        CmdRowPgdn  -> r rowPg
        CmdRowPgup  -> r (-rowPg)
-       CmdRowBot   -> r (nRows_ - 1 - cur (row nav))
-       CmdRowTop   -> r (- cur (row nav))
-       CmdColFirst -> c (- cur (col nav))
-       CmdColLast  -> c (nCols_ - 1 - cur (col nav))
-       CmdRowSel   -> Just (modify rowSelsL (`toggle` cur (row nav)) nav)
+       CmdRowBot   -> r (nRows_ - 1 - rCur)
+       CmdRowTop   -> r (- rCur)
+       CmdColFirst -> c (- cCur)
+       CmdColLast  -> c (nCols_ - 1 - cCur)
+       CmdRowSel   -> Just (over rowSelsL (`toggle` rCur) nav)
        CmdColGrp   ->
-         let newGrp = toggle (grp nav) (curColName nav)
-         in Just nav { grp = newGrp
-                     , dispIdxs = dispOrder newGrp (colNames nav)
-                     }
-       CmdColHide  -> Just (modify hiddenL (`toggle` curColName nav) nav)
-       CmdColShiftL -> shiftGrp False
-       CmdColShiftR -> shiftGrp True
+         let newGrp = toggle grp_ (curColName nav)
+         in Just (nav { grp = newGrp
+                      , dispIdxs = dispOrder newGrp (colNames nav)
+                      })
+       CmdColHide  -> Just (over #hidden (`toggle` curColName nav) nav)
+       CmdColShiftL -> shiftGrp False grp_ nCols_
+       CmdColShiftR -> shiftGrp True  grp_ nCols_
        _ -> Nothing
   where
-    shiftGrp fwd =
+    shiftGrp fwd grp_ nCols_ =
       let name = curColName nav
-      in case idxOf (grp nav) name of
+      in case idxOf grp_ name of
            Nothing -> Nothing
            Just i
-             | fwd && i + 1 >= V.length (grp nav) -> Nothing
+             | fwd && i + 1 >= V.length grp_ -> Nothing
              | not fwd && i == 0 -> Nothing
              | otherwise ->
                  let j  = if fwd then i + 1 else i - 1
-                     gi = maybe "" id (grp nav V.!? i)
-                     gj = maybe "" id (grp nav V.!? j)
-                     newGrp = (grp nav V.// [(i, gj), (j, gi)])
+                     gi = maybe "" id (grp_ V.!? i)
+                     gj = maybe "" id (grp_ V.!? j)
+                     newGrp = grp_ V.// [(i, gj), (j, gi)]
                      d = if fwd then 1 else -1
                      nav' = nav { grp = newGrp
                                 , dispIdxs = dispOrder newGrp (colNames nav)
                                 }
-                     nCols_ = V.length (TblOps.colNames (tbl nav))
-                 in Just (modify colCurL (\f -> finClamp nCols_ f d) nav')
+                 in Just (over colCurL (\f -> finClamp nCols_ f d) nav')
