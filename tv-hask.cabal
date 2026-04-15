@@ -1,0 +1,50 @@
+cabal-version:      3.0
+name:               tv-hask
+version:            0.1.0.0
+synopsis:           Terminal table viewer (Haskell port of Tc)
+license:            MIT
+build-type:         Simple
+
+extra-source-files:
+  data/funcs.prql
+  theme.csv
+
+common shared
+  default-language: GHC2021
+  default-extensions:
+    OverloadedStrings
+    LambdaCase
+    RecordWildCards
+  ghc-options: -Wall -Wno-unused-imports -O2
+
+library
+  import: shared
+  hs-source-dirs: src
+  -- Seed branch: no ported modules yet. Each layer's commit adds its
+  -- modules here. Tv.Data.DuckDB is parked on disk but not listed until
+  -- its deps (Tv.Types, Tv.Data.ADBC.Prql) come online.
+  exposed-modules:
+    Tv.Stub
+  build-depends:
+    base >= 4.16 && < 5
+
+executable tv
+  import: shared
+  main-is: Main.hs
+  hs-source-dirs: app
+  ghc-options: -threaded
+  build-depends:
+    base >= 4.16 && < 5,
+    tv-hask
+
+test-suite tv-hask-test
+  import: shared
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Spec.hs
+  ghc-options: -threaded -rtsopts "-with-rtsopts=-M2G"
+  build-depends:
+    base >= 4.16 && < 5,
+    tv-hask,
+    tasty >= 1.4,
+    tasty-hunit >= 0.10

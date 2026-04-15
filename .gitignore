@@ -1,0 +1,32 @@
+# Build artifacts
+dist-newstyle/
+dist/
+cabal.project.local
+.ghc.environment.*
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+.stack-work/
+
+# Editor
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Sandbox mounts (char devices from Claude Code; not real files)
+.bash_profile
+.bashrc
+.zshrc
+.zprofile
+.profile
+.gitconfig
+.gitmodules
+.ripgreprc
+.mcp.json
+
+# Claude Code sandbox mounts (more)
+.idea
+.vscode
+.claude/

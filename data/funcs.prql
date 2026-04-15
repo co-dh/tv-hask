@@ -1,0 +1,164 @@
+# PRQL function definitions for tc
+# use std.count to avoid ambiguity with column named 'count'
+#
+# DuckDB-specific table functions used here:
+#   duckdb_tables()      — returns database_name, estimated_size, column_count, comment, etc.
+#                          (information_schema.tables lacks these DuckDB-specific fields)
+#   duckdb_columns()     — returns comment, data_type_id, internal, etc.
+#                          (information_schema.columns lacks the comment field)
+#   duckdb_constraints() — returns constraint_column_names (array), constraint_type, etc.
+#
+# PRQL has no built-in unnest — use s"unnest(...)" to emit DuckDB's unnest as raw SQL.
+
+# Named relations for DuckDB metadata table functions
+let dtabs = s"SELECT * FROM duckdb_tables()"
+let dcols = s"SELECT * FROM duckdb_columns()"
+let dcons = s"SELECT * FROM duckdb_constraints()"
+
+let freq = func c tbl <relation> -> (
+  from tbl
+  group {c} (aggregate {Cnt = std.count this})
+  derive {Pct = Cnt * 100 / std.sum Cnt, Bar = s"repeat('#', CAST({Pct}/5 AS INTEGER))"}
+  sort {-Cnt}
+)
+
+let cnt = func tbl <relation> -> (from tbl | aggregate {n = std.count this})
+
+# Count distinct groups for given columns
+let cntdist = func cols tbl <relation> -> (from tbl | group cols (take 1) | aggregate {n = std.count this})
+
+let uniq = func c tbl <relation> -> (from tbl | group {c} (take 1) | select {c})
+
+let stats = func c tbl <relation> -> (
+  from tbl
+  aggregate {n = std.count this, min = std.min c, max = std.max c, avg = std.average c, std = std.stddev c}
+)
+
+let meta = func c tbl <relation> -> (
+  from tbl
+  aggregate {cnt = std.count c, dist = std.count_distinct c, total = std.count this, min = std.min c, max = std.max c}
+)
+
+# No `y != 0` in downsample filters: DuckDB applies the filter before select prunes
+# columns, so `!= 0` on a string column causes a cast-to-INT error.
+
+# Downsample time series: last value per truncated time bucket
+# Downsample time series: last value per time bucket (bucket_secs = interval in seconds)
+let ds_trunc = func x y bucket_secs tbl <relation> -> (
+  from tbl
+  filter (y != null)
+  derive {_sec = s"SUBSTRING(CAST(time_bucket(INTERVAL '{bucket_secs} seconds', ('1970-01-01 ' || CAST({x} AS VARCHAR))::TIMESTAMP) AS VARCHAR), 12)"}
+  group {_sec} (sort {-x} | take 1)
+  sort {_sec}
+  select {_sec, y}
+)
+
+# Downsample time series with category
+let ds_trunc_cat = func x y c bucket_secs tbl <relation> -> (
+  from tbl
+  filter (y != null)
+  derive {_sec = s"SUBSTRING(CAST(time_bucket(INTERVAL '{bucket_secs} seconds', ('1970-01-01 ' || CAST({x} AS VARCHAR))::TIMESTAMP) AS VARCHAR), 12)"}
+  group {_sec, c} (sort {-x} | take 1)
+  sort {_sec}
+  select {_sec, y, c}
+)
+
+# Downsample by sampling every Nth row
+let ds_nth = func y step tbl <relation> -> (
+  from tbl
+  filter (y != null)
+  derive {_rn = row_number this}
+  filter (_rn - 1) % step == 0
+)
+
+# Downsample by sampling with category
+let ds_nth_cat = func y c step tbl <relation> -> (
+  from tbl
+  filter (y != null)
+  derive {_rn = row_number this}
+  filter (_rn - 1) % step == 0
+)
+
+# Find 0-based row index (s-string: PRQL optimizes away `- 1` in derive+select)
+let rowidx = func tbl <relation> -> (
+  from tbl
+  derive {idx = s"(ROW_NUMBER() OVER () - 1)"}
+)
+
+# Parquet file metadata: column stats from file footer (instant, no data scan)
+# Usage: from s"SELECT * FROM parquet_metadata('path')" | pqmeta
+let pqmeta = func tbl <relation> -> (
+  from tbl
+  filter path_in_schema != ''
+  group {path_in_schema, `type`} (
+    aggregate {
+      _cnt = sum num_values, _null = sum stats_null_count,
+      mn = min stats_min_value, mx = max stats_max_value,
+      _id = min column_id
+    }
+  )
+  sort {_id}
+  derive {
+    cnt = s"CAST({_cnt} AS BIGINT)",
+    dist = s"0::BIGINT",
+    null_pct = s"CAST(ROUND(CAST({_null} AS FLOAT) / NULLIF({_cnt},0) * 100) AS BIGINT)"
+  }
+  select {column = path_in_schema, coltype = `type`, this.cnt, this.dist, this.null_pct, mn, mx}
+)
+
+# List tables in an attached external database
+let tbl_info = func tbl <relation> -> (
+  from tbl
+  filter database_name == 'extdb'
+  select {name = table_name, size = estimated_size, columns = column_count}
+)
+
+# List tables excluding system schemas (information_schema, pg_catalog)
+let tbl_info_filtered = func tbl <relation> -> (
+  from tbl
+  filter s"schema_name NOT IN ('information_schema', 'pg_catalog')"
+  tbl_info
+)
+
+# Column comment lookup from DuckDB metadata
+let col_comment = func tbl_name col_name tbl <relation> -> (
+  from tbl
+  filter table_name == tbl_name
+  filter column_name == col_name
+  filter comment != null
+  take 1
+  select {comment}
+)
+
+# Primary key columns for a table in an attached extdb
+let prim_keys = func tname tbl <relation> -> (
+  from tbl
+  filter database_name == 'extdb'
+  filter table_name == tname
+  filter constraint_type == 'PRIMARY KEY'
+  # unnest: DuckDB function to expand array into rows (no PRQL equivalent)
+  derive {col = s"unnest(constraint_column_names)"}
+  select {col}
+)
+
+# Find first struct[] column in a table (for auto-unnest)
+let struct_col = func tname tbl <relation> -> (
+  from tbl
+  filter table_name == tname
+  filter s"data_type LIKE 'STRUCT%[]'"
+  take 1
+  select {column_name}
+)
+
+let colstat = func c nm tp tbl <relation> -> (
+  from tbl
+  aggregate {
+    cnt = s"CAST(COUNT({c}) AS BIGINT)",
+    dist = s"CAST(COUNT(DISTINCT {c}) AS BIGINT)",
+    null_pct = s"CAST(ROUND((1.0 - COUNT({c})::FLOAT / NULLIF(COUNT(*),0)) * 100) AS BIGINT)",
+    mn = s"CAST(MIN({c}) AS VARCHAR)",
+    mx = s"CAST(MAX({c}) AS VARCHAR)"
+  }
+  derive {column = nm, coltype = tp}
+  select {column, coltype, this.cnt, this.dist, null_pct, mn, mx}
+)
