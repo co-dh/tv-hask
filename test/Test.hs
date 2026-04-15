@@ -11,6 +11,7 @@ import Data.Char (isDigit, chr)
 import Data.IORef (IORef, newIORef)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Data.Vector as V
@@ -998,8 +999,10 @@ runPlotR kind datPath pngPath xName yName hasCat catName xType = do
     ("Rscript failed: " ++ T.unpack (T.strip (T.pack serr)))
   exists <- doesFileExist (T.unpack pngPath)
   assert exists "PNG should exist"
-  content <- TIO.readFile (T.unpack pngPath)
-  assert (T.length content > 0) "PNG should be non-empty"
+  -- Read bytes, not Text (PNG starts with 0x89 — not valid UTF-8).
+  -- Matches Lean's `h.read 1` + `buf.size > 0`.
+  bytes <- BS.readFile (T.unpack pngPath)
+  assert (BS.length bytes > 0) "PNG should be non-empty"
 
 prepXY :: Text -> Text -> Text -> Maybe Text -> IO Text
 prepXY file xName yName mCat = do
