@@ -32,3 +32,4 @@ cabal.project.local
 .claude/
 test.log
 doc/__pycache__/
+.tmp/
