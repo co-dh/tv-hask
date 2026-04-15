@@ -4,14 +4,11 @@
  * Literal port of /home/dh/repo/Tc/c/render.c with Lean runtime access
  * replaced by plain C struct/array access. Function body structure and
  * comments are preserved so future audits can diff the two side-by-side.
- *
- * Omissions vs Lean reference:
- *   - Heat mode (heat.c dependency) is not ported; `heatMode != 0` is
- *     treated as `heatMode == 0`. Tests that exercise heat colouring
- *     will need this filled in later.
+ * Heat mode is ported inline from /home/dh/repo/Tc/c/heat.c.
  */
 #include "tv_render.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -215,6 +212,153 @@ static void build_sel_bits(const uint32_t *arr, size_t n, uint64_t *bits) {
 #define IS_SEL(bits, v) ((v) < 256 && ((bits)[(v)/64] & (1ULL << ((v)%64))))
 
 /* ------------------------------------------------------------------ */
+/*  Heat mode — inlined port of Tc/c/heat.c                           */
+/* ------------------------------------------------------------------ */
+
+#define MAX_HEAT_COLS 256
+#define HEAT_FG       16u   /* black text on coloured bg */
+#define HEAT_NONE     0
+#define HEAT_NUM      1
+#define HEAT_STR      2
+
+typedef struct {
+    double mn, mx;
+    int    kind;
+    char   date;
+} HeatCol;
+
+static int heat_col_num_val(const TvCol *col, size_t row, double *out) {
+    if (row >= (size_t)col->nrows) return 0;
+    if (col->tag == TVCOL_INTS) {
+        const int64_t *d = (const int64_t *)col->data;
+        *out = (double)d[row];
+        return 1;
+    } else if (col->tag == TVCOL_FLOATS) {
+        const double *d = (const double *)col->data;
+        double v = d[row];
+        if (isnan(v)) return 0;
+        *out = v;
+        return 1;
+    }
+    return 0;
+}
+
+/* FNV-1a hash → [0, 1] for categorical string coloring. */
+static double heat_str_hash01(const char *s) {
+    uint32_t h = 2166136261u;
+    while (*s) { h ^= (unsigned char)*s++; h *= 16777619u; }
+    return (double)(h & 0xFFFF) / 65535.0;
+}
+
+/* Extract digits from date/time string → monotonic double. */
+static double heat_date_to_num(const char *s) {
+    double v = 0;
+    while (*s) {
+        if (*s >= '0' && *s <= '9') v = v * 10 + (*s - '0');
+        s++;
+    }
+    return v;
+}
+
+static int heat_is_date_fmt(char fmt) { return fmt == 't'; }
+
+static uint32_t heat_color(double t) {
+    /* Viridis-inspired purple→teal→green→yellow ramp via xterm-256 cube. */
+    static const uint32_t ramp[] = {
+        53, 54, 55,
+        61, 25, 31,
+        30, 36, 42,
+        41, 77, 113,
+        149, 148, 184,
+        190, 226,
+    };
+    static const int N = (int)(sizeof(ramp) / sizeof(ramp[0]));
+    if (t <= 0.0) return ramp[0];
+    if (t >= 1.0) return ramp[N - 1];
+    double pos = t * (N - 1);
+    int lo = (int)pos;
+    if (lo >= N - 1) lo = N - 2;
+    return (pos - lo < 0.5) ? ramp[lo] : ramp[lo + 1];
+}
+
+static void heat_scan(const TvCol *cols, const uint32_t *colIdxs,
+                      const size_t *dispIdxs, size_t nVisCols,
+                      size_t nRows, uint64_t r0,
+                      const char *fmts, size_t nFmts,
+                      HeatCol *out) {
+    for (size_t c = 0; c < nVisCols && c < MAX_HEAT_COLS; c++) {
+        size_t origIdx = (size_t)colIdxs[dispIdxs[c]];
+        const TvCol *col = &cols[origIdx];
+        out[c].kind = HEAT_NONE;
+        out[c].date = 0;
+        char fmt = (fmts && origIdx < nFmts) ? fmts[origIdx] : 0;
+        if (col->tag == TVCOL_INTS || col->tag == TVCOL_FLOATS) {
+            double mn = 1e308, mx = -1e308;
+            for (size_t ri = 0; ri < nRows; ri++) {
+                double v;
+                if (!heat_col_num_val(col, (size_t)(r0 + ri), &v)) continue;
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+            }
+            if (mx > mn) { out[c].mn = mn; out[c].mx = mx; out[c].kind = HEAT_NUM; }
+        } else if (col->tag == TVCOL_STRS && heat_is_date_fmt(fmt)) {
+            const char * const *d = (const char * const *)col->data;
+            double mn = 1e308, mx = -1e308;
+            for (size_t ri = 0; ri < nRows; ri++) {
+                const char *s = d[r0 + ri];
+                if (!s || !s[0]) continue;
+                double v = heat_date_to_num(s);
+                if (v < mn) mn = v;
+                if (v > mx) mx = v;
+            }
+            if (mx > mn) { out[c].mn = mn; out[c].mx = mx; out[c].kind = HEAT_NUM; out[c].date = 1; }
+        } else if (col->tag == TVCOL_STRS) {
+            const char * const *d = (const char * const *)col->data;
+            const char *first = NULL;
+            int diverse = 0;
+            for (size_t ri = 0; ri < nRows && !diverse; ri++) {
+                const char *s = d[r0 + ri];
+                if (!s) s = "";
+                if (!first) first = s;
+                else if (strcmp(first, s) != 0) diverse = 1;
+            }
+            if (diverse) out[c].kind = HEAT_STR;
+        }
+    }
+}
+
+static int heat_cell_bg(const TvCol *col, uint64_t row, size_t c, int si,
+                        uint8_t mode, const HeatCol *cols, uint32_t *bg) {
+    if (c >= MAX_HEAT_COLS || cols[c].kind == HEAT_NONE) return 0;
+    if (si == STYLE_CURSOR || si == STYLE_SEL_ROW || si == STYLE_SEL_CUR) return 0;
+    /* mode: 1=numeric (HEAT_NUM), 2=categorical (HEAT_STR), 3=both */
+    if (cols[c].kind == HEAT_NUM && !(mode & 1)) return 0;
+    if (cols[c].kind == HEAT_STR && !(mode & 2)) return 0;
+    double t;
+    if (cols[c].kind == HEAT_NUM) {
+        double v;
+        if (cols[c].date) {
+            const char * const *d = (const char * const *)col->data;
+            const char *s = d[row];
+            if (!s || !s[0]) return 0;
+            v = heat_date_to_num(s);
+        } else {
+            if (!heat_col_num_val(col, (size_t)row, &v)) return 0;
+        }
+        t = (v - cols[c].mn) / (cols[c].mx - cols[c].mn);
+    } else if (cols[c].kind == HEAT_STR) {
+        const char * const *d = (const char * const *)col->data;
+        const char *s = d[row];
+        if (!s || !s[0]) return 0;
+        t = heat_str_hash01(s);
+    } else {
+        return 0;
+    }
+    *bg = heat_color(t);
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main entry point                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -239,7 +383,6 @@ void tv_render_table(
     uint32_t *outWidths)
 {
     (void)nTotalRows;
-    (void)heatMode;  /* heat mode not implemented in this shim */
 
     Ctx ctx = { cells, screenW, screenH };
     size_t nRows = (r1 > r0) ? (size_t)(r1 - r0) : 0;
@@ -431,6 +574,11 @@ void tv_render_table(
 
     int dataY0 = sparkOn ? 2 : 1;
 
+    HeatCol hcols[MAX_HEAT_COLS];
+    memset(hcols, 0, sizeof(hcols));
+    if (heatMode && nVisCols <= MAX_HEAT_COLS)
+        heat_scan(cols, colIdxs, dispIdxsArr, nVisCols, nRows, r0, fmts, nFmts, hcols);
+
     /* ---- data rows ---- */
     for (size_t ri = 0; ri < nRows; ri++) {
         uint64_t row = r0 + ri;
@@ -449,6 +597,8 @@ void tv_render_table(
             uint32_t fg = stFg[si];
 
             const TvCol *col = &cols[origIdx];
+            if (heatMode && heat_cell_bg(col, row, c, si, heatMode, hcols, &bg))
+                fg = HEAT_FG;
             format_col_cell(col, (size_t)row, buf, sizeof(buf), (int)prec);
 
             set_cell(&ctx, xs[c], y, ' ', fg, bg);
