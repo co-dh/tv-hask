@@ -356,14 +356,24 @@ cursorAt :: Int -> Int -> Text
 cursorAt y x = T.pack ("\x1b[" ++ show (y + 1) ++ ";" ++ show (x + 1) ++ "H")
 
 -- | Poll a single key event. Approximation: read one char, no escape decoding.
+-- ASCII control chars map to the termbox key constants so evToKey's keyNames
+-- lookup matches (0x0D → keyEnter → "<ret>", 0x7F → keyBackspace2 → "<bs>", …).
 pollEvent :: IO Event
 pollEvent = do
   c <- hGetChar stdin
+  let code = fromIntegral (fromEnum c) :: Word16
+      (kCode, kCh) = case code of
+        0x0D -> (keyEnter, 0)         -- CR → Enter
+        0x0A -> (keyEnter, 0)         -- LF → Enter
+        0x08 -> (keyBackspace, 0)
+        0x7F -> (keyBackspace2, 0)
+        0x1B -> (keyEsc, 0)           -- no escape-sequence decoding yet
+        _    -> (0, fromIntegral code)
   pure Event
     { eventType = eventKey
     , eventMod = 0
-    , eventKeyCode = 0
-    , eventCh = fromIntegral (fromEnum c)
+    , eventKeyCode = kCode
+    , eventCh = kCh
     , eventW = 0
     , eventH = 0
     }
