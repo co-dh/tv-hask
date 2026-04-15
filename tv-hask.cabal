@@ -27,6 +27,7 @@ library
     Tv.AppF
     Tv.CmdConfig
     Tv.Data.ADBC.Adbc
+    Tv.Data.ADBC.Ops
     Tv.Data.ADBC.Prql
     Tv.Data.ADBC.Table
     Tv.Data.DuckDB
@@ -42,6 +43,8 @@ library
     Tv.Term
     Tv.Theme
     Tv.Types
+    Tv.UI.Info
+    Tv.UI.Preview
     Tv.Util
     Tv.View
   build-depends:
