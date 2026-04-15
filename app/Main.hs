@@ -1,4 +1,4 @@
 module Main where
-
+import qualified Tv.App.Main as AppMain
 main :: IO ()
-main = putStrLn "tv: not yet ported"
+main = AppMain.main

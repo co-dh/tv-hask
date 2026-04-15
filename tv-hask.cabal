@@ -24,6 +24,8 @@ library
   -- modules here. Tv.Data.DuckDB is parked on disk but not listed until
   -- its deps (Tv.Types, Tv.Data.ADBC.Prql) come online.
   exposed-modules:
+    Tv.App.Common
+    Tv.App.Main
     Tv.AppF
     Tv.CmdConfig
     Tv.Data.ADBC.Adbc
