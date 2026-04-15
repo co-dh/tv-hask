@@ -1,0 +1,96 @@
+{-
+  Export: save current view to file (csv/parquet/json/ndjson).
+  Uses DuckDB COPY for efficient streaming export.
+
+  Literal port of Tc/Tc/Export.lean. Same function names and order, same
+  comments, no invented abstractions.
+-}
+{-# LANGUAGE OverloadedStrings #-}
+module Tv.Export
+  ( -- Tc.ExportFmt namespace
+    ext
+  , copyOpt
+    -- Tc.Export namespace
+  , pickFmt
+  , exportView
+  , run
+  , runWith
+  ) where
+
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Vector (Vector)
+import qualified Data.Vector as V
+
+import qualified Tv.Data.ADBC.Adbc as Adbc
+import qualified Tv.Data.ADBC.Prql as Prql
+import qualified Tv.Data.ADBC.Table as Table
+import Tv.Data.ADBC.Table (AdbcTable, stripSemi)
+import qualified Tv.Fzf as Fzf
+import qualified Tv.Render as Render
+import qualified Tv.StrEnum as StrEnum
+import Tv.Types (ExportFmt (..), escSql)
+import qualified Tv.Util as Log
+import Tv.View (ViewStack)
+import qualified Tv.View as View
+
+-- ============================================================================
+-- Tc.ExportFmt namespace
+-- ============================================================================
+
+-- | File extension for an export format (== StrEnum.toString)
+ext :: ExportFmt -> Text
+ext f = StrEnum.toString f
+
+-- | DuckDB COPY option clause for an export format
+copyOpt :: ExportFmt -> Text
+copyOpt ExportCsv     = "(FORMAT CSV, HEADER true)"
+copyOpt ExportJson    = "(FORMAT JSON)"
+copyOpt ExportParquet = "(FORMAT PARQUET)"
+copyOpt ExportNdjson  = "(FORMAT JSON, ARRAY false)"
+
+-- ============================================================================
+-- Tc.Export namespace
+-- ============================================================================
+
+-- | Prompt user for export format via fzf
+pickFmt :: IO (Maybe ExportFmt)
+pickFmt = do
+  m <- Fzf.fzf (V.fromList ["--prompt=export: "]) "csv\nparquet\njson\nndjson"
+  case m of
+    Just raw -> pure (StrEnum.ofStringQ (T.strip raw))
+    Nothing  -> pure Nothing
+
+-- | Export current view to file via DuckDB COPY
+exportView :: AdbcTable -> Text -> ExportFmt -> IO ()
+exportView t path fmt = do
+  mSql <- Prql.compile (Prql.queryRender (Table.query t))
+  case mSql of
+    Nothing  -> ioError (userError "PRQL compile failed")
+    Just sql -> do
+      let copySql = "COPY (" <> stripSemi sql <> ") TO '" <> escSql path
+                 <> "' " <> copyOpt fmt
+      Log.write "export" copySql
+      _ <- Adbc.query copySql
+      pure ()
+
+-- | Run export effect: build path from view name, export via DuckDB COPY
+run :: ViewStack AdbcTable -> ExportFmt -> IO (ViewStack AdbcTable)
+run s fmt = do
+  let name0 = T.replace " " "_" (T.replace "/" "_" (View.tabName (View.cur s)))
+      parts = T.splitOn "." name0
+      stem  = case parts of
+                (x : _) | not (T.null x) -> x
+                _                        -> name0
+  d <- Log.dir
+  let path = T.pack d <> "/tv_export_" <> stem <> "." <> ext fmt
+  exportView (View.tbl s) path fmt
+  Render.statusMsg ("exported " <> path)
+  pure s
+
+-- | Export by format string directly (no fzf). Called by socket/dispatch.
+runWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
+runWith s fmtStr =
+  case StrEnum.ofStringQ fmtStr of
+    Nothing  -> pure s
+    Just fmt -> run s fmt

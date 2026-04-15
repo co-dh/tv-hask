@@ -34,15 +34,22 @@ library
     Tv.Data.Text
     Tv.Derive
     Tv.Diff
+    Tv.Export
     Tv.Filter
     Tv.Ftp
     Tv.Fzf
     Tv.Join
     Tv.Key
     Tv.Lens
+    Tv.Meta
     Tv.Nav
+    Tv.Plot
     Tv.Render
+    Tv.Replay
+    Tv.Runner
+    Tv.Sparkline
     Tv.Split
+    Tv.StatusAgg
     Tv.StrEnum
     Tv.Stub
     Tv.Term
