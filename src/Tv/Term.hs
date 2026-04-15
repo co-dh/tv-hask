@@ -48,6 +48,8 @@ import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import qualified Data.Text.Lazy as TL
+import qualified Data.Text.Lazy.Builder as TB
 import qualified Data.Text.Foreign as TF
 import Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -300,32 +302,35 @@ present = do
   when (not headless) $ do
     (w, h, buf) <- readIORef screenBuf
     front <- readIORef frontBuf
-    -- Track last emitted (style, cursor) across the entire frame so we
-    -- can elide SGR and cursor-position codes when nothing changed —
-    -- matches termbox2's tb_present output byte-for-byte.
+    -- Accumulate the whole frame into a single Text builder and write it
+    -- in one TIO.hPutStr call. Mirrors termbox2's tb_present which
+    -- flushes its internal output buffer once per call — keeps the PTY
+    -- recorder's `drain()` from slicing the frame across multiple cast
+    -- frames, which was breaking byte parity for multi-step demos.
     styleRef  <- newIORef (Nothing :: Maybe (Word32, Word32))
     cursorRef <- newIORef ((-1, -1) :: (Int, Int))
+    outRef    <- newIORef (mempty :: TB.Builder)
+    let emit t = modifyIORef' outRef (<> TB.fromText t)
     forM_ [0 .. h - 1] $ \y ->
       forM_ [0 .. w - 1] $ \x -> do
         let idx = y * w + x
         cell     <- VSM.read buf idx
         prevCell <- VSM.read front idx
-        -- Diff against last-presented frame: cells that didn't change
-        -- since the previous present are left alone. Matches termbox2's
-        -- back/front buffer diff.
         when (cell /= prevCell) $ do
           let Cell ch fg bg = cell
           lastStyle <- readIORef styleRef
           let style = (fg, bg)
           when (Just style /= lastStyle) $ do
-            TIO.hPutStr stdout (sgrFor fg bg)
+            emit (sgrFor fg bg)
             writeIORef styleRef (Just style)
           lastCursor <- readIORef cursorRef
           when (lastCursor /= (y, x)) $
-            TIO.hPutStr stdout (cursorAt y x)
-          putChar (chr (fromIntegral ch))
+            emit (cursorAt y x)
+          emit (T.singleton (chr (fromIntegral ch)))
           writeIORef cursorRef (y, x + 1)
           VSM.write front idx cell
+    out <- TL.toStrict . TB.toLazyText <$> readIORef outRef
+    TIO.hPutStr stdout out
     hFlush stdout
 
 -- | Build the SGR + charset-reset prefix for a cell. Extracts attr bits
