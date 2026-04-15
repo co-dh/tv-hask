@@ -10,11 +10,13 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.Nav where
 
 import Data.Text (Text)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import Optics.TH (makeFieldLabelsNoPrefix)
 import Tv.Lens (Lens'(..), modify, (|.))
 import Tv.Types
   ( Cmd(..)
@@ -47,6 +49,7 @@ data NavAxis elem = NavAxis
   { cur  :: Int          -- cursor position
   , sels :: Vector elem  -- selected elements
   }
+makeFieldLabelsNoPrefix ''NavAxis
 
 -- Default NavAxis (cursor at 0, no selections).
 -- Lean requires `h : n > 0`; caller guarantees this in Haskell.
@@ -106,6 +109,7 @@ data NavState t = NavState
   , hidden   :: Vector Text      -- hidden column names (width=1)
   , dispIdxs :: Vector Int       -- cached display order
   }
+makeFieldLabelsNoPrefix ''NavState
 
 -- | Column names from table
 colNames :: TblOps t => NavState t -> Vector Text

@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-
   ADBC backend: AdbcTable with PRQL query support.
 
@@ -82,6 +83,7 @@ import Tv.Types
   , keepCols
   )
 import qualified Tv.Util as Log
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- ----------------------------------------------------------------------------
 -- Top-level (Lean: `def Prql.query` in Table.lean, not Prql.lean)
@@ -122,6 +124,7 @@ data AdbcTable = AdbcTable
   , query     :: Query             -- PRQL query (base + ops)
   , totalRows :: Int               -- total rows in underlying data
   }
+makeFieldLabelsNoPrefix ''AdbcTable
 
 -- | Counter for unique temp table names (mirrors Lean `IO.Ref Nat`).
 {-# NOINLINE memTblCounter #-}

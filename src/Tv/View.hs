@@ -7,6 +7,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.View
   ( View(..)
   , pathL
@@ -44,6 +45,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8, Word32)
 
+import Optics.TH (makeFieldLabelsNoPrefix)
 import Tv.Lens (Lens'(..))
 import Tv.Nav (NavState)
 import qualified Tv.Nav as Nav
@@ -71,6 +73,7 @@ data View t = View
   , search   :: Maybe (Int, Text)      -- last search: (colIdx, value)
   , sameHide :: Vector Text            -- diff: columns with identical values (hidden separately from user hide)
   }
+makeFieldLabelsNoPrefix ''View
 
 -- | Field lenses for non-dependent View fields, auto-generated in Lean via `gen_lenses`.
 -- (nRows/nCols/nav are skipped — their types are mutually dependent, so they can't
@@ -210,6 +213,7 @@ data ViewStack t = ViewStack
   { hd :: View t
   , tl :: [View t]
   }
+makeFieldLabelsNoPrefix ''ViewStack
 
 -- | Field lens for the current (head) view on the stack.
 hdL :: Lens' (ViewStack t) (View t)

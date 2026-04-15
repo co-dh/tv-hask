@@ -14,6 +14,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.Term
   ( -- keys
     keyArrowUp, keyArrowDown, keyArrowLeft, keyArrowRight
@@ -67,6 +68,7 @@ import System.IO (stdin, stdout, hSetBuffering, hSetEcho, hFlush,
                   hIsTerminalDevice, BufferMode(..), hGetChar)
 import System.IO.Unsafe (unsafePerformIO)
 import Tv.Types (Column(..))
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Key codes (from termbox2.h)
 keyArrowUp, keyArrowDown, keyArrowLeft, keyArrowRight :: Word16
@@ -136,6 +138,7 @@ data Event = Event
   , eventW    :: Word32  -- resize width
   , eventH    :: Word32  -- resize height
   } deriving (Eq, Show)
+makeFieldLabelsNoPrefix ''Event
 
 -- ============================================================================
 -- Cell buffer

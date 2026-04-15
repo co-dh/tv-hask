@@ -14,6 +14,8 @@ import qualified Data.Vector as V
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=), assertBool)
 
+import Optics.Core ((^.), (.~), (&), (%))
+
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Key as Key
 import qualified Tv.Nav as Nav
@@ -127,6 +129,17 @@ keyMapTests = testGroup "evToKey"
       Key.evToKey (Term.byteToEvent 'j') @?= "j"
   , testCase "byteToEvent ' ' -> ' '" $
       Key.evToKey (Term.byteToEvent ' ') @?= " "
+  -- optics-core + optics-th sanity: the generated labels on NavAxis/NavState
+  -- must round-trip view/set. A regression here means makeFieldLabelsNoPrefix
+  -- silently failed to emit a LabelOptic instance and no other code will work.
+  , testCase "NavAxis #cur read + write round-trip" $ do
+      let a0 = Nav.NavAxis { Nav.cur = 5, Nav.sels = V.empty :: V.Vector Int }
+      (a0 ^. #cur) @?= 5
+      ((a0 & #cur .~ 42) ^. #cur) @?= 42
+  , testCase "NavState #row % #cur composed optic" $ do
+      let n0 = Nav.new mock53
+          n1 = n0 & #row % #cur .~ 3
+      (n1 ^. #row % #cur) @?= 3
   ]
 
 -- ## View.update Tests

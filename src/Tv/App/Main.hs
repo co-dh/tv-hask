@@ -1,6 +1,7 @@
 -- App/Main: CLI parsing, app init, entry point
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.App.Main
   ( CliArgs(..)
   , parseArgs
@@ -43,6 +44,7 @@ import Tv.View (View, ViewStack(..))
 import qualified Tv.View as View
 import qualified Tv.Util as Log
 import qualified Tv.Util as Socket
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- parsed CLI arguments
 data CliArgs = CliArgs
@@ -52,6 +54,7 @@ data CliArgs = CliArgs
   , noSign  :: Bool
   , session :: Maybe Text   -- -s "name" session restore
   }
+makeFieldLabelsNoPrefix ''CliArgs
 
 defaultCliArgs :: CliArgs
 defaultCliArgs = CliArgs { path = Nothing, keys = V.empty, test = False, noSign = False, session = Nothing }

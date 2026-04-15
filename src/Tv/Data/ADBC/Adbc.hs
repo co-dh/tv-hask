@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-
   Lean-shaped ADBC shim over DuckDB.
 
@@ -37,6 +38,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Tv.Data.DuckDB as DB
 import qualified Tv.Types as Tc
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Global Conn, mirroring Lean's implicit ADBC state.
 {-# NOINLINE connRef #-}
@@ -61,6 +63,7 @@ data QueryResult = QueryResult
   , qrColNames :: V.Vector Text
   , qrColTypes :: V.Vector Tc.ColType
   }
+makeFieldLabelsNoPrefix ''QueryResult
 
 -- | Adbc.init — opens an in-memory DuckDB if none is open yet. Returns ""
 -- on success, an error message on failure (matching Lean's convention).

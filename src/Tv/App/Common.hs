@@ -8,6 +8,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.App.Common where
 
 import qualified Control.Concurrent
@@ -69,6 +70,7 @@ import qualified Tv.Data.ADBC.Table as AdbcTable
 import Tv.Data.ADBC.Table (AdbcTable)
 import Tv.View (View(..), ViewStack(..))
 import qualified Tv.View as View
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | App state: view stack + render state + theme + info + preview scroll
 data AppState = AppState
@@ -82,6 +84,7 @@ data AppState = AppState
   , statusCache :: (Text, Text, Text)       -- (path, col, desc) — avoids per-frame DB query
   , aggCache    :: StatusAgg.Cache
   }
+makeFieldLabelsNoPrefix ''AppState
 
 -- | Field lenses for AppState — auto-generated, non-dependent fields only.
 stkL :: Lens' AppState (ViewStack AdbcTable)

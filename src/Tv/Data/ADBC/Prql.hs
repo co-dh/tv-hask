@@ -35,12 +35,14 @@ import Tv.Types
   , joinWith
   )
 import qualified Tv.Util as Log
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | PRQL query: base table + operations (PRQL-specific base format)
 data Query = Query
   { base :: Text      -- PRQL from clause
   , ops  :: Vector Op
   }
+makeFieldLabelsNoPrefix ''Query
 
 -- | Default query: "from df" with no ops
 defaultQuery :: Query

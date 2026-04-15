@@ -1,5 +1,6 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- Free-monad style effect machinery for the main event loop.
 -- The loop body is written once as an `AppM s a` program value, then run
@@ -14,6 +15,7 @@ module Tv.AppF where
 
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Text (Text)
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Program value: a small free monad describing what the event loop does.
 -- The state type `s` (= `AppState` at call sites) is a parameter so this
@@ -76,6 +78,7 @@ data Interp s = Interp
   , nextKey :: IO (Maybe Text)
   , readArg :: IO Text
   }
+makeFieldLabelsNoPrefix ''Interp
 
 -- Walk the program value, dispatching each op through the supplied interpreter.
 run :: forall s a. Interp s -> AppM s a -> IO a

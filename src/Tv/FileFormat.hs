@@ -6,6 +6,7 @@
   names, same order, same comments. Refactor only after parity.
 -}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.FileFormat
   ( Format(..)
   , formats
@@ -43,6 +44,7 @@ import qualified Tv.Data.ADBC.Prql as Prql
 import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Data.ADBC.Table as Table
 import Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | How DuckDB should handle a file extension
 data Format = Format
@@ -52,6 +54,7 @@ data Format = Format
   , attach     :: Bool         -- true = ATTACH as database, list tables
   , attachType :: Text         -- ATTACH TYPE clause (e.g. "SQLITE"). Empty = native.
   }
+makeFieldLabelsNoPrefix ''Format
 
 -- | All file formats supported by DuckDB
 formats :: Vector Format

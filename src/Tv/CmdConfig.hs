@@ -3,6 +3,7 @@
   Commands array lives in App/Common (single table with both metadata and handler).
 -}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Tv.CmdConfig where
 
@@ -22,6 +23,7 @@ import Tv.StrEnum (StrEnum(..))
 import qualified Tv.StrEnum as StrEnum
 import Tv.Types (Cmd)
 import qualified Tv.Util as Log
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- Orphan Hashable instance for Cmd; Types.hs doesn't derive Generic, so hash via
 -- the canonical string form from StrEnum.
@@ -33,6 +35,7 @@ data CmdInfo = CmdInfo
   { ciCmd      :: Cmd
   , ciResetsVS :: Bool
   }
+makeFieldLabelsNoPrefix ''CmdInfo
 
 -- | Command entry: metadata for key binding, menu, and dispatch
 data Entry = Entry
@@ -44,6 +47,7 @@ data Entry = Entry
   , entryResetsVS :: Bool
   , entryViewCtx  :: Text    -- context filter: "freqV", "colMeta", "fld", "tbl", or "" (global)
   }
+makeFieldLabelsNoPrefix ''Entry
 
 -- | Cached: (key, viewCtx) -> CmdInfo -- context-aware key lookup
 keyInfoMap :: IORef (HashMap (Text, Text) CmdInfo)

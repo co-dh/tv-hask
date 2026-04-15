@@ -8,6 +8,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.Render
   ( ViewState(..)
   , viewStateDefault
@@ -31,6 +32,8 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8, Word32, Word64)
 
+import Optics.TH (makeFieldLabelsNoPrefix)
+
 import Tv.Nav (NavState(..), adjOff)
 import qualified Tv.Nav as Nav
 import qualified Tv.Term as Term
@@ -48,6 +51,7 @@ data ViewState = ViewState
   { rowOff  :: Int   -- first visible row
   , lastCol :: Int   -- last cursor column (for tooltip direction)
   }
+makeFieldLabelsNoPrefix ''ViewState
 
 -- Default ViewState
 viewStateDefault :: ViewState
