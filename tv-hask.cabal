@@ -28,6 +28,7 @@ library
     Tv.Lens
     Tv.StrEnum
     Tv.Stub
+    Tv.Types
   build-depends:
     base >= 4.16 && < 5,
     text >= 2.0,
