@@ -164,15 +164,22 @@ init = do
     hSetBuffering stdin NoBuffering
     hSetBuffering stdout NoBuffering
     hSetEcho stdin False
-    (w, h) <- ANSI.getTerminalSize >>= \case
-      Just (rows, cols) -> pure (cols, rows)
-      Nothing -> pure (80, 24)
+    -- getTerminalSize queries the tty via an ANSI DSR escape + stdin read; on a
+    -- redirected stdin it blocks on EOF. Fall back to 80x24 when stdin is not
+    -- a tty so the -c test harness can run without a terminal attached.
+    isTty <- hIsTerminalDevice stdin
+    (w, h) <- if isTty
+                then ANSI.getTerminalSize >>= \case
+                  Just (rows, cols) -> pure (cols, rows)
+                  Nothing           -> pure (80, 24)
+                else pure (80, 24)
     writeIORef screenBuf (w, h, V.replicate (w * h) emptyCell)
     writeIORef initedRef True
-    ANSI.hideCursor
-    ANSI.clearScreen
-    ANSI.setCursorPosition 0 0
-    hFlush stdout
+    when isTty $ do
+      ANSI.hideCursor
+      ANSI.clearScreen
+      ANSI.setCursorPosition 0 0
+      hFlush stdout
     pure 0
 
 inited :: IO Bool
