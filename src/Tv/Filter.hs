@@ -243,9 +243,15 @@ rowFilter s = withDistinct s $ \_curCol curName vals -> do
           case mt of
             Nothing   -> pure s
             Just tbl' ->
-              case View.rebuild (cur s) tbl' 0 V.empty 0 of
-                Nothing -> pure s
-                Just v' -> pure (push s (v' { disp = "\\" <> curName }))
+              -- Preserve cursor column across filter (matches Lean's
+              -- `rebuild tbl' (row := 0)` default). Resetting col=0 would
+              -- snap the cursor back to the first column.
+              let v      = cur s
+                  curCol = Nav.curColIdx (nav v)
+                  grp'   = Nav.grp (nav v)
+              in case View.rebuild v tbl' curCol grp' 0 of
+                   Nothing -> pure s
+                   Just v' -> pure (push s (v' { disp = "\\" <> curName }))
 
 -- | Jump to column by name directly (no fzf). Called by socket/dispatch.
 colJumpWith :: TblOps t => ViewStack t -> Text -> IO (ViewStack t)
@@ -266,9 +272,16 @@ filterWith s expr = do
       case mt of
         Nothing   -> pure s
         Just tbl' ->
-          case View.rebuild (cur s) tbl' 0 V.empty 0 of
-            Nothing -> pure s
-            Just v' -> pure (push s (v' { disp = "\\" <> expr }))
+          -- Match Lean's `rebuild tbl' (row := 0)` — col defaults to the
+          -- old cursor column, grp to the old grp. Resetting col to 0
+          -- would jump the cursor home, which the filter demo explicitly
+          -- asserts should NOT happen (cursor stays on the filtered col).
+          let v      = cur s
+              curCol = Nav.curColIdx (nav v)
+              grp'   = Nav.grp (nav v)
+          in case View.rebuild v tbl' curCol grp' 0 of
+               Nothing -> pure s
+               Just v' -> pure (push s (v' { disp = "\\" <> expr }))
 
 -- | Search for value directly (no fzf). Called by socket/dispatch.
 searchWith :: TblOps t => ViewStack t -> Text -> IO (ViewStack t)

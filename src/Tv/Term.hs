@@ -176,6 +176,14 @@ screenBuf = unsafePerformIO $ do
   newIORef (0, 0, v)
 {-# NOINLINE screenBuf #-}
 
+-- | Front buffer: the most recently presented frame's cells. `present`
+-- diffs the current (back) buffer against this and only emits cells that
+-- actually changed, matching termbox2's tb_present. Reset to all-zero
+-- cells whenever the window size changes.
+frontBuf :: IORef (VSM.IOVector Cell)
+frontBuf = unsafePerformIO $ VSM.new 0 >>= newIORef
+{-# NOINLINE frontBuf #-}
+
 initedRef :: IORef Bool
 initedRef = unsafePerformIO (newIORef False)
 {-# NOINLINE initedRef #-}
@@ -215,6 +223,10 @@ init = do
                 else pure (80, 24)
     buf <- VSM.replicate (w * h) emptyCell
     writeIORef screenBuf (w, h, buf)
+    -- Front buffer starts at all-default; termbox2's tb_init does the same,
+    -- so the first `present` frame emits every non-default cell.
+    front <- VSM.replicate (w * h) emptyCell
+    writeIORef frontBuf front
     writeIORef initedRef True
     writeIORef headlessRef (not isTty)
     when isTty $ do
@@ -287,6 +299,7 @@ present = do
   headless <- readIORef headlessRef
   when (not headless) $ do
     (w, h, buf) <- readIORef screenBuf
+    front <- readIORef frontBuf
     -- Track last emitted (style, cursor) across the entire frame so we
     -- can elide SGR and cursor-position codes when nothing changed —
     -- matches termbox2's tb_present output byte-for-byte.
@@ -294,11 +307,13 @@ present = do
     cursorRef <- newIORef ((-1, -1) :: (Int, Int))
     forM_ [0 .. h - 1] $ \y ->
       forM_ [0 .. w - 1] $ \x -> do
-        cell <- VSM.read buf (y * w + x)
-        -- Skip cells that still match the default (space, default style):
-        -- termbox2's front/back diff collapses those to no-ops, so emitting
-        -- them would just waste bytes and bloat the .cast.
-        when (cell /= emptyCell) $ do
+        let idx = y * w + x
+        cell     <- VSM.read buf idx
+        prevCell <- VSM.read front idx
+        -- Diff against last-presented frame: cells that didn't change
+        -- since the previous present are left alone. Matches termbox2's
+        -- back/front buffer diff.
+        when (cell /= prevCell) $ do
           let Cell ch fg bg = cell
           lastStyle <- readIORef styleRef
           let style = (fg, bg)
@@ -310,6 +325,7 @@ present = do
             TIO.hPutStr stdout (cursorAt y x)
           putChar (chr (fromIntegral ch))
           writeIORef cursorRef (y, x + 1)
+          VSM.write front idx cell
     hFlush stdout
 
 -- | Build the SGR + charset-reset prefix for a cell. Extracts attr bits

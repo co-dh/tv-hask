@@ -389,7 +389,10 @@ readCellAny cv row = case cvType cv of
   ColTypeInt       -> maybe "" (T.pack . show) (readCellInt cv row)
   ColTypeBool      -> case readCellInt cv row of
                         Just 0 -> "false"; Just _ -> "true"; Nothing -> ""
-  ColTypeFloat     -> maybe "" (T.pack . show) (readCellDouble cv row)
+  -- 3-decimal precision matches Lean adbc_core.c format_cell_view
+  -- (`format_struct_cell` passes decimals=3). Used by status-bar aggregates
+  -- and any generic cellStr consumer.
+  ColTypeFloat     -> maybe "" (T.pack . printf "%.3f") (readCellDouble cv row)
   ColTypeStr       -> maybe "" id (readCellText cv row)
   ColTypeDate      -> maybe "" id (readCellDate cv row)
   ColTypeTime      -> maybe "" id (readCellTime cv row)
