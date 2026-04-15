@@ -85,14 +85,10 @@ data AppState = AppState
   }
 makeFieldLabelsNoPrefix ''AppState
 
--- | Composed lens pointing at the currently-focused view.
-curViewL :: Lens' AppState (View AdbcTable)
-curViewL = #stk % #hd
-
--- | Composed lens pointing at the focused view's decimal precision (3 levels deep).
--- Used by precSet/precAdj to avoid triple-nested `{ a with stk := a.stk.setCur { ... } }`.
+-- | Shared by precSet / precAdj — the only lens composition in this module
+-- that's used in more than one place, so it earns a name.
 curPrecL :: Lens' AppState Int
-curPrecL = curViewL % #prec
+curPrecL = #stk % #hd % #prec
 
 -- | Dispatch result: quit, unhandled, or new state
 data Action
@@ -169,10 +165,7 @@ runViewEffect a ci v' e = do
       let grp'    = V.filter (not . (`V.elem` cols)) (Nav.grp (View.nav v'))
           hidden' = V.filter (not . (`V.elem` cols)) (Nav.hidden (View.nav v'))
           mrv = View.rebuild v' tbl' 0 grp' (Nav.cur (Nav.row (View.nav v')))
-      pure $ fmap (\rv ->
-                    let nav' = (rv ^. #nav) & #hidden .~ hidden'
-                    in View.setCur s (rv & #nav .~ nav'))
-                  mrv
+      pure $ fmap (\rv -> View.setCur s (rv & #nav % #hidden .~ hidden')) mrv
     EffectFreq colNames -> tryStk a ci $ do
       mft <- AdbcTable.freqTable (View.tbl s) colNames
       case mft of

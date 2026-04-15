@@ -133,7 +133,7 @@ keyMapTests = testGroup "evToKey"
   -- must round-trip view/set. A regression here means makeFieldLabelsNoPrefix
   -- silently failed to emit a LabelOptic instance and no other code will work.
   , testCase "NavAxis #cur read + write round-trip" $ do
-      let a0 = Nav.NavAxis { Nav.cur = 5, Nav.sels = V.empty :: V.Vector Int }
+      let a0 = Nav.navAxisDefault & #cur .~ 5 :: Nav.NavAxis Int
       (a0 ^. #cur) @?= 5
       ((a0 & #cur .~ 42) ^. #cur) @?= 42
   , testCase "NavState #row % #cur composed optic" $ do

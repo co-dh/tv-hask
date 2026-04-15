@@ -20,7 +20,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
 
-import Optics.Core ((%), (&), (.~), (^.), set)
+import Optics.Core ((%), (&), (.~), (^.))
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd (..), ViewKind (..))
 import qualified Tv.Types as TblOps
@@ -62,8 +62,7 @@ selBy s flt =
   if View.cur s ^. #vkind /= VkColMeta then pure s
   else do
     rows <- Ops.queryMetaIndices (metaTblName s) flt
-    let v = View.cur s
-    pure (View.setCur s (v & #nav .~ set Nav.rowSelsL rows (v ^. #nav)))
+    pure (View.setCur s (View.cur s & #nav % #row % #sels .~ rows))
 
 selNull :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 selNull s = selBy s "null_pct == 100"
@@ -82,9 +81,10 @@ setKey s =
       Just s' -> do
         let di = Nav.dispOrder colNames (TblOps.colNames (View.tbl s'))
             v  = View.cur s'
-            nav' = set Nav.colSelsL colNames
-                     ((v ^. #nav) & #grp .~ colNames & #dispIdxs .~ di)
-        pure (Just (View.setCur s' (v & #nav .~ nav')))
+                 & #nav % #grp      .~ colNames
+                 & #nav % #dispIdxs .~ di
+                 & #nav % #col % #sels .~ colNames
+        pure (Just (View.setCur s' v))
       Nothing -> pure (Just s)
 
 -- | Dispatch meta handler to IO action. Returns Nothing if handler not recognized.

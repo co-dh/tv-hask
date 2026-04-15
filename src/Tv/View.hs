@@ -137,10 +137,7 @@ rebuild old tbl_ col_ grp_ row_ =
        then
          let nav0 = Nav.newAt tbl_ col_ grp_ row_
              nav1 = nav0 & #hidden .~ (old ^. #nav % #hidden)
-         in Just (old & #nRows  .~ nRows_
-                      & #nCols  .~ nCols_
-                      & #nav    .~ nav1
-                      & #widths .~ V.empty)
+         in Just old { nRows = nRows_, nCols = nCols_, nav = nav1, widths = V.empty }
        else Nothing
 
 -- | Pure update by command
@@ -195,7 +192,7 @@ setCur :: ViewStack t -> View t -> ViewStack t
 setCur s v = s & #hd .~ v
 
 push :: ViewStack t -> View t -> ViewStack t
-push s v = ViewStack { hd = v, tl = (s ^. #hd) : (s ^. #tl) }
+push s v = ViewStack { hd = v, tl = s ^. #hd : s ^. #tl }
 
 pop :: ViewStack t -> Maybe (ViewStack t)
 pop s = case s ^. #tl of
@@ -204,14 +201,14 @@ pop s = case s ^. #tl of
 
 swap :: ViewStack t -> ViewStack t
 swap s = case s ^. #tl of
-  h0 : t0 -> ViewStack { hd = h0, tl = (s ^. #hd) : t0 }
+  h0 : t0 -> ViewStack { hd = h0, tl = s ^. #hd : t0 }
   []      -> s
 
 dup :: ViewStack t -> ViewStack t
-dup s = ViewStack { hd = s ^. #hd, tl = (s ^. #hd) : (s ^. #tl) }
+dup s = ViewStack { hd = s ^. #hd, tl = s ^. #hd : s ^. #tl }
 
 tabNames :: ViewStack t -> Vector Text
-tabNames s = V.fromList (map tabName ((s ^. #hd) : (s ^. #tl)))
+tabNames s = V.fromList (map tabName (s ^. #hd : s ^. #tl))
 
 -- | Pure update by command. q on empty stack -> quit
 updateStack :: ViewStack t -> Cmd -> Maybe (ViewStack t, Effect)
