@@ -5,10 +5,15 @@
   Haskell has no termbox2 package, so this module routes the same API names
   to Haskell-native equivalents: System.Console.ANSI for clear/present/cursor,
   System.IO + hSetBuffering for raw-ish input, System.Posix.Terminal for
-  isatty, and an IORef-backed screen cell buffer for width/height/print/buffer.
-  The render side (renderTable) is stubbed until Render.hs is ported.
+  isatty, and a Storable cell buffer for width/height/print/buffer.
+
+  renderTable calls a C shim in cbits/tv_render.c (plain-C port of the Lean
+  reference's render.c; no Lean runtime deps). The cell buffer is kept in a
+  Storable.Mutable.IOVector so the C side can write to it in place.
 -}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Tv.Term
   ( -- keys
     keyArrowUp, keyArrowDown, keyArrowLeft, keyArrowRight
@@ -32,21 +37,33 @@ module Tv.Term
   ) where
 
 import Prelude hiding (init, print)
-import Control.Monad (forM_, when)
+import Control.Exception (bracket)
+import Control.Monad (forM, forM_, when, zipWithM_)
+import Data.Char (chr)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.Int (Int32, Int64)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Foreign as TF
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import qualified Data.Vector.Storable as VS
+import qualified Data.Vector.Storable.Mutable as VSM
 import Data.Word (Word8, Word16, Word32, Word64)
+import Foreign.C.String (CString, newCString, withCString)
+import Foreign.C.Types (CChar, CInt(..), CSize(..))
+import Foreign.Marshal.Alloc (free, mallocBytes)
+import Foreign.Marshal.Array (mallocArray, pokeArray, peekArray, withArray)
+import Foreign.Marshal.Utils (with)
+import Foreign.Ptr (Ptr, castPtr, nullPtr, plusPtr)
+import Foreign.Storable (Storable(..))
 import System.IO (stdin, stdout, hSetBuffering, hSetEcho, hFlush,
                   hIsTerminalDevice, BufferMode(..), hGetChar)
 import System.IO.Unsafe (unsafePerformIO)
 import qualified System.Console.ANSI as ANSI
-import Tv.Types (Column)
+import Tv.Types (Column(..))
 
 -- | Key codes (from termbox2.h)
 keyArrowUp, keyArrowDown, keyArrowLeft, keyArrowRight :: Word16
@@ -118,26 +135,38 @@ data Event = Event
   } deriving (Eq, Show)
 
 -- ============================================================================
--- Lifecycle / screen state
+-- Cell buffer
 --
--- termbox2 has no Haskell binding. We back the screen by a minimal cell
--- buffer held in IORefs and drive the real terminal with ANSI escapes.
--- renderTable / bufferStr remain stubs until Render.hs is ported.
+-- Storable so cbits/tv_render.c can write in place. Layout must match
+-- `TvCell` in cbits/tv_render.h (3 × uint32 = 12 bytes, 4-byte aligned).
 -- ============================================================================
 
--- Positional so -Wunused-top-binds stays quiet on fg/bg slots we don't
--- read yet (present/ bufferStr only use the character).
-data Cell = Cell !Char !Word32 !Word32
+data Cell = Cell !Word32 !Word32 !Word32  -- ch, fg, bg
+
+instance Storable Cell where
+  sizeOf _    = 12
+  alignment _ = 4
+  peek p = do
+    ch <- peekByteOff p 0
+    fg <- peekByteOff p 4
+    bg <- peekByteOff p 8
+    pure (Cell ch fg bg)
+  poke p (Cell ch fg bg) = do
+    pokeByteOff p 0 ch
+    pokeByteOff p 4 fg
+    pokeByteOff p 8 bg
 
 cellCh :: Cell -> Char
-cellCh (Cell c _ _) = c
+cellCh (Cell c _ _) = chr (fromIntegral c)
 
 emptyCell :: Cell
-emptyCell = Cell ' ' 0 0
+emptyCell = Cell 0x20 0 0  -- space
 
--- Flat row-major cell buffer: (w, h, cells) where cells is length w*h.
-screenBuf :: IORef (Int, Int, V.Vector Cell)
-screenBuf = unsafePerformIO (newIORef (0, 0, V.empty))
+-- | Screen state: width, height, mutable cell buffer (row-major, w*h entries).
+screenBuf :: IORef (Int, Int, VSM.IOVector Cell)
+screenBuf = unsafePerformIO $ do
+  v <- VSM.new 0
+  newIORef (0, 0, v)
 {-# NOINLINE screenBuf #-}
 
 initedRef :: IORef Bool
@@ -150,12 +179,10 @@ isattyStdin = hIsTerminalDevice stdin
 
 -- | Try to (re)open /dev/tty on stdin so the program can still drive a TUI
 -- when its stdin was redirected. Returns True on success.
--- Approximation: we just report whether stdin is currently a tty.
 reopenTty :: IO Bool
 reopenTty = hIsTerminalDevice stdin
 
 -- | Initialize terminal: set raw-ish mode, allocate screen buffer.
--- Returns 0 on success, negative on failure (mirrors termbox tb_init).
 init :: IO Int32
 init = do
   already <- readIORef initedRef
@@ -164,16 +191,17 @@ init = do
     hSetBuffering stdin NoBuffering
     hSetBuffering stdout NoBuffering
     hSetEcho stdin False
-    -- getTerminalSize queries the tty via an ANSI DSR escape + stdin read; on a
-    -- redirected stdin it blocks on EOF. Fall back to 80x24 when stdin is not
-    -- a tty so the -c test harness can run without a terminal attached.
+    -- ANSI.getTerminalSize issues a DSR escape and reads stdin; on a
+    -- redirected stdin it blocks on EOF. Fall back to 80x24 when stdin is
+    -- not a tty so the -c test harness can run without a terminal attached.
     isTty <- hIsTerminalDevice stdin
     (w, h) <- if isTty
                 then ANSI.getTerminalSize >>= \case
                   Just (rows, cols) -> pure (cols, rows)
                   Nothing           -> pure (80, 24)
                 else pure (80, 24)
-    writeIORef screenBuf (w, h, V.replicate (w * h) emptyCell)
+    buf <- VSM.replicate (w * h) emptyCell
+    writeIORef screenBuf (w, h, buf)
     writeIORef initedRef True
     when isTty $ do
       ANSI.hideCursor
@@ -207,23 +235,22 @@ height = do
 
 clear :: IO ()
 clear = do
-  (w, h, _) <- readIORef screenBuf
-  writeIORef screenBuf (w, h, V.replicate (w * h) emptyCell)
+  (_, _, buf) <- readIORef screenBuf
+  VSM.set buf emptyCell
 
 -- | Flush cell buffer to the terminal.
 present :: IO ()
 present = do
-  (w, h, cs) <- readIORef screenBuf
+  (w, h, buf) <- readIORef screenBuf
   ANSI.setCursorPosition 0 0
   forM_ [0 .. h - 1] $ \y -> do
     ANSI.setCursorPosition y 0
     forM_ [0 .. w - 1] $ \x -> do
-      let c = cs V.! (y * w + x)
+      c <- VSM.read buf (y * w + x)
       putChar (cellCh c)
   hFlush stdout
 
--- | Poll a single key event. Approximation: read one char, no escape decoding,
--- no resize events. Higher layers (Key.hs) will sit on top of this.
+-- | Poll a single key event. Approximation: read one char, no escape decoding.
 pollEvent :: IO Event
 pollEvent = do
   c <- hGetChar stdin
@@ -240,38 +267,81 @@ pollEvent = do
 -- Used by tests to assert on-screen content.
 bufferStr :: IO Text
 bufferStr = do
-  (w, h, cs) <- readIORef screenBuf
-  let row y = T.pack [ cellCh (cs V.! (y * w + x)) | x <- [0 .. w - 1] ]
-  pure (T.intercalate "\n" [ row y | y <- [0 .. h - 1] ])
+  (w, h, buf) <- readIORef screenBuf
+  rows <- forM [0 .. h - 1] $ \y -> do
+    cs <- forM [0 .. w - 1] $ \x -> cellCh <$> VSM.read buf (y * w + x)
+    pure (T.pack cs)
+  pure (T.intercalate "\n" rows)
 
--- | Batch print with padding (C FFI - fast).
--- Writes s into the cell buffer at (x, y), padding to `len` with spaces.
+-- | Write text + padding into the cell buffer at (x, y), padding to `len`.
 printPadC :: Word32 -> Word32 -> Word32 -> Word32 -> Word32 -> Text -> Word8 -> IO ()
 printPadC x y len fg bg s _attr = do
-  (w, h, cs) <- readIORef screenBuf
+  (w, h, buf) <- readIORef screenBuf
   let xi = fromIntegral x
       yi = fromIntegral y
       li = fromIntegral len
       chars = T.unpack s
       padded = take li (chars ++ repeat ' ')
   when (yi >= 0 && yi < h) $ do
-    let updates =
-          [ (yi * w + (xi + i), Cell ch fg bg)
-          | (i, ch) <- zip [0 ..] padded
-          , xi + i >= 0, xi + i < w
-          ]
-    writeIORef screenBuf (w, h, cs V.// updates)
+    zipWithM_
+      (\i ch ->
+        let cx = xi + i
+        in when (cx >= 0 && cx < w) $
+             VSM.write buf (yi * w + cx)
+               (Cell (fromIntegral (fromEnum ch)) fg bg))
+      [0 ..] padded
 
--- | Unified table render (C reads Column directly, computes widths if needed).
--- allCols, names, fmts, inWidths, colIdxs, nTotalRows, nKeys, colOff, r0, r1,
--- curRow, curCol, moveDir, selCols, selRows, styles, prec, widthAdj
--- fmts: format chars for type indicators (empty = use Column tag)
--- moveDir: -1 = moved left, 0 = none, 1 = moved right (for tooltip direction)
--- prec: float decimal count (0-17), widthAdj: column width offset
--- Returns computed widths (Array Nat)
---
--- STUB: the real render is ported in Tv.Render (L5). This definition exists
--- so the API surface matches Lean; callers wire up Render.hs once available.
+-- | Print string at position (for backwards compat)
+print :: Word32 -> Word32 -> Word32 -> Word32 -> Text -> IO ()
+print x y fg bg s =
+  printPadC x y (fromIntegral (T.length s)) fg bg s 0
+
+-- ============================================================================
+-- renderTable — FFI into cbits/tv_render.c
+-- ============================================================================
+
+-- | TvCol struct matching cbits/tv_render.h.
+-- Layout: uint8 tag (1B), padding to 8B, int64 nrows (8B), void* data (8B).
+-- Total 24 bytes on 64-bit.
+data TvCol = TvCol !Word8 !Int64 !(Ptr ())
+
+instance Storable TvCol where
+  sizeOf _    = 24
+  alignment _ = 8
+  peek p = do
+    t <- peekByteOff p 0
+    n <- peekByteOff p 8
+    d <- peekByteOff p 16
+    pure (TvCol t n d)
+  poke p (TvCol t n d) = do
+    pokeByteOff p 0  t
+    pokeByteOff p 8  n
+    pokeByteOff p 16 d
+
+foreign import ccall unsafe "tv_render_table"
+  c_tv_render_table
+    :: Ptr Cell -> CInt -> CInt
+    -> Ptr TvCol -> CSize
+    -> Ptr CString
+    -> Ptr CChar -> CSize
+    -> Ptr Word32 -> CSize
+    -> Ptr Word32 -> CSize
+    -> Word64 -> Word64 -> Word64
+    -> Word64 -> Word64
+    -> Word64 -> Word64
+    -> Int64
+    -> Ptr Word32 -> CSize
+    -> Ptr Word32 -> CSize
+    -> Ptr Word32 -> CSize
+    -> Ptr Word32
+    -> Int64 -> Int64
+    -> Word8
+    -> Ptr CString -> CSize
+    -> Ptr Word32
+    -> IO ()
+
+-- | Unified table render. Signature mirrors Lean's `renderTable` (21 args);
+-- comments above each slot describe what Lean passes.
 renderTable
   :: Vector Column     -- allCols
   -> Vector Text       -- names
@@ -288,16 +358,117 @@ renderTable
   -> Int64             -- moveDir
   -> Vector Word64     -- selCols
   -> Vector Word64     -- selRows
-  -> Vector Word64     -- styles (Array Nat in Lean)
-  -> Vector Word32     -- (Array UInt32 in Lean — fourth style/color array)
+  -> Vector Word64     -- hiddenCols
+  -> Vector Word32     -- styles (fg/bg pairs)
   -> Int64             -- prec
   -> Int64             -- widthAdj
-  -> Word8             -- (final UInt8 slot)
-  -> Vector Text       -- trailing Array String
+  -> Word8             -- heatMode
+  -> Vector Text       -- sparklines
   -> IO (Vector Word64)
-renderTable _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ = pure V.empty
+renderTable
+  allCols names fmts inWidths colIdxs
+  nTotalRows nKeys colOff r0 r1 curRow curCol moveDir
+  selCols selRows hiddenCols styles
+  prec widthAdj heatMode sparklines
+  = do
+  (w, h, buf) <- readIORef screenBuf
+  let nCols = V.length allCols
+  -- Track all malloc'd buffers so they're freed after the C call.
+  colBuf       <- mallocArray nCols                  :: IO (Ptr TvCol)
+  colDataPtrs  <- newIORef ([] :: [Ptr ()])
+  strCStrs     <- newIORef ([] :: [CString])
 
--- | Print string at position (for backwards compat)
-print :: Word32 -> Word32 -> Word32 -> Word32 -> Text -> IO ()
-print x y fg bg s =
-  printPadC x y (fromIntegral (T.length s)) fg bg s 0
+  -- Populate TvCol array.
+  let pokeCol i t n d = pokeByteOff colBuf (i * sizeOf (undefined :: TvCol)) (TvCol t n d)
+  V.iforM_ allCols $ \i col -> case col of
+    ColumnInts v -> do
+      let n = V.length v
+      p <- mallocArray (max 1 n) :: IO (Ptr Int64)
+      V.iforM_ v $ \j x -> pokeByteOff p (j * 8) x
+      modifyIORef' colDataPtrs (castPtr p :)
+      pokeCol i 0 (fromIntegral n) (castPtr p)
+    ColumnFloats v -> do
+      let n = V.length v
+      p <- mallocArray (max 1 n) :: IO (Ptr Double)
+      V.iforM_ v $ \j x -> pokeByteOff p (j * 8) x
+      modifyIORef' colDataPtrs (castPtr p :)
+      pokeCol i 1 (fromIntegral n) (castPtr p)
+    ColumnStrs v -> do
+      let n = V.length v
+      strs <- V.forM v $ \t -> do
+        cs <- newCString (T.unpack t)
+        modifyIORef' strCStrs (cs :)
+        pure cs
+      p <- mallocArray (max 1 n) :: IO (Ptr CString)
+      V.iforM_ strs $ \j cs -> pokeByteOff p (j * sizeOf (undefined :: CString)) cs
+      modifyIORef' colDataPtrs (castPtr p :)
+      pokeCol i 2 (fromIntegral n) (castPtr p)
+
+  -- names: Text -> CString[]
+  nameCStrs <- V.forM names $ \t -> newCString (T.unpack t)
+  namesBuf  <- mallocArray (max 1 nCols) :: IO (Ptr CString)
+  V.iforM_ nameCStrs $ \i cs -> pokeByteOff namesBuf (i * sizeOf (undefined :: CString)) cs
+
+  -- fmts: Vector Char -> char[]
+  let nFmts = V.length fmts
+  fmtsBuf <- mallocArray (max 1 nFmts) :: IO (Ptr CChar)
+  V.iforM_ fmts $ \i c -> pokeByteOff fmtsBuf i (fromIntegral (fromEnum c) :: CChar)
+
+  -- uint32 arrays
+  let toU32 v = V.map (fromIntegral :: Word64 -> Word32) v
+  inWidthsV  <- toStorable (toU32 inWidths)
+  colIdxsV   <- toStorable (toU32 colIdxs)
+  selColsV   <- toStorable (toU32 selCols)
+  selRowsV   <- toStorable (toU32 selRows)
+  hiddenV    <- toStorable (toU32 hiddenCols)
+  stylesV    <- toStorable styles
+
+  -- sparklines: Vector Text -> CString[]
+  let nSpark = V.length sparklines
+  sparkCStrs <- V.forM sparklines $ \t -> newCString (T.unpack t)
+  sparkBuf   <- mallocArray (max 1 nSpark) :: IO (Ptr CString)
+  V.iforM_ sparkCStrs $ \i cs -> pokeByteOff sparkBuf (i * sizeOf (undefined :: CString)) cs
+
+  outBuf <- mallocArray (max 1 nCols) :: IO (Ptr Word32)
+
+  VSM.unsafeWith buf $ \cellPtr ->
+    VS.unsafeWith inWidthsV $ \pInW ->
+    VS.unsafeWith colIdxsV  $ \pIdx ->
+    VS.unsafeWith selColsV  $ \pSC ->
+    VS.unsafeWith selRowsV  $ \pSR ->
+    VS.unsafeWith hiddenV   $ \pH ->
+    VS.unsafeWith stylesV   $ \pSt ->
+      c_tv_render_table
+        cellPtr (fromIntegral w) (fromIntegral h)
+        colBuf (fromIntegral nCols)
+        namesBuf
+        fmtsBuf (fromIntegral nFmts)
+        pInW (fromIntegral (V.length inWidths))
+        pIdx (fromIntegral (V.length colIdxs))
+        nTotalRows nKeys colOff
+        r0 r1 curRow curCol moveDir
+        pSC (fromIntegral (V.length selCols))
+        pSR (fromIntegral (V.length selRows))
+        pH  (fromIntegral (V.length hiddenCols))
+        pSt
+        prec widthAdj heatMode
+        sparkBuf (fromIntegral nSpark)
+        outBuf
+
+  outs <- peekArray nCols outBuf
+
+  -- Free every temporary allocation.
+  free outBuf
+  free sparkBuf
+  V.forM_ sparkCStrs free
+  free fmtsBuf
+  free namesBuf
+  V.forM_ nameCStrs free
+  readIORef strCStrs >>= mapM_ free
+  readIORef colDataPtrs >>= mapM_ free
+  free colBuf
+
+  pure (V.fromList (map fromIntegral outs))
+  where
+    toStorable :: (Storable a) => Vector a -> IO (VS.Vector a)
+    toStorable v = pure (VS.generate (V.length v) (v V.!))
