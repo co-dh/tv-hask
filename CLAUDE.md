@@ -36,6 +36,27 @@ Rules while porting:
 Refactoring to idiomatic Haskell happens **after** parity is reached and
 tests pass. Not before, not interleaved.
 
+## Field access: OverloadedLabels + optics-core
+
+Where Lean uses `gen_lenses` to generate `fieldL` bindings, the Haskell
+port uses `optics-th`'s `makeFieldLabelsNoPrefix ''Record` splice and
+accesses fields via `OverloadedLabels`:
+
+```haskell
+nav ^. #row % #cur         -- read cursor row (optics-core)
+nav & #row % #cur .~ 5     -- set cursor row
+over #hidden (`toggle` name) nav
+```
+
+This is a deliberate surface-syntax divergence from Lean — `set View.precL v s`
+and `s & #prec .~ v` are the same lens applied, so parity stays intact at
+the semantic level. The few places where a composed lens is used as an atom
+across multiple call sites (e.g. `rowCurL`, `curViewL`, `curPrecL`) are
+kept as top-level `Lens'` bindings defined via `(%)`.
+
+Only external library in the optics layer: **`optics-core`** + **`optics-th`**.
+No hand-rolled `Tv.Lens` module — it was deleted after the refactor.
+
 ## Project layout
 
 - `src/Tv/` — library modules, one per Lean source file under `Tc/Tc/`
