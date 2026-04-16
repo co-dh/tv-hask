@@ -42,7 +42,7 @@ import TestUtil
 import qualified Tv.Plot as Plot
 import Tv.Plot (KeyAction(..))
 import Tv.Types (PlotKind(..), ColType(..))
-import qualified Tv.Data.ADBC.Table as Tbl
+import qualified Tv.Data.DuckDB.Table as Tbl
 import qualified Tv.Util as Log
 
 -- | Alias: `run` in Lean -> runHask in Haskell (no separate binary)

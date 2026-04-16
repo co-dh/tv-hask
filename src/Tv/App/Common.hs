@@ -66,8 +66,8 @@ import qualified Tv.UI.Info as UIInfo
 import qualified Tv.UI.Preview as UIPreview
 import qualified Tv.Util as Log
 import qualified Tv.Util as Socket
-import qualified Tv.Data.ADBC.Ops as Ops
-import Tv.Data.ADBC.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Ops as Ops
+import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.View (View(..), ViewStack(..))
 import qualified Tv.View as View
 
@@ -220,10 +220,10 @@ ctxStr = vkindStr
 dispatchHandler :: AppState -> Text -> IO AppState
 dispatchHandler a cmdStr = do
   Log.write "sock" ("cmd=" <> cmdStr)
-  let (h, arg) = case T.splitOn " " cmdStr of
-        [single]     -> (single, "")
-        (x : rest) -> (x, T.intercalate " " rest)
-        []           -> (cmdStr, "")
+  let (h, arg) = case T.words cmdStr of
+        []         -> (cmdStr, "")
+        [single]   -> (single, "")
+        (x : rest) -> (x, T.unwords rest)
   case CmdConfig.handlerLookup (cmdCache a) h of
     Nothing -> do
       Log.write "cmd" ("unknown command: " <> h)

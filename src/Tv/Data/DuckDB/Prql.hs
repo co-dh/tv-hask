@@ -8,7 +8,7 @@
   `compile`, which shells out to the `prqlc` CLI — matching Lean's layering
   where `compile` lives in `Tc/Data/ADBC/Prql.lean`, not the FFI module.
 -}
-module Tv.Data.ADBC.Prql
+module Tv.Data.DuckDB.Prql
   ( -- * Query type
     Query(..)
   , defaultQuery
@@ -132,7 +132,7 @@ ducktabsF = "from dtabs | tbl_info_filtered"
 -- | PRQL function definitions, embedded at compile time. Mirrors Lean's
 -- @include_str "funcs.prql"@.
 funcsBytes :: ByteString
-funcsBytes = $(embedFile "src/Tv/Data/ADBC/funcs.prql")
+funcsBytes = $(embedFile "src/Tv/Data/DuckDB/funcs.prql")
 
 funcs :: Text
 funcs = TE.decodeUtf8 funcsBytes

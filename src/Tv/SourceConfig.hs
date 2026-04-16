@@ -44,9 +44,9 @@ import System.Exit (ExitCode (..))
 import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcessWithExitCode)
 
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import qualified Tv.Data.ADBC.Prql as Prql
-import Tv.Data.ADBC.Table
+import qualified Tv.Data.DuckDB.Conn as Conn
+import qualified Tv.Data.DuckDB.Prql as Prql
+import Tv.Data.DuckDB.Table
   ( AdbcTable
   , fromTmp
   , loadExt
@@ -291,7 +291,7 @@ runSetup cfg = do
       skipCmd <- if not (T.null (setupSql cfg))
         then do
           let sql = expand (setupSql cfg) (V.singleton ("home", homeT))
-          r <- try (Adbc.query sql) :: IO (Either SomeException Adbc.QueryResult)
+          r <- try (Conn.query sql) :: IO (Either SomeException Conn.QueryResult)
           case r of
             Right _ -> do
               Log.write "src" ("setup sql ok (skipped cmd): " <> sql)
@@ -310,7 +310,7 @@ runSetup cfg = do
         unless (T.null (setupSql cfg)) $ do
           let sql = expand (setupSql cfg) (V.singleton ("home", homeT))
           Log.write "src" ("setup sql: " <> sql)
-          _ <- Adbc.query sql
+          _ <- Conn.query sql
           pure ()
         modifyIORef' setupDone (`V.snoc` pfx cfg)
 
@@ -401,13 +401,13 @@ runListSql noSign_ cfg path_ tbl = do
                 (map T.strip (T.splitOn ";\n" sql))
   case reverse stmts of
     [] -> do
-      _ <- Adbc.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> sql)
+      _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> sql)
       fromTbl tbl
     (selectSql : rest) -> do
       forM_ (reverse rest) $ \stmt -> do
-        _ <- Adbc.query stmt
+        _ <- Conn.query stmt
         pure ()
-      _ <- Adbc.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> selectSql)
+      _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> selectSql)
       fromTbl tbl
 
 -- | CLI mode: run command, save JSON, transform via listSql, auto-unnest, add parent row
@@ -432,7 +432,7 @@ runListCmd noSign_ cfg path_ tbl = do
               TIO.writeFile tmpFile (T.pack out2)
               let fbSql = expand (fallbackSql cfg)
                             (V.singleton ("src", T.pack tmpFile))
-              _ <- Adbc.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> fbSql)
+              _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> fbSql)
               Log.rmFile tmpFile
               Just <$> fromTbl tbl
             _ -> pure Nothing
@@ -458,7 +458,7 @@ runListCmd noSign_ cfg path_ tbl = do
                 if listSql cfg == "FTP"
                   then "SELECT * FROM read_csv('" <> tmpT <> "', header=true, delim='\t')"
                   else expand (listSql cfg) (V.singleton ("src", tmpT))
-          _ <- Adbc.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> lSql)
+          _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> lSql)
           -- Auto-unnest: if result is 1 row with a struct[] column, expand it
           rU <- try (do
             mq <- Prql.compile ("from dcols | struct_col '" <> tbl <> "'")
@@ -473,10 +473,10 @@ runListCmd noSign_ cfg path_ tbl = do
             cntR <- case cntM of
                       Just q -> pure q
                       Nothing -> ioError (userError "count PRQL failed")
-            col <- Adbc.cellStr qr 0 0
-            n   <- Adbc.cellInt cntR 0 0
+            col <- Conn.cellStr qr 0 0
+            n   <- Conn.cellInt cntR 0 0
             when (n == 1 && not (T.null col)) $ do
-              _ <- Adbc.query ( "CREATE OR REPLACE TEMP TABLE " <> tbl
+              _ <- Conn.query ( "CREATE OR REPLACE TEMP TABLE " <> tbl
                              <> " AS SELECT unnest(\"" <> col
                              <> "\", recursive:=true) FROM " <> tbl )
               pure ()) :: IO (Either SomeException ())
@@ -486,7 +486,7 @@ runListCmd noSign_ cfg path_ tbl = do
           case configParent cfg path_ of
             Just _ -> do
               rP <- try (do
-                _ <- Adbc.query ( "INSERT INTO " <> tbl
+                _ <- Conn.query ( "INSERT INTO " <> tbl
                                <> " SELECT '..' as name, 0 as size, '' as date, 'dir' as type" )
                 pure ()) :: IO (Either SomeException ())
               case rP of
@@ -496,12 +496,12 @@ runListCmd noSign_ cfg path_ tbl = do
           fromTbl tbl
   where
     -- compile+run PRQL, returning the QueryResult (matches Lean `Prql.query`)
-    prqlRun :: Text -> IO (Maybe Adbc.QueryResult)
+    prqlRun :: Text -> IO (Maybe Conn.QueryResult)
     prqlRun q = do
       m <- Prql.compile q
       case m of
         Nothing -> pure Nothing
-        Just sql -> Just <$> Adbc.query sql
+        Just sql -> Just <$> Conn.query sql
 
 -- | Run listing: cache check -> setup -> dispatch to sql/cmd mode -> cache store.
 -- Results are cached in-memory when listing takes > 3 seconds (e.g. slow S3 buckets).
@@ -576,28 +576,28 @@ runEnter cfg name =
               tbl <- tmpName "src"
               tmpFile <- Log.tmpPath ("src-enter-" <> T.unpack tbl <> ".json")
               TIO.writeFile tmpFile json
-              _ <- Adbc.query ( "CREATE TEMP TABLE " <> tbl
+              _ <- Conn.query ( "CREATE TEMP TABLE " <> tbl
                              <> " AS SELECT * FROM read_json_auto('"
                              <> T.pack tmpFile <> "')" )
               Log.rmFile tmpFile
               -- Apply types from DuckDB stub view (e.g. osq.groups has typed columns)
               let typeApply :: IO ()
                   typeApply = do
-                    qr <- Adbc.queryParam
+                    qr <- Conn.queryParam
                       "SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = $1 AND data_type != 'VARCHAR'"
                       name
-                    nr <- Adbc.nrows qr
+                    nr <- Conn.nrows qr
                     let n = fromIntegral nr :: Int
                     cols <- V.generateM n $ \i -> do
-                      colName <- Adbc.cellStr qr (fromIntegral i) 0
-                      colType <- Adbc.cellStr qr (fromIntegral i) 1
+                      colName <- Conn.cellStr qr (fromIntegral i) 0
+                      colType <- Conn.cellStr qr (fromIntegral i) 1
                       pure (colName, colType)
                     V.forM_ cols $ \(colName, colType) -> do
                       let alter = "ALTER TABLE " <> tbl
                                 <> " ALTER COLUMN \"" <> colName <> "\" TYPE "
                                 <> colType <> " USING TRY_CAST(\"" <> colName
                                 <> "\" AS " <> colType <> ")"
-                      rA <- try (Adbc.query alter) :: IO (Either SomeException Adbc.QueryResult)
+                      rA <- try (Conn.query alter) :: IO (Either SomeException Conn.QueryResult)
                       case rA of
                         _ -> pure ()
               rT <- try typeApply :: IO (Either SomeException ())

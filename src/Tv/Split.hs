@@ -24,11 +24,11 @@ import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import qualified Tv.Data.ADBC.Prql as Prql
-import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Table (AdbcTable, stripSemi)
-import Tv.Data.ADBC.Ops (quoteId)
+import qualified Tv.Data.DuckDB.Conn as Conn
+import qualified Tv.Data.DuckDB.Prql as Prql
+import qualified Tv.Data.DuckDB.Table as Table
+import Tv.Data.DuckDB.Table (AdbcTable, stripSemi)
+import Tv.Data.DuckDB.Ops (quoteId)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd(..), ColType(..), Op(..), escSql)
@@ -54,8 +54,8 @@ maxParts q col ep = do
             "SELECT COALESCE(max(array_length(string_split_regex("
             <> qid <> ", '" <> ep <> "'))), 0) FROM (" <> sql <> ")"
       r <- try $ do
-        qr_ <- Adbc.query countSql
-        v <- Adbc.cellInt qr_ 0 0
+        qr_ <- Conn.query countSql
+        v <- Conn.cellInt qr_ 0 0
         pure (min (fromIntegral v :: Int) 20)  -- cap at 20 columns
       case r of
         Left (e :: SomeException) -> do

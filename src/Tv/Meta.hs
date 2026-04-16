@@ -1,6 +1,6 @@
 {-
   Meta view: column statistics via DuckDB temp table tc_meta_N.
-  Selection and key operations use composable PRQL (via ADBC/Meta).
+  Selection and key operations use composable PRQL (via DuckDB/Meta).
   Each meta view gets a unique temp table so concurrent views don't collide.
 
   Literal port of Tc/Tc/Meta.lean — same function names, same order, same
@@ -30,10 +30,10 @@ import Tv.Types (Cmd (..), ViewKind (..))
 import Tv.View (ViewStack)
 import qualified Tv.View as View
 
-import qualified Tv.Data.ADBC.Ops as Ops
-import qualified Tv.Data.ADBC.Prql as Prql
-import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Ops as Ops
+import qualified Tv.Data.DuckDB.Prql as Prql
+import qualified Tv.Data.DuckDB.Table as Table
+import Tv.Data.DuckDB.Table (AdbcTable)
 
 -- | Extract meta table name from the current view's AdbcTable query base.
 --   e.g. "from tc_meta_3" -> "tc_meta_3"

@@ -4,7 +4,7 @@ import qualified Data.Text as T
 import System.Exit (exitFailure)
 import Test.Tasty
 
-import qualified Tv.Data.ADBC.Table as AdbcTable
+import qualified Tv.Data.DuckDB.Table as AdbcTable
 
 import qualified Test
 import qualified TestPure

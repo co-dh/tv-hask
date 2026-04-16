@@ -32,9 +32,9 @@ import qualified Tv.Util as Log
 import qualified Tv.View as View
 import Tv.View (ViewStack)
 
-import qualified Tv.Data.ADBC.Prql as Prql
-import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Prql as Prql
+import qualified Tv.Data.DuckDB.Table as Table
+import Tv.Data.DuckDB.Table (AdbcTable)
 
 -- | Sample PRQL expressions by column type, showing name = expr format
 samples :: Text -> ColType -> Text
@@ -65,7 +65,7 @@ samples col ty = case ty of
 -- | Build "col : type" lines with aligned ":"
 colHints :: Vector Text -> Vector ColType -> Text
 colHints names types =
-  let maxLen = V.foldl (\mx n -> max mx (T.length n)) 0 names
+  let maxLen = V.foldl' (\mx n -> max mx (T.length n)) 0 names
       line i n =
         let pad = T.replicate (maxLen - T.length n) " "
             ty  = fromMaybe ColTypeOther (types V.!? i)

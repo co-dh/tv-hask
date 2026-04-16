@@ -18,11 +18,11 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import qualified Tv.Data.ADBC.Prql as Prql
-import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Table (AdbcTable)
-import qualified Tv.Data.ADBC.Ops as Ops
+import qualified Tv.Data.DuckDB.Conn as Conn
+import qualified Tv.Data.DuckDB.Prql as Prql
+import qualified Tv.Data.DuckDB.Table as Table
+import Tv.Data.DuckDB.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import Tv.Types (ColType (..), isNumeric)
@@ -57,18 +57,18 @@ compute t colIdx = do
       case mSql of
         Nothing  -> pure ""
         Just sql -> do
-          r <- try (Adbc.query sql) :: IO (Either SomeException Adbc.QueryResult)
+          r <- try (Conn.query sql) :: IO (Either SomeException Conn.QueryResult)
           case r of
             Left _   -> pure ""
             Right qr_ ->
               if isNum then do
-                sm <- Adbc.cellStr qr_ 0 0
-                av <- Adbc.cellStr qr_ 0 1
-                ct <- Adbc.cellStr qr_ 0 2
+                sm <- Conn.cellStr qr_ 0 0
+                av <- Conn.cellStr qr_ 0 1
+                ct <- Conn.cellStr qr_ 0 2
                 let fmt s = if T.length s > 8 then T.take 8 s else s
                 pure ("Σ" <> fmt sm <> " μ" <> fmt av <> " #" <> ct)
               else do
-                ct <- Adbc.cellStr qr_ 0 0
+                ct <- Conn.cellStr qr_ 0 0
                 pure ("#" <> ct)
 
 -- | Render aggregation stats on the status bar at 1/3 width

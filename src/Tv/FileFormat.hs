@@ -39,10 +39,10 @@ import Tv.View (View)
 import qualified Tv.View as View
 import Tv.Types (escSql)
 import qualified Tv.Types as Types
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import qualified Tv.Data.ADBC.Prql as Prql
-import Tv.Data.ADBC.Table (AdbcTable)
-import qualified Tv.Data.ADBC.Table as Table
+import qualified Tv.Data.DuckDB.Conn as Conn
+import qualified Tv.Data.DuckDB.Prql as Prql
+import Tv.Data.DuckDB.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Table as Table
 import Optics.Core ((&), (.~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
@@ -151,13 +151,13 @@ attachFile :: Text -> Format -> IO (Maybe (View AdbcTable))
 attachFile ap fmt = do
   Table.loadExt (duckdbExt fmt)
   let typClause = if T.null (attachType fmt) then "" else "TYPE " <> attachType fmt <> ", "
-  _ <- Adbc.query "DETACH DATABASE IF EXISTS extdb"
-  _ <- Adbc.query ("ATTACH '" <> escSql ap <> "' AS extdb (" <> typClause <> "READ_ONLY)")
+  _ <- Conn.query "DETACH DATABASE IF EXISTS extdb"
+  _ <- Conn.query ("ATTACH '" <> escSql ap <> "' AS extdb (" <> typClause <> "READ_ONLY)")
   mQr <- Table.prqlQuery Prql.ducktabs
   case mQr of
     Nothing -> pure Nothing
     Just qr -> do
-      total <- Adbc.nrows qr
+      total <- Conn.nrows qr
       let totalN = fromIntegral total :: Int
       if totalN == 0
         then pure Nothing

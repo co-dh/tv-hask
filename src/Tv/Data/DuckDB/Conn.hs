@@ -1,15 +1,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-
-  Lean-shaped ADBC shim over DuckDB.
+  DuckDB connection + query execution.
 
-  This module mirrors the opaque `Adbc.*` primitives declared in Lean's
-  `Tc/Data/ADBC/Table.lean` so that the L6 port of `AdbcTable` can be a
-  literal translation. Lean's ADBC namespace operates on an implicit
-  in-process connection; we replicate that with an IORef holding a
-  singleton `DB.Conn`.
+  Manages a singleton in-process DuckDB connection. Materializes query
+  results into random-access QueryResult (eagerly fetched chunks with
+  binary search for row indexing).
 -}
-module Tv.Data.ADBC.Adbc
+module Tv.Data.DuckDB.Conn
   ( QueryResult(..)
   , init
   , shutdown
@@ -45,7 +43,7 @@ import qualified Tv.Data.DuckDB as DB
 import qualified Tv.Types as Tc
 import Optics.TH (makeFieldLabelsNoPrefix)
 
--- | Global Conn, mirroring Lean's implicit ADBC state.
+-- | Global Conn — singleton in-process DuckDB connection.
 {-# NOINLINE connRef #-}
 connRef :: IORef (Maybe DB.Conn)
 connRef = unsafePerformIO (newIORef Nothing)
@@ -55,7 +53,7 @@ getConn = do
   m <- readIORef connRef
   case m of
     Just c  -> pure c
-    Nothing -> error "Adbc: connection not initialized (call Adbc.init first)"
+    Nothing -> error "DuckDB: connection not initialized (call Conn.init first)"
 
 -- | Query result with eagerly fetched chunks plus cached metadata. Lean's
 -- opaque QueryResult wraps a C-side Arrow array cursor; we materialize the
@@ -70,7 +68,7 @@ data QueryResult = QueryResult
   }
 makeFieldLabelsNoPrefix ''QueryResult
 
--- | Adbc.init — opens an in-memory DuckDB if none is open yet. Returns ""
+-- | Opens an in-memory DuckDB if none is open yet. Returns ""
 -- on success, an error message on failure (matching Lean's convention).
 init :: IO Text
 init = do
@@ -85,7 +83,7 @@ init = do
     Right ()                   -> pure ""
     Left (e :: SomeException)  -> pure (T.pack (show e))
 
--- | Adbc.shutdown — disconnect and clear the singleton.
+-- | Disconnect and clear the singleton.
 shutdown :: IO ()
 shutdown = do
   m <- readIORef connRef
@@ -125,7 +123,7 @@ nrows qr = pure (fromIntegral (nRows qr))
 colName :: QueryResult -> Word64 -> IO Text
 colName qr i = pure (colNames qr V.! fromIntegral i)
 
--- | Adbc.colFmt — Lean returns the Arrow ArrowSchema.format string. DuckDB
+-- | Column format char. Lean returns the Arrow ArrowSchema.format string. DuckDB
 -- doesn't surface that directly, so we synthesize the first character per
 -- Arrow conventions: int = 'l', float = 'g', str = 'u', bool = 'b', and
 -- 'd'/'t'/'s' for decimal/time/timestamp. The downstream consumer in
@@ -146,7 +144,7 @@ colFmt qr i =
        Tc.ColTypeBool      -> 'b'
        Tc.ColTypeOther     -> '?'
 
--- | Adbc.colType — returns the StrEnum name of the column type. Lean
+-- | Column type string. Lean
 -- returns snake-case names like "int"/"float"/"utf8"; we use our ColType
 -- StrEnum toString to keep a single source of truth. NOTE: Lean's Arrow
 -- path returns "utf8" for strings; we return "str". AdbcTable.ofResult

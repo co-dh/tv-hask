@@ -23,9 +23,9 @@ import Tv.Types
   )
 import qualified Tv.View as View
 import Tv.View (ViewStack)
-import qualified Tv.Data.ADBC.Ops as Ops
-import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Ops as Ops
+import qualified Tv.Data.DuckDB.Table as Table
+import Tv.Data.DuckDB.Table (AdbcTable)
 
 -- | Build filter expression from freq view row
 filterIO :: AdbcTable -> Vector Text -> Int -> IO Text

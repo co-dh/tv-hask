@@ -1,7 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-
-  ADBC backend: AdbcTable with PRQL query support.
+  DuckDB table: AdbcTable with PRQL query support.
 
   Literal port of Tc/Data/ADBC/Table.lean. The Lean file declares its
   `namespace Adbc` externs and a top-level `Prql.query` helper, then
@@ -11,9 +11,9 @@
   `AdbcTable.foo` becomes `foo` here (with prefixed aliases only where a
   collision forces it).
 
-  NOTE: Table operations (getCols, renderView, etc.) are in ADBC/Ops.hs.
+  NOTE: Table operations (getCols, renderView, etc.) are in DuckDB/Ops.hs.
 -}
-module Tv.Data.ADBC.Table
+module Tv.Data.DuckDB.Table
   ( -- top-level (Lean: def Prql.query in Table.lean)
     prqlQuery
     -- Tc namespace helpers
@@ -69,9 +69,9 @@ import qualified Data.Vector.Mutable as MV
 import Data.Word (Word64)
 import System.IO.Unsafe (unsafePerformIO)
 
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import qualified Tv.Data.ADBC.Prql as Prql
-import Tv.Data.ADBC.Prql (Query (..))
+import qualified Tv.Data.DuckDB.Conn as Conn
+import qualified Tv.Data.DuckDB.Prql as Prql
+import Tv.Data.DuckDB.Prql (Query (..))
 import Tv.Types
   ( ColType (..)
   , Op (..)
@@ -87,16 +87,16 @@ import Optics.TH (makeFieldLabelsNoPrefix)
 -- Top-level (Lean: `def Prql.query` in Table.lean, not Prql.lean)
 -- ----------------------------------------------------------------------------
 
--- | Compile PRQL and execute via Adbc. Logs the PRQL, returns Nothing on
+-- | Compile PRQL and execute via Conn. Logs the PRQL, returns Nothing on
 -- compile failure. Named `prqlQuery` to avoid colliding with
--- Tv.Data.ADBC.Prql.Query (the record type).
-prqlQuery :: Text -> IO (Maybe Adbc.QueryResult)
+-- Tv.Data.DuckDB.Prql.Query (the record type).
+prqlQuery :: Text -> IO (Maybe Conn.QueryResult)
 prqlQuery prql = do
   Log.write "prql" prql
   m <- Prql.compile prql
   case m of
     Nothing  -> pure Nothing
-    Just sql -> Just <$> Adbc.query sql
+    Just sql -> Just <$> Conn.query sql
 
 -- ----------------------------------------------------------------------------
 -- namespace Tc
@@ -114,7 +114,7 @@ stripSemi s =
 
 -- | Zero-copy table with PRQL query for re-query on modification
 data AdbcTable = AdbcTable
-  { qr        :: Adbc.QueryResult  -- arrow data (opaque, C memory)
+  { qr        :: Conn.QueryResult  -- arrow data (opaque, C memory)
   , colNames  :: Vector Text       -- cached column names
   , colFmts   :: Vector Char       -- cached format chars per column
   , colTypes  :: Vector ColType    -- cached type names
@@ -149,47 +149,47 @@ loadExt ext
         then pure ()
         else do
           Log.write "ext" ("loading: " <> ext)
-          _ <- Adbc.query ("INSTALL " <> ext <> "; LOAD " <> ext)
+          _ <- Conn.query ("INSTALL " <> ext <> "; LOAD " <> ext)
           modifyIORef' extLoaded (`V.snoc` ext)
 
 -- ----------------------------------------------------------------------------
 -- namespace AdbcTable
 -- ----------------------------------------------------------------------------
 
--- | Init ADBC backend (DuckDB), install+load httpfs for hf:// support.
+-- | Init DuckDB backend, install+load httpfs for hf:// support.
 --   Returns "" on success, error message on failure.
 init :: IO Text
 init = do
-  err <- Adbc.init
+  err <- Conn.init
   if T.null err
     then do
-      r <- try (Adbc.query "INSTALL httpfs; LOAD httpfs") :: IO (Either SomeException Adbc.QueryResult)
+      r <- try (Conn.query "INSTALL httpfs; LOAD httpfs") :: IO (Either SomeException Conn.QueryResult)
       case r of
         Left e  -> Log.write "init" ("httpfs extension: " <> T.pack (show e))
         Right _ -> pure ()
       pure err
     else pure err
 
--- | Shutdown ADBC backend
+-- | Shutdown DuckDB backend
 shutdown :: IO ()
-shutdown = Adbc.shutdown
+shutdown = Conn.shutdown
 
 -- | Build AdbcTable from QueryResult
-ofResult :: Adbc.QueryResult -> Query -> Int -> IO AdbcTable
+ofResult :: Conn.QueryResult -> Query -> Int -> IO AdbcTable
 ofResult qr_ q total = do
-  nc <- Adbc.ncols qr_
-  nr <- Adbc.nrows qr_
+  nc <- Conn.ncols qr_
+  nr <- Conn.nrows qr_
   let ncI = fromIntegral nc :: Int
   namesMV <- MV.new ncI
   fmtsMV  <- MV.new ncI
   typesMV <- MV.new ncI
   forM_ [0 .. ncI - 1] $ \i -> do
     let iW = fromIntegral i :: Word64
-    n <- Adbc.colName qr_ iW
+    n <- Conn.colName qr_ iW
     MV.write namesMV i n
-    fmt <- Adbc.colFmt qr_ iW
+    fmt <- Conn.colFmt qr_ iW
     MV.write fmtsMV i (if not (T.null fmt) then T.head fmt else '?')
-    typ <- Adbc.colType qr_ iW
+    typ <- Conn.colType qr_ iW
     MV.write typesMV i (ofString typ)
   names <- V.freeze namesMV
   fmts  <- V.freeze fmtsMV
@@ -211,10 +211,10 @@ queryCount q = do
   case m of
     Nothing -> pure 0
     Just qr_ -> do
-      nr <- Adbc.nrows qr_
+      nr <- Conn.nrows qr_
       if fromIntegral nr > (0 :: Int)
         then do
-          v <- Adbc.cellInt qr_ 0 0
+          v <- Conn.cellInt qr_ 0 0
           pure (fromIntegral v)
         else pure 0
 
@@ -249,7 +249,7 @@ fromFile path_ = do
   q <- if T.isPrefixOf "hf://" path_
          then do
            let tbl = remoteName path_
-           _ <- Adbc.query
+           _ <- Conn.query
                   ( "CREATE OR REPLACE TEMP TABLE \"" <> tbl
                  <> "\" AS (SELECT * FROM '" <> escSql path_ <> "')" )
            pure (Prql.defaultQuery { Prql.base = "from " <> tbl })
@@ -261,12 +261,12 @@ fromFile path_ = do
 -- | Attach a .duckdb file and list its tables as TSV (for folder-like view)
 listTables :: Text -> IO (Maybe AdbcTable)
 listTables path_ = do
-  _ <- Adbc.query ("ATTACH '" <> escSql path_ <> "' AS extdb (READ_ONLY)")
+  _ <- Conn.query ("ATTACH '" <> escSql path_ <> "' AS extdb (READ_ONLY)")
   m <- prqlQuery Prql.ducktabs
   case m of
     Nothing -> pure Nothing
     Just qr_ -> do
-      total <- Adbc.nrows qr_
+      total <- Conn.nrows qr_
       if fromIntegral total == (0 :: Int)
         then pure Nothing
         else Just <$> ofResult qr_ (Prql.defaultQuery { Prql.base = Prql.ducktabs }) (fromIntegral total)
@@ -286,9 +286,9 @@ primaryKeys table = do
       case m of
         Nothing -> pure V.empty
         Just qr_ -> do
-          nr <- Adbc.nrows qr_
+          nr <- Conn.nrows qr_
           let n = fromIntegral nr :: Int
-          V.generateM n $ \i -> Adbc.cellStr qr_ (fromIntegral i) 0
+          V.generateM n $ \i -> Conn.cellStr qr_ (fromIntegral i) 0
 
 -- | Open a table/view from an attached .duckdb file or schema-qualified name
 fromTable :: Text -> IO (Maybe (AdbcTable, Vector Text))
@@ -378,7 +378,7 @@ plotExport t xName yName catName_ xIsTime _step truncLen = do
       let copySql = "COPY (" <> sql' <> ") TO '" <> T.pack datPath
                  <> "' (FORMAT CSV, DELIMITER '\t', HEADER false)"
       Log.write "plot-sql" copySql
-      r <- try (Adbc.query copySql) :: IO (Either SomeException Adbc.QueryResult)
+      r <- try (Conn.query copySql) :: IO (Either SomeException Conn.QueryResult)
       case r of
         Left e -> do
           let msg = "COPY failed: " <> T.pack (show e)
@@ -391,9 +391,9 @@ plotExport t xName yName catName_ xIsTime _step truncLen = do
           case m of
             Nothing -> pure (Just V.empty)
             Just catQr -> do
-              nr <- Adbc.nrows catQr
+              nr <- Conn.nrows catQr
               let n = fromIntegral nr :: Int
-              cats <- V.generateM n $ \i -> Adbc.cellStr catQr (fromIntegral i) 0
+              cats <- V.generateM n $ \i -> Conn.cellStr catQr (fromIntegral i) 0
               pure (Just cats)
         Nothing -> pure (Just V.empty)
 
@@ -406,10 +406,10 @@ fromIngest content label reader
       tmp <- Log.tmpPath (T.unpack label <> "-" <> show n <> "." <> T.unpack label)
       TIO.writeFile tmp content
       let tbl = "tc_" <> label <> "_" <> T.pack (show n)
-      r <- try (Adbc.query ("CREATE TEMP TABLE " <> tbl
+      r <- try (Conn.query ("CREATE TEMP TABLE " <> tbl
                           <> " AS SELECT * FROM " <> reader
                           <> "('" <> T.pack tmp <> "')"))
-           :: IO (Either SomeException Adbc.QueryResult)
+           :: IO (Either SomeException Conn.QueryResult)
       case r of
         Left e -> do
           Log.rmFile tmp
@@ -439,7 +439,7 @@ fileWith path_ reader duckdbExt = do
       -- Materialize via reader function into temp table (PRQL can't parse
       -- function calls in `from`).
       let tbl = remoteName path_
-      _ <- Adbc.query
+      _ <- Conn.query
              ( "CREATE OR REPLACE TEMP TABLE \"" <> tbl
             <> "\" AS (SELECT * FROM " <> reader
             <> "('" <> escSql path_ <> "'))" )
@@ -448,7 +448,7 @@ fileWith path_ reader duckdbExt = do
       requery q total
 
 -- ----------------------------------------------------------------------------
--- NOTE: Table operations (getCols, renderView, etc.) are in ADBC/Ops.hs
+-- NOTE: Table operations (getCols, renderView, etc.) are in DuckDB/Ops.hs
 -- ----------------------------------------------------------------------------
 
 -- | Create freq table entirely in SQL (no round-trip to Lean)
@@ -464,7 +464,7 @@ freqTable t cNames
         case m of
           Nothing -> pure 0
           Just qr_ -> do
-            v <- Adbc.cellStr qr_ 0 0
+            v <- Conn.cellStr qr_ 0 0
             pure (parseIntOr0 v)
       -- freq table: uses freq PRQL function which computes Cnt, Pct, Bar in SQL
       tblName <- tmpName "freq"
@@ -475,7 +475,7 @@ freqTable t cNames
         Nothing -> pure Nothing
         Just sql -> do
           let sql' = stripSemi sql
-          _ <- Adbc.query ("CREATE TEMP TABLE " <> tblName <> " AS " <> sql')
+          _ <- Conn.query ("CREATE TEMP TABLE " <> tblName <> " AS " <> sql')
           m <- requery (Prql.defaultQuery { Prql.base = "from " <> tblName }) 0
           case m of
             Just t' -> pure (Just (t', totalGroups))
@@ -500,9 +500,9 @@ distinct t col = do
   case m of
     Nothing -> pure V.empty
     Just qr_ -> do
-      nr <- Adbc.nrows qr_
+      nr <- Conn.nrows qr_
       let n = fromIntegral nr :: Int
-      V.generateM n $ \i -> Adbc.cellStr qr_ (fromIntegral i) 0
+      V.generateM n $ \i -> Conn.cellStr qr_ (fromIntegral i) 0
 
 -- | Find row from starting position, forward or backward (with wrap).
 --   PRQL row_number is 1-based; we subtract 1 here for 0-based indexing.
@@ -516,10 +516,10 @@ findRow t col val start fwd = do
   case m of
     Nothing  -> pure Nothing
     Just qr_ -> do
-      nr <- Adbc.nrows qr_
+      nr <- Conn.nrows qr_
       let n = fromIntegral nr :: Int
       rows <- V.generateM n $ \i -> do
-        v <- Adbc.cellInt qr_ (fromIntegral i) 0
+        v <- Conn.cellInt qr_ (fromIntegral i) 0
         pure (fromIntegral v - 1 :: Int)
       if V.null rows
         then pure Nothing

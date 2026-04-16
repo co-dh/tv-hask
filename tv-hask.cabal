@@ -6,7 +6,7 @@ license:            MIT
 build-type:         Simple
 
 extra-source-files:
-  src/Tv/Data/ADBC/funcs.prql
+  src/Tv/Data/DuckDB/funcs.prql
   theme.csv
 
 common shared
@@ -28,17 +28,17 @@ library
   hs-source-dirs: src
   -- Seed branch: no ported modules yet. Each layer's commit adds its
   -- modules here. Tv.Data.DuckDB is parked on disk but not listed until
-  -- its deps (Tv.Types, Tv.Data.ADBC.Prql) come online.
+  -- its deps (Tv.Types, Tv.Data.DuckDB.Prql) come online.
   exposed-modules:
     Tv.App.Common
     Tv.App.Main
     Tv.App.Types
     Tv.AppF
     Tv.CmdConfig
-    Tv.Data.ADBC.Adbc
-    Tv.Data.ADBC.Ops
-    Tv.Data.ADBC.Prql
-    Tv.Data.ADBC.Table
+    Tv.Data.DuckDB.Conn
+    Tv.Data.DuckDB.Ops
+    Tv.Data.DuckDB.Prql
+    Tv.Data.DuckDB.Table
     Tv.Data.DuckDB
     Tv.Data.Text
     Tv.Derive

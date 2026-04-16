@@ -40,9 +40,9 @@ import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (NavState, rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd(..), ColType, isNumeric, typeStr, filterPrql, filterPrompt)
-import qualified Tv.Data.ADBC.Ops as Ops
-import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Ops as Ops
+import qualified Tv.Data.DuckDB.Table as Table
+import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.View (View(..), ViewStack, cur, setCur, push, tbl)
 import qualified Tv.View as View
 import qualified Tv.Fzf as Fzf

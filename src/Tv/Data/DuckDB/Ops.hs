@@ -6,7 +6,7 @@
   Literal port of Tc/Data/ADBC/Ops.lean. Each Lean def maps to a Haskell
   top-level def.
 -}
-module Tv.Data.ADBC.Ops
+module Tv.Data.DuckDB.Ops
   ( -- * Table operations (were typeclass methods, now plain functions)
     getCols
   , colType
@@ -33,11 +33,11 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word64)
 
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import qualified Tv.Data.ADBC.Prql as Prql
-import Tv.Data.ADBC.Prql (Query(..))
-import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Table (AdbcTable(..))
+import qualified Tv.Data.DuckDB.Conn as Conn
+import qualified Tv.Data.DuckDB.Prql as Prql
+import Tv.Data.DuckDB.Prql (Query(..))
+import qualified Tv.Data.DuckDB.Table as Table
+import Tv.Data.DuckDB.Table (AdbcTable(..))
 import Data.List (nub)
 import Tv.Types (ColType(..), colText, escSql, keepCols)
 import qualified Tv.Util as Log
@@ -49,7 +49,7 @@ import qualified Tv.Util as Log
 getCols :: AdbcTable -> Vector Int -> Int -> Int -> IO (Vector (Vector Text))
 getCols t idxs r0_ r1_ =
   V.mapM (\i -> V.generateM (r1_ - r0_) $ \ri ->
-    Adbc.cellStr (Table.qr t) (fromIntegral (r0_ + ri) :: Word64) (fromIntegral i :: Word64)
+    Conn.cellStr (Table.qr t) (fromIntegral (r0_ + ri) :: Word64) (fromIntegral i :: Word64)
   ) idxs
 
 colType :: AdbcTable -> Int -> ColType
@@ -57,7 +57,7 @@ colType t col = fromMaybe ColTypeOther (Table.colTypes t V.!? col)
 
 cellStr :: AdbcTable -> Int -> Int -> IO Text
 cellStr t row col =
-  Adbc.cellStr (Table.qr t) (fromIntegral row :: Word64) (fromIntegral col :: Word64)
+  Conn.cellStr (Table.qr t) (fromIntegral row :: Word64) (fromIntegral col :: Word64)
 
 -- | Hide columns at cursor + selections, return new table and filtered group
 modifyTableHide :: AdbcTable -> Int -> Vector Int -> Vector Text -> IO (AdbcTable, Vector Text)
@@ -85,7 +85,7 @@ toText t = do
   let nc = V.length (Table.colNames t)
   cols <- V.generateM nc $ \i ->
     V.generateM (Table.nRows t) $ \r ->
-      Adbc.cellStr (Table.qr t) (fromIntegral r :: Word64) (fromIntegral i :: Word64)
+      Conn.cellStr (Table.qr t) (fromIntegral r :: Word64) (fromIntegral i :: Word64)
   pure (colText (Table.colNames t) cols (Table.nRows t))
 
 -- ----------------------------------------------------------------------------
@@ -151,9 +151,9 @@ queryMeta t = do
         Nothing -> pure Nothing
         Just metaSql -> do
           tblName <- Table.tmpName "meta"
-          _ <- Adbc.query ("CREATE OR REPLACE TEMP TABLE " <> tblName
+          _ <- Conn.query ("CREATE OR REPLACE TEMP TABLE " <> tblName
                           <> " AS (" <> metaSql <> ")")
-          qr_ <- Adbc.query ("SELECT * FROM " <> tblName)
+          qr_ <- Conn.query ("SELECT * FROM " <> tblName)
           Just <$> Table.ofResult qr_ (Prql.defaultQuery { Prql.base = "from " <> tblName }) 0
 
 -- | Query row indices matching PRQL filter on meta table
@@ -163,10 +163,10 @@ metaIdxs tblName flt = do
   case m of
     Nothing -> pure V.empty
     Just qr_ -> do
-      nr <- Adbc.nrows qr_
+      nr <- Conn.nrows qr_
       let n = fromIntegral nr :: Int
       V.generateM n $ \r -> do
-        v <- Adbc.cellInt qr_ (fromIntegral r :: Word64) 0
+        v <- Conn.cellInt qr_ (fromIntegral r :: Word64) 0
         pure (fromIntegral v :: Int)
 
 -- | Query column names from meta table at given row indices
@@ -182,9 +182,9 @@ metaNames tblName rows = do
       case m of
         Nothing -> pure V.empty
         Just qr_ -> do
-          nr <- Adbc.nrows qr_
+          nr <- Conn.nrows qr_
           let n = fromIntegral nr :: Int
-          V.generateM n $ \r -> Adbc.cellStr qr_ (fromIntegral r :: Word64) 0
+          V.generateM n $ \r -> Conn.cellStr qr_ (fromIntegral r :: Word64) 0
 
 -- | Extract table name from path: last component after last "://" prefix strip.
 --   "osquery://groups" -> "groups", "duckdb://osq.groups" -> "groups"
@@ -218,10 +218,10 @@ columnComment path_ colName =
       case m of
         Nothing -> pure ""
         Just qr_ -> do
-          n <- Adbc.nrows qr_
+          n <- Conn.nrows qr_
           if fromIntegral n == (0 :: Int)
             then pure ""
-            else Adbc.cellStr qr_ 0 0
+            else Conn.cellStr qr_ 0 0
 
 -- | Enrich meta table with column descriptions from DuckDB metadata.
 --   Returns True if enriched.
@@ -239,10 +239,10 @@ enrichComments metaTbl path_ =
   where
     tbl = pathTable path_
     action = do
-      _ <- Adbc.query
+      _ <- Conn.query
              ("ALTER TABLE " <> metaTbl
               <> " ADD COLUMN IF NOT EXISTS description VARCHAR DEFAULT ''")
-      _ <- Adbc.query
+      _ <- Conn.query
              ("UPDATE " <> metaTbl
               <> " SET description = COALESCE((SELECT comment FROM duckdb_columns() WHERE table_name='"
               <> escSql tbl

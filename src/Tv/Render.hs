@@ -38,9 +38,9 @@ import Tv.Nav (NavState(..), adjOff)
 import qualified Tv.Nav as Nav
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Conn as Conn
+import qualified Tv.Data.DuckDB.Table as Table
+import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.Types
   ( ColType
   , RenderCtx(..)
@@ -76,10 +76,10 @@ rowPg = 20
 -- | Fetch rows from AdbcTable and render via renderCols
 renderView :: AdbcTable -> RenderCtx -> IO (Vector Int)
 renderView t ctx = do
-  texts <- Adbc.fetchRows (Table.qr t) (r0 ctx) (r1 ctx) (prec ctx)
+  texts <- Conn.fetchRows (Table.qr t) (r0 ctx) (r1 ctx) (prec ctx)
   heatDs <- if heatMode ctx == 0
     then pure V.empty
-    else Adbc.fetchHeatDoubles (Table.qr t) (r0 ctx) (r1 ctx)
+    else Conn.fetchHeatDoubles (Table.qr t) (r0 ctx) (r1 ctx)
   renderCols texts (Table.colNames t) (Table.colFmts t) (Table.colTypes t)
     (Table.nRows t) ctx (r0 ctx) (r1 ctx - r0 ctx) heatDs
 

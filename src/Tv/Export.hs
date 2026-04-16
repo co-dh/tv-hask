@@ -25,10 +25,10 @@ import qualified Data.Vector as V
 
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import qualified Tv.Data.ADBC.Prql as Prql
-import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Table (AdbcTable, stripSemi)
+import qualified Tv.Data.DuckDB.Conn as Conn
+import qualified Tv.Data.DuckDB.Prql as Prql
+import qualified Tv.Data.DuckDB.Table as Table
+import Tv.Data.DuckDB.Table (AdbcTable, stripSemi)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Render as Render
 import qualified Tv.StrEnum as StrEnum
@@ -74,7 +74,7 @@ exportView t path fmt = do
       let copySql = "COPY (" <> stripSemi sql <> ") TO '" <> escSql path
                  <> "' " <> copyOpt fmt
       Log.write "export" copySql
-      _ <- Adbc.query copySql
+      _ <- Conn.query copySql
       pure ()
 
 -- | Run export effect: build path from view name, export via DuckDB COPY

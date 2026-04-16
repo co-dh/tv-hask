@@ -12,7 +12,8 @@ module Tv.Data.Text
   , fromStdin
   ) where
 
-import Data.List (foldl')
+import Data.List (foldl', maximumBy)
+import Data.Ord (comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -22,40 +23,25 @@ import qualified Data.HashMap.Strict as HM
 
 -- | Find mode (most common value) in array
 mode :: Vector Int -> Int
-mode xs =
-  let m :: HM.HashMap Int Int
-      m = V.foldl' (\acc x -> HM.insertWith (+) x 1 acc) HM.empty xs
-      step (b, cnt) (k, v) = if v > cnt then (k, v) else (b, cnt)
-      (best, _) = foldl' step (0 :: Int, 0 :: Int) (HM.toList m)
-  in best
+mode xs
+  | V.null xs = 0
+  | otherwise =
+      let m = V.foldl' (\acc x -> HM.insertWith (+) x 1 acc) HM.empty xs
+      in fst (maximumBy (comparing snd) (HM.toList m))
 
 -- | Count word starts (non-space after space, plus position 0 if non-space)
 wordStarts :: Text -> Int
-wordStarts s =
-  let chars = V.fromList (T.unpack s)
-      n = V.length chars
-      getD i = if i >= 0 && i < n then chars V.! i else ' '
-  in if n == 0 then 0
-     else
-       let c0 = if getD 0 /= ' ' then 1 else 0
-           step cnt i = if getD i /= ' ' && getD (i - 1) == ' ' then cnt + 1 else cnt
-       in foldl' step c0 [1 .. n - 1]
+wordStarts = length . T.words
 
 -- | Split line into n fields (last field gets remainder with spaces)
 splitN :: Text -> Int -> Vector Text
 splitN s n
   | n == 0 = V.empty
   | otherwise =
-      let go :: Int -> Text -> [Text] -> (Text, [Text])
-          go 0 rest acc = (rest, reverse acc)
-          go k rest acc =
-            case filter (not . T.null) (T.splitOn " " rest) of
-              [] -> go (k - 1) rest ("" : acc)
-              (fld : tl) ->
-                let rest' = T.stripStart (T.intercalate " " tl)
-                in go (k - 1) rest' (fld : acc)
-          (finalRest, fields) = go (n - 1) (T.stripStart s) []
-      in V.fromList (fields ++ [T.strip finalRest])
+      let ws = T.words s
+          (first, rest) = splitAt (n - 1) ws
+          pad = replicate (max 0 (n - 1 - length first)) ""
+      in V.fromList (first ++ pad ++ [T.unwords rest])
 
 -- | Find column start positions from header (2+ consecutive spaces = separator)
 colStarts :: Text -> Vector Int

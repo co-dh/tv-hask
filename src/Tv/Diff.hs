@@ -28,11 +28,11 @@ import Optics.Core ((&), (.~))
 import qualified Tv.Util as Log
 import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk, resetVS)
 import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import qualified Tv.Data.ADBC.Prql as Prql
-import Tv.Data.ADBC.Prql (Query (..))
-import Tv.Data.ADBC.Table (AdbcTable)
-import qualified Tv.Data.ADBC.Table as Table
+import qualified Tv.Data.DuckDB.Conn as Conn
+import qualified Tv.Data.DuckDB.Prql as Prql
+import Tv.Data.DuckDB.Prql (Query (..))
+import Tv.Data.DuckDB.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Table as Table
 import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
 import qualified Tv.Util as Log
@@ -104,8 +104,8 @@ buildJoinTbl
 buildJoinTbl left right allKeys valCols common = do
   (lName, lSql) <- prepareView left "dl"
   (rName, rSql) <- prepareView right "dr"
-  _ <- Adbc.query ("CREATE OR REPLACE TEMP VIEW " <> lName <> " AS " <> lSql)
-  _ <- Adbc.query ("CREATE OR REPLACE TEMP VIEW " <> rName <> " AS " <> rSql)
+  _ <- Conn.query ("CREATE OR REPLACE TEMP VIEW " <> lName <> " AS " <> lSql)
+  _ <- Conn.query ("CREATE OR REPLACE TEMP VIEW " <> rName <> " AS " <> rSql)
   let q = quoted
       keySel = V.map (\k -> "COALESCE(L." <> q k <> ", R." <> q k <> ") AS " <> q k) allKeys
       valSel = V.map
@@ -126,7 +126,7 @@ buildJoinTbl left right allKeys valCols common = do
          <> " FROM " <> lName <> " L FULL OUTER JOIN " <> rName
          <> " R ON " <> joinCond
   Log.write "diff-sql" sql
-  _ <- Adbc.query sql
+  _ <- Conn.query sql
   pure tblName
 
 -- | Detect same-value column pairs → sameHide; rename differing pairs with Δ prefix.
@@ -136,11 +136,11 @@ renameCols tblName valCols = do
   classified <- V.forM valCols $ \v -> do
     let leftCol  = v <> "_left"
         rightCol = v <> "_right"
-    qr_ <- Adbc.query
+    qr_ <- Conn.query
              ("SELECT COUNT(*) FROM " <> tblName
               <> " WHERE NOT (" <> q leftCol
               <> " IS NOT DISTINCT FROM " <> q rightCol <> ")")
-    cnt <- Adbc.cellInt qr_ 0 0
+    cnt <- Conn.cellInt qr_ 0 0
     pure $ if cnt == 0
       then Left [leftCol, rightCol]
       else Right [(leftCol, "Δ" <> v <> "_L"), (rightCol, "Δ" <> v <> "_R")]
@@ -148,7 +148,7 @@ renameCols tblName valCols = do
       sameHide = V.fromList (concat hides)
       renames  = concat rens
   forM_ renames $ \(oldN, renamed) ->
-    () <$ Adbc.query
+    () <$ Conn.query
             ("ALTER TABLE " <> tblName
              <> " RENAME COLUMN " <> q oldN <> " TO " <> q renamed)
   pure sameHide

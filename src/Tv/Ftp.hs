@@ -53,12 +53,12 @@ parseLs raw =
   in T.intercalate "\n" (reverse rows)
   where
     step acc line =
-      let parts = filter (not . T.null) (T.splitOn " " (T.strip line))
+      let parts = T.words line
       in if length parts < 9
            then acc
            else
-             let name = Util.headD "" (T.splitOn " -> " (T.intercalate " " (drop 8 parts)))
+             let name = Util.headD "" (T.splitOn " -> " (T.unwords (drop 8 parts)))
                  size = Util.getD parts 4 "0"
-                 date = T.intercalate " " (take 3 (drop 5 parts))
+                 date = T.unwords (take 3 (drop 5 parts))
                  typ  = if T.isPrefixOf "d" (Util.getD parts 0 "") then "dir" else "file"
              in (name <> "\t" <> size <> "\t" <> date <> "\t" <> typ) : acc

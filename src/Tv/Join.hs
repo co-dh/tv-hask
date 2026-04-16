@@ -24,11 +24,11 @@ import Optics.Core ((&), (.~))
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Types (Cmd(..))
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import Tv.Data.ADBC.Ops ()
-import qualified Tv.Data.ADBC.Prql as Prql
-import Tv.Data.ADBC.Table (AdbcTable, tmpName, stripSemi)
-import qualified Tv.Data.ADBC.Table as Table
+import qualified Tv.Data.DuckDB.Conn as Conn
+import Tv.Data.DuckDB.Ops ()
+import qualified Tv.Data.DuckDB.Prql as Prql
+import Tv.Data.DuckDB.Table (AdbcTable, tmpName, stripSemi)
+import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Fzf (fzfIdx)
 import qualified Tv.Nav as Nav
 import Tv.View (ViewStack)
@@ -86,8 +86,8 @@ execJoin s op leftGrp = do
     Just parent -> do
       (lName, lSql) <- prepareView (Nav.tbl (View.nav parent)) "l"
       (rName, rSql) <- prepareView (View.tbl s) "r"
-      _ <- Adbc.query ("CREATE OR REPLACE TEMP VIEW " <> lName <> " AS " <> lSql)
-      _ <- Adbc.query ("CREATE OR REPLACE TEMP VIEW " <> rName <> " AS " <> rSql)
+      _ <- Conn.query ("CREATE OR REPLACE TEMP VIEW " <> lName <> " AS " <> lSql)
+      _ <- Conn.query ("CREATE OR REPLACE TEMP VIEW " <> rName <> " AS " <> rSql)
       let prql = prqlStr lName rName leftGrp op
       Log.write "prql" prql
       tblName <- tmpName "join"
@@ -95,7 +95,7 @@ execJoin s op leftGrp = do
       case mSql of
         Nothing  -> ioError (userError ("join PRQL compile failed: " <> T.unpack prql))
         Just sql -> do
-          _ <- Adbc.query
+          _ <- Conn.query
                  ("CREATE OR REPLACE TEMP TABLE " <> tblName
                   <> " AS " <> stripSemi sql)
           mAdbc <- Table.fromTmp tblName

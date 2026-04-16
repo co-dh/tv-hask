@@ -41,9 +41,9 @@ import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, tryStk, viewUp)
 import Tv.CmdConfig (CmdInfo(..), Entry, mkEntry, hdl)
-import Tv.Data.ADBC.Table (AdbcTable)
-import qualified Tv.Data.ADBC.Table as Table
-import qualified Tv.Data.ADBC.Ops as Ops
+import Tv.Data.DuckDB.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Table as Table
+import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.FileFormat as FileFormat
 import qualified Tv.SourceConfig as SourceConfig
 import Tv.SourceConfig (Config)

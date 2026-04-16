@@ -20,11 +20,11 @@ import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, tryStk)
 import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import Tv.Data.ADBC.Ops (quoteId)
-import qualified Tv.Data.ADBC.Prql as Prql
-import Tv.Data.ADBC.Table (AdbcTable, stripSemi, tmpName, fromTmp)
-import qualified Tv.Data.ADBC.Table as Table
+import qualified Tv.Data.DuckDB.Conn as Conn
+import Tv.Data.DuckDB.Ops (quoteId)
+import qualified Tv.Data.DuckDB.Prql as Prql
+import Tv.Data.DuckDB.Table (AdbcTable, stripSemi, tmpName, fromTmp)
+import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Types (Cmd(..), escSql)
 import Tv.View (View(..), ViewStack)
 import qualified Tv.View as View
@@ -73,7 +73,7 @@ push s = do
         Just baseSql -> do
           let sql = transposeSql (stripSemi baseSql) (Table.colNames t) (Table.nRows t)
           tblName <- tmpName "xpose"
-          _ <- Adbc.query ("CREATE OR REPLACE TEMP TABLE " <> tblName <> " AS (" <> sql <> ")")
+          _ <- Conn.query ("CREATE OR REPLACE TEMP TABLE " <> tblName <> " AS (" <> sql <> ")")
           mAdbc <- fromTmp tblName
           case mAdbc of
             Nothing -> pure Nothing

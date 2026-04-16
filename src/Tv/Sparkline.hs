@@ -17,11 +17,11 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word64)
 
-import qualified Tv.Data.ADBC.Adbc as Adbc
-import qualified Tv.Data.ADBC.Prql as Prql
-import Tv.Data.ADBC.Ops (quoteId)
-import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Conn as Conn
+import qualified Tv.Data.DuckDB.Prql as Prql
+import Tv.Data.DuckDB.Ops (quoteId)
+import qualified Tv.Data.DuckDB.Table as Table
+import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.Types (isNumeric, joinWith)
 import qualified Tv.Util as Log
 
@@ -71,20 +71,20 @@ compute t nBars = do
             Just baseSql -> do
               let unionSql = "WITH __src AS (" <> Table.stripSemi baseSql <> ") "
                           <> joinWith parts " UNION ALL "
-              r <- try (Adbc.query unionSql) :: IO (Either SomeException Adbc.QueryResult)
+              r <- try (Conn.query unionSql) :: IO (Either SomeException Conn.QueryResult)
               case r of
                 Left e -> do
                   Log.errorLog ("sparkline: " <> T.pack (show e))
                   pure empty
                 Right qr_ -> do
-                  nr <- Adbc.nrows qr_
+                  nr <- Conn.nrows qr_
                   let nrI = fromIntegral nr :: Int
                       emptyBuckets = V.replicate (V.length numIdxs) (V.empty :: Vector (Int, Int))
                       stepRow cb r_ = do
                         let rW = fromIntegral r_ :: Word64
-                        colIdx <- Adbc.cellInt qr_ rW 0
-                        bucket <- Adbc.cellInt qr_ rW 1
-                        cnt    <- Adbc.cellInt qr_ rW 2
+                        colIdx <- Conn.cellInt qr_ rW 0
+                        bucket <- Conn.cellInt qr_ rW 1
+                        cnt    <- Conn.cellInt qr_ rW 2
                         pure $ case V.findIndex (== fromIntegral colIdx) numIdxs of
                           Just j ->
                             let cur = fromMaybe V.empty (cb V.!? j)

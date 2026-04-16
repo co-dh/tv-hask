@@ -39,10 +39,10 @@ import qualified Data.Vector as V
 import System.Directory (createDirectoryIfMissing, listDirectory)
 import System.IO.Error (userError)
 
-import qualified Tv.Data.ADBC.Prql as Prql
-import Tv.Data.ADBC.Prql (Query(..))
-import Tv.Data.ADBC.Table (AdbcTable)
-import qualified Tv.Data.ADBC.Table as AdbcTable
+import qualified Tv.Data.DuckDB.Prql as Prql
+import Tv.Data.DuckDB.Prql (Query(..))
+import Tv.Data.DuckDB.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Table as AdbcTable
 import qualified Tv.Folder as Folder
 import qualified Tv.Fzf as Fzf
 import Optics.Core ((%), (&), (.~), (^.))

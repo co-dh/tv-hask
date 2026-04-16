@@ -26,9 +26,9 @@ import System.IO (hPutStrLn, stderr)
 
 import qualified Tv.App.Common as Common
 import Tv.App.Common (AppState(..))
-import qualified Tv.Data.ADBC.Ops as Ops
-import qualified Tv.Data.ADBC.Table as AdbcTable
-import Tv.Data.ADBC.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Ops as Ops
+import qualified Tv.Data.DuckDB.Table as AdbcTable
+import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.Text as TextParse
 import qualified Tv.FileFormat as FileFormat
 import qualified Tv.Folder as Folder

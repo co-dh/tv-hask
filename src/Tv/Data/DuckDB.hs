@@ -18,7 +18,7 @@
 --                 'Result'.
 --
 -- This module is the FFI layer only. Higher-level PRQL-driven operations
--- (requery, queryCount, AdbcTable wiring) live in Tv.Data.ADBC.Table.
+-- (requery, queryCount, AdbcTable wiring) live in Tv.Data.DuckDB.Table.
 module Tv.Data.DuckDB
   ( Conn
   , Result

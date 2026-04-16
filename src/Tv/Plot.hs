@@ -43,9 +43,9 @@ import qualified Tv.StrEnum as StrEnum
 import qualified Tv.Term as Term
 import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk)
 import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
-import qualified Tv.Data.ADBC.Ops as Ops
-import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Table (AdbcTable)
+import qualified Tv.Data.DuckDB.Ops as Ops
+import qualified Tv.Data.DuckDB.Table as Table
+import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.Types
   ( Cmd(..)
   , ColType(..)
