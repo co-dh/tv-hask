@@ -230,10 +230,9 @@ applyIdx s idx = do
 -- | fzf theme picker with live preview.
 -- applyAndRender: called with loaded styles when user moves focus (for live re-render).
 -- Returns (selectedIdx, styles), or none on cancel.
-run :: State -> (Vector Word32 -> IO ()) -> IO (Maybe State)
-run cur applyAndRender = do
+run :: Bool -> State -> (Vector Word32 -> IO ()) -> IO (Maybe State)
+run tm cur applyAndRender = do
   let curIdx = themeIdx cur
-  tm <- Fzf.getTest
   if tm
     then do
       let idx = (curIdx + 1) `mod` V.length themes
@@ -264,7 +263,7 @@ run cur applyAndRender = do
             [ "--prompt=theme: ", "--with-nth=2..", "--delimiter=\t"
             , T.pack ("--bind=focus:execute-silent(" ++ script ++ " {1})")
             ]
-      out <- Fzf.fzfCore opts (T.intercalate "\n" (V.toList items)) poll
+      out <- Fzf.fzfCore False opts (T.intercalate "\n" (V.toList items)) poll
       if T.null out
         then pure Nothing
         else case listToMaybe (T.splitOn "\t" out) >>= (readMaybe . T.unpack) of

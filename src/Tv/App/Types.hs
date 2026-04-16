@@ -36,7 +36,10 @@ import Data.Word (Word8)
 import Optics.Core (Lens', (%), (&), (.~), (^.), over, set)
 import Optics.TH (makeFieldLabelsNoPrefix)
 
-import Tv.CmdConfig (CmdInfo(..))
+import Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as HashMap
+import Tv.CmdConfig (CmdInfo(..), CmdCache)
+import qualified Tv.CmdConfig as CmdConfig
 import qualified Tv.Data.ADBC.Table as AdbcTable
 import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Nav as Nav
@@ -57,6 +60,11 @@ import qualified Tv.Util as Log
 import Tv.View (View(..), ViewStack(..))
 import qualified Tv.View as View
 
+-- Action/HandlerFn must precede AppState so TH splice sees them
+data Action = ActQuit | ActUnhandled | ActOk AppState
+
+type HandlerFn = AppState -> CmdInfo -> Text -> IO Action
+
 data AppState = AppState
   { stk         :: ViewStack AdbcTable
   , vs          :: ViewState
@@ -67,15 +75,15 @@ data AppState = AppState
   , sparklines  :: Vector Text
   , statusCache :: (Text, Text, Text)
   , aggCache    :: StatusAgg.Cache
+  , cmdCache    :: CmdCache
+  , handlers    :: HashMap Cmd HandlerFn
+  , testMode    :: Bool
+  , noSign      :: Bool
   }
 makeFieldLabelsNoPrefix ''AppState
 
 precL :: Lens' AppState Int
 precL = #stk % #hd % #prec
-
-data Action = ActQuit | ActUnhandled | ActOk AppState
-
-type HandlerFn = AppState -> CmdInfo -> Text -> IO Action
 
 -- State operations --
 

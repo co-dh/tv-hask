@@ -35,7 +35,7 @@ import Data.Maybe (fromMaybe)
 import Text.Read (readMaybe)
 
 import Optics.Core ((%), (&), (.~), (^.), over)
-import Tv.App.Types (HandlerFn, domainH', argH)
+import Tv.App.Types (AppState(..), HandlerFn, domainH', stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (NavState, rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
@@ -71,9 +71,9 @@ moveTo s colIdx =
   in setCur s (v & #nav .~ nav')
 
 -- | col search: fzf jump to column by name (IO version for backward compat)
-colSearch :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-colSearch s = do
-  mi <- Fzf.fzfIdx (V.fromList ["--prompt=Column: "]) (Nav.dispNames (nav (cur s)))
+colSearch :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
+colSearch tm s = do
+  mi <- Fzf.fzfIdx tm (V.fromList ["--prompt=Column: "]) (Nav.dispNames (nav (cur s)))
   case mi of
     Nothing  -> pure s
     Just idx -> pure (moveTo s idx)
@@ -92,9 +92,9 @@ withDistinct s f = do
   f curCol curName sorted
 
 -- | row search (/): find value in current column, jump to matching row (IO)
-rowSearch :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-rowSearch s = withDistinct s $ \curCol curName vals -> do
-  mr <- Fzf.fzf (V.fromList ["--prompt=/" <> curName <> ": "])
+rowSearch :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
+rowSearch tm s = withDistinct s $ \curCol curName vals -> do
+  mr <- Fzf.fzf tm (V.fromList ["--prompt=/" <> curName <> ": "])
                 (T.intercalate "\n" (V.toList vals))
   case mr of
     Nothing     -> pure s
@@ -161,9 +161,8 @@ searchPoll tbl_ curCol vals sRef preview = do
 -- | Row search with live preview: cursor moves as user browses fzf results.
 -- fzf focus -> shell script -> socat -> socket -> poll -> findRow -> re-render.
 rowSearchLive
-  :: ViewStack AdbcTable -> (ViewStack AdbcTable -> IO ()) -> IO (ViewStack AdbcTable)
-rowSearchLive s preview = withDistinct s $ \curCol curName vals -> do
-  tm <- Fzf.getTest
+  :: Bool -> ViewStack AdbcTable -> (ViewStack AdbcTable -> IO ()) -> IO (ViewStack AdbcTable)
+rowSearchLive tm s preview = withDistinct s $ \curCol curName vals -> do
   if tm
     then do
       let result = fromMaybe "" (vals V.!? 0)
@@ -189,7 +188,7 @@ rowSearchLive s preview = withDistinct s $ \curCol curName vals -> do
             , "--with-nth=2..", "--delimiter=\t"
             , T.pack ("--bind=focus:execute-silent(sh " ++ script ++ " {1})")
             ]
-      out <- Fzf.fzfCore opts (T.intercalate "\n" (V.toList items)) poll
+      out <- Fzf.fzfCore False opts (T.intercalate "\n" (V.toList items)) poll
       if T.null out
         then readIORef sRef  -- cancelled: keep preview position
         else do
@@ -220,12 +219,12 @@ searchDir s fwd = do
         Just rowIdx -> pure (moveRowTo s rowIdx Nothing)
 
 -- | row filter (\): filter rows by expression, push filtered view (IO)
-rowFilter :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-rowFilter s = withDistinct s $ \_curCol curName vals -> do
+rowFilter :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
+rowFilter tm s = withDistinct s $ \_curCol curName vals -> do
   let typ    = Ops.colType (tbl s) _curCol
       typStr = typeStr typ
       header = filterPrompt curName typStr
-  mr <- Fzf.fzf
+  mr <- Fzf.fzf tm
           (V.fromList ["--print-query", "--header=" <> header, "--prompt=filter > "])
           (T.intercalate "\n" (V.toList vals))
   case mr of
@@ -295,20 +294,22 @@ searchWith s val = do
 
 -- | Dispatch filter handler to IO action. Returns none if handler not recognized.
 dispatch
-  :: ViewStack AdbcTable
+  :: Bool -> ViewStack AdbcTable
   -> Cmd
   -> Maybe (IO (ViewStack AdbcTable))
-dispatch s h = case h of
-  CmdColSearch     -> Just (colSearch s)
-  CmdRowFilter     -> Just (rowFilter s)
+dispatch tm s h = case h of
+  CmdColSearch     -> Just (colSearch tm s)
+  CmdRowFilter     -> Just (rowFilter tm s)
   CmdRowSearchNext -> Just (searchDir s True)
   CmdRowSearchPrev -> Just (searchDir s False)
   _                -> Nothing
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
-  [ hdl (mkEntry CmdRowFilter     "a"  "\\" "Filter rows by PRQL expression"    True  "") (argH rowFilter filterWith)
-  , hdl (mkEntry CmdRowSearchNext "rc" "n"  "Jump to next search match"         False "") (domainH' dispatch)
-  , hdl (mkEntry CmdRowSearchPrev "rc" "N"  "Jump to previous search match"     False "") (domainH' dispatch)
-  , hdl (mkEntry CmdColSearch     "a"  "g"  "Jump to column by name"            True  "") (argH colSearch jumpCol)
+  [ hdl (mkEntry CmdRowFilter     "a"  "\\" "Filter rows by PRQL expression"    True  "")
+        (\a _ arg -> stackIO a (if T.null arg then rowFilter (testMode a) (stk a) else filterWith (stk a) arg))
+  , hdl (mkEntry CmdRowSearchNext "rc" "n"  "Jump to next search match"         False "") (domainH' (dispatch False))
+  , hdl (mkEntry CmdRowSearchPrev "rc" "N"  "Jump to previous search match"     False "") (domainH' (dispatch False))
+  , hdl (mkEntry CmdColSearch     "a"  "g"  "Jump to column by name"            True  "")
+        (\a _ arg -> stackIO a (if T.null arg then colSearch (testMode a) (stk a) else jumpCol (stk a) arg))
   ]

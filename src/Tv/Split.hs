@@ -22,7 +22,7 @@ import qualified Data.Vector as V
 
 import Optics.Core ((&), (.~))
 
-import Tv.App.Types (HandlerFn, argH)
+import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import qualified Tv.Data.ADBC.Prql as Prql
@@ -102,11 +102,11 @@ runWith s pat = do
                Just v  -> pure (View.push s (v & #disp .~ (":" <> curName)))
 
 -- | Prompt for pattern via fzf, then split.
-run :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-run s = do
+run :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
+run tm s = do
   let curName = Nav.colName (View.nav (View.cur s))
       header = "Split '" <> curName <> "' by delimiter or regex"
-  mRaw <- Fzf.fzf
+  mRaw <- Fzf.fzf tm
     (V.fromList ["--print-query", "--prompt=split: ", "--header=" <> header])
     suggestions
   case mRaw of
@@ -115,5 +115,6 @@ run s = do
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
-  [ hdl (mkEntry CmdColSplit "ca" ":" "Split column by delimiter" False "") (argH run runWith)
+  [ hdl (mkEntry CmdColSplit "ca" ":" "Split column by delimiter" False "")
+        (\a _ arg -> stackIO a (if T.null arg then run (testMode a) (stk a) else runWith (stk a) arg))
   ]

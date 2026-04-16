@@ -121,8 +121,8 @@ resolveOps s = do
   pure (if joinOk then allOps else V.fromList [JoinUnion, JoinDiff], leftGrp)
 
 -- Full workflow: validate stack, show fzf menu, execute, push result
-run :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
-run s = case resolveOps s of
+run :: Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
+run tm s = case resolveOps s of
   Nothing -> pure Nothing
   Just (ops, leftGrp) -> case listToMaybe (View.tl s) of
     Nothing -> pure Nothing
@@ -130,7 +130,7 @@ run s = case resolveOps s of
       (lName, _) <- prepareView (Nav.tbl (View.nav parent)) "l"
       (rName, _) <- prepareView (View.tbl s) "r"
       let items = V.map (\op -> opLabel op <> "  |  " <> prqlStr lName rName leftGrp op) ops
-      mIdx <- fzfIdx (V.fromList ["--prompt=join> "]) items
+      mIdx <- fzfIdx tm (V.fromList ["--prompt=join> "]) items
       case mIdx of
         Nothing  -> pure Nothing
         Just idx ->

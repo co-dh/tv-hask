@@ -23,7 +23,7 @@ import qualified Data.Vector as V
 
 import Optics.Core ((&), (.~))
 
-import Tv.App.Types (HandlerFn, argH)
+import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
@@ -101,15 +101,15 @@ runWith s input = case parseDerive input of
              Just v  -> pure (View.push s (v & #disp .~ ("=" <> name)))
 
 -- | Prompt for name = expr via fzf, then derive.
-run :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-run s = do
+run :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
+run tm s = do
   let nav     = View.nav (View.cur s)
       names   = Nav.colNames nav
       curName = Nav.colName nav
       typ     = Nav.colType nav
       header  = "name = expr\n" <> samples curName typ
       hint    = colHints names (Table.colTypes (View.tbl s))
-  mRaw <- Fzf.fzf
+  mRaw <- Fzf.fzf tm
             (V.fromList ["--print-query", "--prompt=derive: ", "--header=" <> header])
             hint
   case mRaw of
@@ -118,5 +118,6 @@ run s = do
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
-  [ hdl (mkEntry CmdColDerive "a" "=" "Derive new column (name = expr)" False "") (argH run runWith)
+  [ hdl (mkEntry CmdColDerive "a" "=" "Derive new column (name = expr)" False "")
+        (\a _ arg -> stackIO a (if T.null arg then run (testMode a) (stk a) else runWith (stk a) arg))
   ]

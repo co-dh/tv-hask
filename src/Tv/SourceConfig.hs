@@ -12,9 +12,6 @@
 module Tv.SourceConfig
   ( Config (..)
   , defaultConfig
-  , noSign
-  , setNS
-  , getNS
   , s3Extra
   , pathParts
   , expand
@@ -110,22 +107,9 @@ defaultConfig = Config
   , fallbackSql    = ""
   }
 
--- | Global flag: use --no-sign-request for S3 (set via +n arg)
-{-# NOINLINE noSign #-}
-noSign :: IORef Bool
-noSign = unsafePerformIO (newIORef False)
-
-setNS :: Bool -> IO ()
-setNS b = writeIORef noSign b
-
-getNS :: IO Bool
-getNS = readIORef noSign
-
--- | Get S3 extra args string
-s3Extra :: IO Text
-s3Extra = do
-  b <- getNS
-  pure (if b then "--no-sign-request" else "")
+-- | Get S3 extra args string from noSign flag
+s3Extra :: Bool -> Text
+s3Extra ns = if ns then "--no-sign-request" else ""
 
 -- | Split path into components after stripping prefix
 pathParts :: Text -> Text -> Vector Text
@@ -360,13 +344,13 @@ fromPath path_ =
 
 -- | Build template vars for a config + path (shared by runList/runDownload).
 -- Returns (vars, tmpDir) so callers don't need to search the array.
-cmdVars :: Config -> Text -> IO (Vector (Text, Text), Text)
-cmdVars cfg path_ = do
+cmdVars :: Bool -> Config -> Text -> IO (Vector (Text, Text), Text)
+cmdVars noSign_ cfg path_ = do
   checkShell path_ "path"
   tmpDir <- Log.tmpPath "src"
   createDirectoryIfMissing True tmpDir
   _ <- Log.run "src" "mkdir" ["-p", tmpDir]
-  extra <- if pfx cfg == "s3://" then s3Extra else pure ""
+  let extra = if pfx cfg == "s3://" then s3Extra noSign_ else ""
   -- URL-encode path segments for curl when configured (e.g. FTP)
   let cmdPath = if urlEncode cfg then Ftp.encodeUrl (pfx cfg) path_ else path_
       tmpT = T.pack tmpDir
@@ -402,8 +386,8 @@ attachSql cfg connStr = do
   pure (ddl <> ";\n" <> sql)
 
 -- | Direct SQL mode: auto-generate attach SQL or expand listSql, execute multi-statement
-runListSql :: Config -> Text -> Text -> IO (Maybe AdbcTable)
-runListSql cfg path_ tbl = do
+runListSql :: Bool -> Config -> Text -> Text -> IO (Maybe AdbcTable)
+runListSql noSign_ cfg path_ tbl = do
   sql <- if attach cfg && T.null (listSql cfg)
     then do
       let connStr =
@@ -411,7 +395,7 @@ runListSql cfg path_ tbl = do
             else T.drop (T.length (pfx cfg)) path_
       attachSql cfg connStr
     else do
-      (vars, _) <- cmdVars cfg path_
+      (vars, _) <- cmdVars noSign_ cfg path_
       pure (expand (listSql cfg) vars)
   let stmts = filter (not . T.null)
                 (map T.strip (T.splitOn ";\n" sql))
@@ -427,10 +411,10 @@ runListSql cfg path_ tbl = do
       fromTbl tbl
 
 -- | CLI mode: run command, save JSON, transform via listSql, auto-unnest, add parent row
-runListCmd :: Config -> Text -> Text -> IO (Maybe AdbcTable)
-runListCmd cfg path_ tbl = do
+runListCmd :: Bool -> Config -> Text -> Text -> IO (Maybe AdbcTable)
+runListCmd noSign_ cfg path_ tbl = do
   let p = if T.isSuffixOf "/" path_ then path_ else path_ <> "/"
-  (vars, _) <- cmdVars cfg p
+  (vars, _) <- cmdVars noSign_ cfg p
   let cmd = expand (listCmd cfg) vars
   Log.write "src" ("list: " <> cmd)
   (ec, out, err) <- readProcessWithExitCode "sh" ["-c", T.unpack cmd] ""
@@ -521,8 +505,8 @@ runListCmd cfg path_ tbl = do
 
 -- | Run listing: cache check -> setup -> dispatch to sql/cmd mode -> cache store.
 -- Results are cached in-memory when listing takes > 3 seconds (e.g. slow S3 buckets).
-runList :: Config -> Text -> IO (Maybe AdbcTable)
-runList cfg path_ = do
+runList :: Bool -> Config -> Text -> IO (Maybe AdbcTable)
+runList noSign_ cfg path_ = do
   mc <- cacheLookup path_
   case mc of
     Just cached -> do
@@ -537,8 +521,8 @@ runList cfg path_ = do
       runSetup cfg
       tbl <- tmpName "src"
       result <- if T.null (listCmd cfg)
-        then runListSql cfg path_ tbl
-        else runListCmd cfg path_ tbl
+        then runListSql noSign_ cfg path_ tbl
+        else runListCmd noSign_ cfg path_ tbl
       -- Cache slow listings (> 3s) so navigating back is instant
       case result of
         Just adbc -> do
@@ -553,19 +537,19 @@ runList cfg path_ = do
       pure result
 
 -- | Download a remote file to local temp path
-runDl :: Config -> Text -> IO Text
-runDl cfg path_ = do
+runDl :: Bool -> Config -> Text -> IO Text
+runDl noSign_ cfg path_ = do
   Render.statusMsg ("Downloading " <> path_ <> " ...")
-  (vars, tmpDir) <- cmdVars cfg path_
+  (vars, tmpDir) <- cmdVars noSign_ cfg path_
   let cmd = expand (downloadCmd cfg) vars
   Log.write "src" ("download: " <> cmd)
   _ <- readProcessWithExitCode "sh" ["-c", T.unpack cmd] ""
   pure (tmpDir <> "/" <> fromPath path_)
 
 -- | Resolve data file path: download if needed, or return URI for DuckDB
-configResolve :: Config -> Text -> IO Text
-configResolve cfg path_ =
-  if needsDownload cfg then runDl cfg path_ else pure path_
+configResolve :: Bool -> Config -> Text -> IO Text
+configResolve noSign_ cfg path_ =
+  if needsDownload cfg then runDl noSign_ cfg path_ else pure path_
 
 -- | Run enter: script cmd -> JSON -> DuckDB temp table, apply types from stub view
 runEnter :: Config -> Text -> IO (Maybe AdbcTable)

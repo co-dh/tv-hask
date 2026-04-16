@@ -32,12 +32,10 @@ import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Data.Text as TextParse
 import qualified Tv.FileFormat as FileFormat
 import qualified Tv.Folder as Folder
-import qualified Tv.Fzf as Fzf
 import qualified Tv.Key as Key
 import qualified Tv.Render as Render
 import qualified Tv.Session as Session
 import qualified Tv.SourceConfig as SourceConfig
-import Tv.SourceConfig (Config(..))
 import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
@@ -96,8 +94,10 @@ withTui test_ f = do
 -- | Build the initial AppState with Lean's `.default` equivalents for
 -- non-constructor fields. Kept here so Main matches the Lean record literal
 -- `{ stk, vs := .default, theme := th, info := {} }`.
-initState :: ViewStack AdbcTable -> Theme.State -> AppState
-initState stk_ th = AppState
+initState :: ViewStack AdbcTable -> Theme.State -> Bool -> Bool -> AppState
+initState stk_ th tm ns =
+  let (cc, m) = Common.initHandlers
+  in AppState
   { stk         = stk_
   , vs          = Render.defVS
   , theme       = th
@@ -107,21 +107,25 @@ initState stk_ th = AppState
   , sparklines  = V.empty
   , statusCache = ("", "", "")
   , aggCache    = StatusAgg.cacheEmpty
+  , cmdCache    = cc
+  , handlers    = m
+  , testMode    = tm
+  , noSign      = ns
   }
 
 -- run app with view
-runApp :: View AdbcTable -> Bool -> Bool -> Theme.State -> Vector Text -> IO AppState
-runApp v pipe test_ th ks = do
+runApp :: View AdbcTable -> Bool -> Bool -> Bool -> Theme.State -> Vector Text -> IO AppState
+runApp v pipe test_ ns th ks = do
   _ <- if pipe then Term.reopenTty else pure False
   _ <- Term.init
   let stk_ = ViewStack { hd = v, tl = [] }
-  withTui test_ (Common.mainLoop (initState stk_ th) test_ ks)
+  withTui test_ (Common.mainLoop (initState stk_ th test_ ns) test_ ks)
 
 -- run from TSV string result
 runTsv
-  :: Either Text Text -> Text -> Bool -> Bool -> Theme.State -> Vector Text
+  :: Either Text Text -> Text -> Bool -> Bool -> Bool -> Theme.State -> Vector Text
   -> IO (Maybe AppState)
-runTsv r nm pipe test_ th ks = case r of
+runTsv r nm pipe test_ ns th ks = case r of
   Left e -> do
     TIO.hPutStrLn stderr ("Parse error: " <> e)
     pure Nothing
@@ -131,25 +135,20 @@ runTsv r nm pipe test_ th ks = case r of
       Nothing   -> do TIO.hPutStrLn stderr "Empty table"; pure Nothing
       Just adbc -> case View.fromTbl adbc nm 0 V.empty 0 of
         Nothing -> do TIO.hPutStrLn stderr "Empty table"; pure Nothing
-        Just v  -> Just <$> runApp v pipe test_ th ks
+        Just v  -> Just <$> runApp v pipe test_ ns th ks
 
 -- output table as plain text
 outputTable :: AppState -> IO ()
 outputTable a = do
-  txt <- Ops.toText (View.tbl (stk a))
+  txt <- Ops.toText (View.tbl (Common.stk a))
   TIO.putStrLn txt
 
 -- main entry point: init backend, parse args, run app
 appMain :: [Text] -> IO ()
 appMain args = do
-  let cli       = parseArgs args
-      path_     = path cli
-      keys_     = keys cli
-      testMode  = test cli
-      noSign_   = noSign cli
+  let cli@(CliArgs { path = path_, keys = keys_, noSign = noSign_ }) = parseArgs args
   envTest <- maybe False (const True) <$> lookupEnv "TV_TEST_MODE"
-  Fzf.setTest (testMode || envTest)
-  SourceConfig.setNS noSign_
+  let testMode = test cli || envTest
   pipeMode <- if testMode then pure False else not <$> Term.isattyStdin
   theme <- Theme.stateInit
   logPath <- Log.path
@@ -163,36 +162,34 @@ appMain args = do
     Left e -> TIO.hPutStrLn stderr ("Backend init error: " <> T.pack (show e))
     Right err
       | not (T.null err) -> TIO.hPutStrLn stderr ("Backend init failed: " <> err)
-      | otherwise -> do
-          Common.initHandlers
-          runRest cli path_ keys_ testMode pipeMode theme
+      | otherwise -> runRest cli path_ keys_ testMode noSign_ pipeMode theme
   where
-    runRest cli path_ keys_ testMode pipeMode theme = do
+    runRest cli path_ keys_ testMode noSign_ pipeMode theme = do
       -- session restore: -s name
       case session cli of
         Just sessName -> do
           finallyCleanup $ do
-            msess <- Session.load sessName
+            msess <- Session.load noSign_ sessName
             case msess of
               Just stk_ -> do
                 _ <- Term.init
                 _ <- withTui testMode
-                       (Common.mainLoop (initState stk_ theme) testMode keys_)
+                       (Common.mainLoop (initState stk_ theme testMode noSign_) testMode keys_)
                 pure ()
               Nothing -> TIO.hPutStrLn stderr ("Session not found: " <> sessName)
         Nothing
           | pipeMode && path_ == Nothing -> do
               stdinRes <- TextParse.fromStdin
-              m <- runTsv stdinRes "stdin" True testMode theme keys_
+              m <- runTsv stdinRes "stdin" True testMode noSign_ theme keys_
               case m of
                 Just a  -> outputTable a
                 Nothing -> pure ()
               pure ()
           | otherwise -> do
               let p0 = fromMaybe "" path_
-              finallyCleanup (runPath p0 keys_ testMode pipeMode theme)
+              finallyCleanup (runPath p0 keys_ testMode noSign_ pipeMode theme)
 
-    runPath path_ keys_ testMode pipeMode theme = do
+    runPath path_ keys_ testMode noSign_ pipeMode theme = do
       srcCfg <- SourceConfig.findSource path_
       isDir  <- doesDirectoryExist (T.unpack path_)
       if T.null path_ || isJust srcCfg || isDir then do
@@ -207,7 +204,7 @@ appMain args = do
                   case m of
                     Just adbc ->
                       case View.fromTbl adbc (SourceConfig.pfx cfg <> rest) 0 V.empty 0 of
-                        Just v  -> do _ <- runApp v pipeMode testMode theme keys_; pure ()
+                        Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
                         Nothing -> TIO.hPutStrLn stderr ("Empty: " <> p)
                     Nothing -> TIO.hPutStrLn stderr ("Cannot open: " <> p)
                   pure True
@@ -215,28 +212,28 @@ appMain args = do
           _ -> pure False
         if handled then pure ()
         else do
-          mv <- Folder.mkView p 1
+          mv <- Folder.mkView noSign_ p 1
           case mv of
-            Just v  -> do _ <- runApp v pipeMode testMode theme keys_; pure ()
+            Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
             Nothing -> TIO.hPutStrLn stderr ("Cannot browse: " <> p)
       else if T.isSuffixOf ".txt" path_ then do
         content <- TIO.readFile (T.unpack path_)
-        _ <- runTsv (TextParse.fromText content) path_ pipeMode testMode theme keys_
+        _ <- runTsv (TextParse.fromText content) path_ pipeMode testMode noSign_ theme keys_
         pure ()
       else if T.isSuffixOf ".gz" path_ && not (FileFormat.isData path_) then do
         -- Smart: try read_csv for unrecognized .gz (handles decompression natively)
         mv <- FileFormat.readCsv path_
         case mv of
-          Just v  -> do _ <- runApp v pipeMode testMode theme keys_; pure ()
-          Nothing -> FileFormat.viewFile path_
+          Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+          Nothing -> FileFormat.viewFile testMode path_
       else do
         r <- try (FileFormat.openFile path_) :: IO (Either SomeException (Maybe (View AdbcTable)))
         mv <- case r of
           Right m -> pure m
           Left e  -> do Log.write "open" (T.pack (show e)); pure Nothing
         case mv of
-          Just v  -> do _ <- runApp v pipeMode testMode theme keys_; pure ()
-          Nothing -> FileFormat.viewFile path_
+          Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+          Nothing -> FileFormat.viewFile testMode path_
 
     finallyCleanup act = do
       r <- try act :: IO (Either SomeException ())
