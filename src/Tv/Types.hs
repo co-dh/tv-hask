@@ -55,6 +55,7 @@ import qualified Data.Vector as V
 import Data.Word (Word8, Word32)
 import Optics.TH (makeFieldLabelsNoPrefix)
 import Data.List (nub)
+import Data.Hashable (Hashable(..))
 import Data.Maybe (fromMaybe)
 import Tv.StrEnum (StrEnum(..))
 import qualified Tv.StrEnum as StrEnum
@@ -510,6 +511,11 @@ instance StrEnum Cmd where
     , CmdThemeOpen, CmdThemePreview
     ]
   ofStringQ s = V.find (\c -> StrEnum.toString c == s) (StrEnum.all :: Vector Cmd)
+
+-- Hash via canonical string form (StrEnum). Defined here (not CmdConfig) to
+-- avoid an orphan instance.
+instance Hashable Cmd where
+  hashWithSalt s c = hashWithSalt s (StrEnum.toString c :: Text)
 
 plotKind :: Cmd -> Maybe PlotKind
 plotKind CmdPlotArea    = Just PlotArea
