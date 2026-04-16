@@ -47,8 +47,29 @@ def run(file_arg, keys, hold=0.5):
     time.sleep(0.5)
     drain(0.5)
 
-    for ch in keys:
-        os.write(fd, ch.encode())
+    # Group bytes into logical keystrokes. An ESC followed by `[` or `O`
+    # must reach the reader as an atomic chunk, otherwise the app's ESC
+    # timeout expires between bytes and the sequence is misread as a lone
+    # Esc key. Anything else is sent one byte at a time as before.
+    i = 0
+    n = len(keys)
+    while i < n:
+        if keys[i] == '\x1b' and i + 1 < n and keys[i + 1] in ('[', 'O'):
+            j = i + 2
+            # CSI parameter bytes (0x30..0x3f) then intermediate (0x20..0x2f)
+            # then a final byte (0x40..0x7e). SS3 is the same letter set.
+            while j < n and 0x30 <= ord(keys[j]) <= 0x3f:
+                j += 1
+            while j < n and 0x20 <= ord(keys[j]) <= 0x2f:
+                j += 1
+            if j < n:
+                j += 1  # consume final byte
+            chunk = keys[i:j]
+            os.write(fd, chunk.encode())
+            i = j
+        else:
+            os.write(fd, keys[i].encode())
+            i += 1
         time.sleep(0.06)
         drain(0.1)
 

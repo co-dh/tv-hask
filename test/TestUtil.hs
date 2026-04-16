@@ -8,6 +8,7 @@ module TestUtil
   , log
   , run
   , runHask
+  , runPty
   , isContent
   , contains
   , footer
@@ -28,7 +29,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.IO (hFlush, stderr, withFile, IOMode (..), Handle)
 import qualified System.IO as IO
-import System.Process (readProcessWithExitCode)
+import System.Process (readProcessWithExitCode, readCreateProcessWithExitCode, proc, CreateProcess(..))
+import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 
 -- | Path to the tv binary the tests shell out to. In the Lean reference this
@@ -51,6 +53,33 @@ run = runWith bin
 -- | Same as 'run' but spawns the Haskell-built `tv` binary.
 runHask :: Text -> FilePath -> [String] -> IO Text
 runHask = runWith tvHaskBin
+
+-- | Drive the `tv` binary through a real pty via test/pty_run.py, sending
+-- raw byte sequences (e.g. "\x1b[A" for arrow-up). Unlike runHask, this
+-- exercises the full Term.pollEvent path — cbreak-mode tty input + escape
+-- sequence decoding — so it catches regressions to the interactive key
+-- path that the `-c` flag's in-process tokenizer bypasses.
+--
+-- `keys` is passed as argv[2] to pty_run.py, which translates only the
+-- \\r/\\n/\\t/\\b/\\e escapes but leaves raw bytes literal — so pass
+-- "\\e[A" (not "\x1B[A") to send a CSI Up.
+runPty :: String -> FilePath -> IO Text
+runPty keys file = do
+  log (T.pack "  runPty: " <> T.pack file <> T.pack " keys=" <> T.pack (show keys))
+  -- Force pty_run.py to use the freshly-built binary in *this* tree
+  -- (which may be a worktree), not the hard-coded main-repo path.
+  parentEnv <- getEnvironment
+  let envOverride = ("TV", tvHaskBin) : filter ((/= "TV") . fst) parentEnv
+      cp = (proc "test/pty_run.py" [file, keys]) { env = Just envOverride }
+  (code, out, err) <- readCreateProcessWithExitCode cp ""
+  case err of
+    "" -> pure ()
+    _  -> log (T.pack "  stderr: " <> T.strip (T.pack err))
+  case code of
+    ExitSuccess   -> pure ()
+    ExitFailure n -> log (T.pack "  exit: " <> T.pack (show n))
+  log (T.pack "  done")
+  pure (T.pack out)
 
 runWith :: FilePath -> Text -> FilePath -> [String] -> IO Text
 runWith exe keys file extraArgs = do
