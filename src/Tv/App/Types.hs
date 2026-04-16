@@ -17,8 +17,7 @@ module Tv.App.Types
   , runViewEffect
   , viewUp
     -- * Handler combinators
-  , domainH
-  , domainH'
+  , onStk
   , argH
   , vuH
   , stkH
@@ -46,6 +45,7 @@ import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
 import Tv.Render (ViewState, errorPopup)
+
 import qualified Tv.Freq as Freq
 import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Theme as Theme
@@ -171,38 +171,16 @@ runViewEffect a ci v' e = do
         _ -> pure Nothing
 
 viewUp :: AppState -> CmdInfo -> IO Action
-viewUp a ci = do
-  freqFirst <-
-    if ciCmd ci == CmdFreqOpen || ciCmd ci == CmdFreqFilter
-      then case Freq.update (stk a) (ciCmd ci) of
-             Just (s', e) ->
-               Just <$> runViewEffect (withStk a ci s') ci (View.cur s') e
-             Nothing -> pure Nothing
-      else pure Nothing
-  case freqFirst of
-    Just r  -> pure r
-    Nothing ->
-      case View.update (View.cur (stk a)) (ciCmd ci) 20 of
-        Just (v', e) -> runViewEffect a ci v' e
-        Nothing      -> pure ActUnhandled
+viewUp a ci =
+  case View.update (View.cur (stk a)) (ciCmd ci) 20 of
+    Just (v', e) -> runViewEffect a ci v' e
+    Nothing      -> pure ActUnhandled
 
 -- Handler combinators --
 
-domainH
-  :: (ViewStack AdbcTable -> Cmd -> Maybe (IO (Maybe (ViewStack AdbcTable))))
-  -> HandlerFn
-domainH d = \a ci _ ->
-  case d (stk a) (ciCmd ci) of
-    Just f  -> tryStk a ci f
-    Nothing -> viewUp a ci
-
-domainH'
-  :: (ViewStack AdbcTable -> Cmd -> Maybe (IO (ViewStack AdbcTable)))
-  -> HandlerFn
-domainH' d = \a ci _ ->
-  case d (stk a) (ciCmd ci) of
-    Just f  -> tryStk a ci (Just <$> f)
-    Nothing -> viewUp a ci
+-- | Run an action on the view stack. The most common handler shape.
+onStk :: (ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))) -> HandlerFn
+onStk f = \a ci _ -> tryStk a ci (f (stk a))
 
 argH
   :: (ViewStack AdbcTable -> IO (ViewStack AdbcTable))
