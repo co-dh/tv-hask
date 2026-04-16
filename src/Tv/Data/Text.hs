@@ -7,7 +7,7 @@ module Tv.Data.Text
   , wordStarts
   , splitN
   , colStarts
-  , splitAt'
+  , splitCols
   , fromText
   , fromStdin
   ) where
@@ -72,8 +72,8 @@ colStarts hdr =
   in V.fromList result
 
 -- | Split line by column start positions (last col extends to end)
-splitAt' :: Text -> Vector Int -> Vector Text
-splitAt' s starts =
+splitCols :: Text -> Vector Int -> Vector Text
+splitCols s starts =
   let sz = V.length starts
       getD i = if i >= 0 && i < sz then starts V.! i else 0
       slen = T.length s
@@ -98,9 +98,9 @@ fromText content =
            -- use fixed-width only if it gives >= mode columns (handles mixed spacing)
            if V.length starts >= modeNc && V.length starts > 1
              then
-               let names = splitAt' hdr starts
+               let names = splitCols hdr starts
                    header = T.intercalate "\t" (V.toList names)
-                   rows = map (\line -> T.intercalate "\t" (V.toList (splitAt' line starts))) rest
+                   rows = map (\line -> T.intercalate "\t" (V.toList (splitCols line starts))) rest
                in Right (header <> "\n" <> T.intercalate "\n" rows)
              else
                -- else use mode of word counts (handles "total 836" outliers)
