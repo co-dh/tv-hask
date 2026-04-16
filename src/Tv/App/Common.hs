@@ -41,7 +41,7 @@ import qualified Tv.AppF as AppM
 import Tv.AppF (AppM, Interp(..))
 import Tv.App.Types
 import qualified Tv.CmdConfig as CmdConfig
-import Tv.CmdConfig (Entry(..), CmdInfo(..), mkEntry, hdl, navE)
+import Tv.CmdConfig (Entry(..), CmdInfo(..), mkEntry, hdl)
 import qualified Tv.Derive as Derive
 import qualified Tv.Diff as Diff
 import qualified Tv.Export as Export
@@ -125,7 +125,7 @@ runMenu a = do
           Nothing -> pure ()
   handler <- Fzf.cmdMode (View.vkind (View.cur (stk a))) poll
   a' <- readIORef ref
-  _ <- Socket.pollCmd
+  _ <- Socket.pollCmd  -- drain stale command from fzf focus
   case handler of
     Just h -> do
       mci <- CmdConfig.handlerLookup h
@@ -182,10 +182,10 @@ localCmds = V.fromList
         (\a _ _ -> pure (ActOk (a & #prevScroll %~ (\p -> p - min p 5))))
   , hdl (mkEntry CmdCellDn    ""  "}"  "Scroll cell preview down"           False "")
         (\a _ _ -> pure (ActOk (a & #prevScroll %~ (+ 5))))
-  , hdl (mkEntry CmdHeat0     ""  ""   "Heatmap: off"                       False "") (\a _ _ -> pure (ActOk (a & #heatMode .~ 0)))
-  , hdl (mkEntry CmdHeat1     ""  ""   "Heatmap: numeric columns"           False "") (\a _ _ -> pure (ActOk (a & #heatMode .~ 1)))
-  , hdl (mkEntry CmdHeat2     ""  ""   "Heatmap: categorical columns"       False "") (\a _ _ -> pure (ActOk (a & #heatMode .~ 2)))
-  , hdl (mkEntry CmdHeat3     ""  ""   "Heatmap: all columns"               False "") (\a _ _ -> pure (ActOk (a & #heatMode .~ 3)))
+  , hdl (mkEntry CmdHeat0     ""  ""   "Heatmap: off"                       False "") (heatSet 0)
+  , hdl (mkEntry CmdHeat1     ""  ""   "Heatmap: numeric columns"           False "") (heatSet 1)
+  , hdl (mkEntry CmdHeat2     ""  ""   "Heatmap: categorical columns"       False "") (heatSet 2)
+  , hdl (mkEntry CmdHeat3     ""  ""   "Heatmap: all columns"               False "") (heatSet 3)
   , hdl (mkEntry CmdFreqOpen   "cg" "F"     "Open frequency view"           True  "") vuH
   , hdl (mkEntry CmdFreqFilter "r"  "<ret>" "Filter parent table by current row" True "freqV") vuH
   , hdl (mkEntry CmdThemeOpen ""  ""   "Pick color theme"                    False "")
@@ -261,19 +261,19 @@ renderBase a0 = do
                  (heatMode a) (sparklines a)
   let a' = a & #stk .~ View.setCur (stk a) v' & #vs .~ vs'
   tabLine (View.tabNames (stk a')) 0 (Replay.opsStr (View.cur (stk a')))
-  let colName_ = Nav.colName (View.nav (View.cur (stk a')))
+  let colName = Nav.colName (View.nav (View.cur (stk a')))
       (cachedPath, cachedCol, _) = statusCache a'
-  a'' <- if cachedPath == View.path (View.cur (stk a')) && cachedCol == colName_
+  a'' <- if cachedPath == View.path (View.cur (stk a')) && cachedCol == colName
            then pure a'
            else do
-             desc <- Ops.columnComment (View.path (View.cur (stk a'))) colName_
+             desc <- Ops.columnComment (View.path (View.cur (stk a'))) colName
              pure (a' & #statusCache .~
-                          (View.path (View.cur (stk a')), colName_, desc))
+                          (View.path (View.cur (stk a')), colName, desc))
   let (_, _, desc) = statusCache a''
   when (not (T.null desc)) $ do
     ht <- Term.height
     w  <- Term.width
-    let label0 = colName_ <> ": " <> desc
+    let label0 = colName <> ": " <> desc
         maxLen = fromIntegral w * 2 `div` 3
         label  = if T.length label0 > maxLen
                    then T.take maxLen label0 <> "…"

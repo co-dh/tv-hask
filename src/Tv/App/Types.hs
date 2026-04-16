@@ -23,6 +23,7 @@ module Tv.App.Types
   , stkH
   , precSet
   , precAdj
+  , heatSet
   ) where
 
 import Control.Exception (SomeException, try)
@@ -216,3 +217,6 @@ precSet v = \a _ _ -> pure (ActOk (set precL v a))
 precAdj :: Int -> HandlerFn
 precAdj delta = \a _ _ ->
   pure (ActOk (over precL (\p -> min 17 (max 0 (p + delta))) a))
+
+heatSet :: Word8 -> HandlerFn
+heatSet v = \a _ _ -> pure (ActOk (a & #heatMode .~ v))
