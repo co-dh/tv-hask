@@ -39,7 +39,7 @@ module Tv.Term
 
 import Prelude hiding (init, print)
 import Control.Exception (bracket)
-import Control.Monad (foldM, forM, forM_, when, zipWithM_)
+import Control.Monad (forM, forM_, when, zipWithM_)
 import Data.Bits ((.&.))
 import Data.Char (chr)
 import Data.HashMap.Strict (HashMap)
@@ -316,6 +316,14 @@ clear = do
   (_, _, buf) <- readIORef screenBuf
   VSM.set buf emptyCell
 
+-- | Fold state for `present`: last emitted style, last cursor position,
+-- and the accumulated output Builder. Strict fields keep the builder
+-- from stacking thunks across the w*h cells (render hot path).
+data PresentAcc = PresentAcc
+  !(Maybe (Word32, Word32))  -- lastStyle
+  !(Int, Int)                -- lastCursor
+  !TB.Builder                -- out
+
 -- | Flush cell buffer to the terminal. No-op in headless mode (tests, -c
 -- mode) so stdout stays clean for `bufferStr` capture.
 --
@@ -331,36 +339,29 @@ present = do
   when (not headless) $ do
     (w, h, buf) <- readIORef screenBuf
     front <- readIORef frontBuf
-    -- Accumulate the whole frame into a single Text builder and write it
-    -- in one TIO.hPutStr call. Mirrors termbox2's tb_present which
-    -- flushes its internal output buffer once per call — keeps the PTY
-    -- recorder's `drain()` from slicing the frame across multiple cast
-    -- frames, which was breaking byte parity for multi-step demos.
-    --
-    -- The style/cursor/builder trio is a left fold: each emitted cell
-    -- updates all three. We thread the tuple through a `foldM` over the
-    -- row-major cell indices instead of using IORefs — same iteration
-    -- order, same emission conditions, byte-identical output. The
-    -- `VSM.read buf/front` and `VSM.write front` calls stay inline
-    -- because they are the IO side of the diff-flush contract.
-    let s0 = (Nothing :: Maybe (Word32, Word32), (-1, -1) :: (Int, Int), mempty :: TB.Builder)
-    (_, _, outB) <- foldM (stepCell w buf front) s0 [(y, x) | y <- [0 .. h - 1], x <- [0 .. w - 1]]
+    -- One TIO.hPutStr per frame mirrors termbox2's tb_present flush —
+    -- keeps the PTY recorder's `drain()` from slicing the frame across
+    -- multiple cast frames, which breaks byte parity for multi-step demos.
+    let s0 = PresentAcc Nothing (-1, -1) mempty
+        -- Walk row-major, bumping (y, x) explicitly instead of dividing
+        -- idx by w per cell.
+        go !acc !y !x !idx
+          | y == h    = pure acc
+          | x == w    = go acc (y + 1) 0 idx
+          | otherwise = do
+              acc' <- stepCell buf front acc y x idx
+              go acc' y (x + 1) (idx + 1)
+    PresentAcc _ _ outB <- go s0 0 0 0
     TIO.hPutStr stdout (TL.toStrict (TB.toLazyText outB))
     hFlush stdout
 
--- | Single-cell step of the `present` fold. Reads the back/front cell,
--- updates the front buffer on diff, and returns the new
--- (lastStyle, lastCursor, builder) accumulator. Pulled out of `present`
--- so the fold body stays readable.
 stepCell
-  :: Int
+  :: VSM.IOVector Cell
   -> VSM.IOVector Cell
-  -> VSM.IOVector Cell
-  -> (Maybe (Word32, Word32), (Int, Int), TB.Builder)
-  -> (Int, Int)
-  -> IO (Maybe (Word32, Word32), (Int, Int), TB.Builder)
-stepCell w buf front acc@(lastStyle, lastCursor, b) (y, x) = do
-  let idx = y * w + x
+  -> PresentAcc
+  -> Int -> Int -> Int
+  -> IO PresentAcc
+stepCell buf front acc@(PresentAcc lastStyle lastCursor b) y x idx = do
   cell     <- VSM.read buf idx
   prevCell <- VSM.read front idx
   if cell == prevCell
@@ -377,7 +378,7 @@ stepCell w buf front acc@(lastStyle, lastCursor, b) (y, x) = do
                  else b1
           b3 = b2 <> TB.singleton (chr (fromIntegral ch))
       VSM.write front idx cell
-      pure (lastStyle', (y, x + 1), b3)
+      pure (PresentAcc lastStyle' (y, x + 1) b3)
 
 -- | Build the SGR + charset-reset prefix for a cell. Extracts attr bits
 -- from `fg` before masking off the color. Matches Lean termbox2's output
