@@ -117,7 +117,7 @@ resolveOps :: ViewStack AdbcTable -> Maybe (Vector JoinOp, Vector Text)
 resolveOps s = do
   parent <- listToMaybe (View.tl s)
   let leftGrp = Nav.grp (View.nav parent)
-      joinOk  = V.length leftGrp > 0 && leftGrp == Nav.grp (View.nav (View.cur s))
+      joinOk  = not (V.null leftGrp) && leftGrp == Nav.grp (View.nav (View.cur s))
   pure (if joinOk then allOps else V.fromList [JoinUnion, JoinDiff], leftGrp)
 
 -- Full workflow: validate stack, show fzf menu, execute, push result

@@ -97,7 +97,7 @@ tokenizeKeys s = V.fromList (go 0)
 
 nextKey :: Vector Text -> IO (Text, Vector Text)
 nextKey keys =
-  if V.length keys > 0
+  if not (V.null keys)
     then pure (V.head keys, V.slice 1 (V.length keys - 1) keys)
     else do
       e <- Term.pollEvent

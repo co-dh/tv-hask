@@ -25,7 +25,7 @@ module Tv.App.Common
   ) where
 
 import qualified Control.Concurrent
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import qualified Data.HashMap.Strict as HashMap
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
@@ -76,9 +76,7 @@ import qualified Tv.View as View
 pureDispatch :: AppState -> CmdInfo -> Maybe AppState
 pureDispatch a ci
   | ciCmd ci == CmdStkDup || ciCmd ci == CmdStkPop || ciCmd ci == CmdStkSwap =
-      case View.updateStack (stk a) (ciCmd ci) of
-        Just (s', _) -> Just (withStk a ci s')
-        Nothing      -> Nothing
+      fmap (\(s', _) -> withStk a ci s') (View.updateStack (stk a) (ciCmd ci))
   | otherwise =
       case View.update (View.cur (stk a)) (ciCmd ci) 20 of
         Just (v', e)
@@ -258,7 +256,7 @@ renderBase a0 = do
              pure (a' & #statusCache .~
                           (View.path (View.cur (stk a')), colName, desc))
   let (_, _, desc) = statusCache a''
-  when (not (T.null desc)) $ do
+  unless (T.null desc) $ do
     ht <- Term.height
     w  <- Term.width
     let label0 = colName <> ": " <> desc

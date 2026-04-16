@@ -12,7 +12,7 @@ module Tv.StatusAgg
   ) where
 
 import Control.Exception (SomeException, try)
-import Control.Monad (when)
+import Control.Monad (unless)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -73,7 +73,7 @@ compute t colIdx = do
 
 -- | Render aggregation stats on the status bar at 1/3 width
 render :: Text -> IO ()
-render agg = when (not (T.null agg)) $ do
+render agg = unless (T.null agg) $ do
   ht <- Term.height
   w  <- Term.width
   let pos = w `div` 3

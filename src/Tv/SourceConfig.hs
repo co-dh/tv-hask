@@ -302,12 +302,12 @@ runSetup cfg = do
               pure False
         else pure False
       unless skipCmd $ do
-        when (not (T.null (setupCmd cfg))) $ do
+        unless (T.null (setupCmd cfg)) $ do
           Log.write "src" ("setup cmd: " <> setupCmd cfg)
           let cmd = expand (setupCmd cfg) (V.singleton ("home", homeT))
           _ <- readProcessWithExitCode "sh" ["-c", T.unpack cmd] ""
           pure ()
-        when (not (T.null (setupSql cfg))) $ do
+        unless (T.null (setupSql cfg)) $ do
           let sql = expand (setupSql cfg) (V.singleton ("home", homeT))
           Log.write "src" ("setup sql: " <> sql)
           _ <- Adbc.query sql
