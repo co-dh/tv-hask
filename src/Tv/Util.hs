@@ -1,7 +1,8 @@
 {-
   Util: small utility modules consolidated into one file.
   Contents: Log (error/debug logging), TmpDir (per-process temp dir),
-  Socket (unix socket IPC), Remote (URI path ops).
+  Socket (unix socket IPC), Remote (URI path ops),
+  Safe list ops (headD, getD).
 -}
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Util
@@ -41,7 +42,6 @@ module Tv.Util
     -- * Safe list ops
   , headD
   , getD
-  , eraseDups
   ) where
 
 import Control.Concurrent (forkIO)
@@ -49,6 +49,7 @@ import Control.Exception (SomeException, try, bracket_)
 import Control.Monad (forever, void)
 import qualified Data.ByteString as BS
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef')
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -305,10 +306,4 @@ headD d []    = d
 headD _ (x:_) = x
 
 getD :: [a] -> Int -> a -> a
-getD xs i d
-  | i < 0 || i >= length xs = d
-  | otherwise               = xs !! i
-
-eraseDups :: Eq a => [a] -> [a]
-eraseDups []     = []
-eraseDups (x:xs) = x : eraseDups (filter (/= x) xs)
+getD xs i d = fromMaybe d (listToMaybe (drop i xs))

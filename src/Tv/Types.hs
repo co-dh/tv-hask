@@ -56,9 +56,9 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8, Word32)
 import Optics.TH (makeFieldLabelsNoPrefix)
+import Data.List (nub)
 import Tv.StrEnum (StrEnum(..))
 import qualified Tv.StrEnum as StrEnum
-import qualified Tv.Util as Log
 
 -- | Join array elements with separator (avoids .toList |> sep.intercalate)
 joinWith :: Vector Text -> Text -> Text
@@ -256,7 +256,7 @@ modifyTableSort
   => a -> Int -> Vector Int -> Vector Int -> Bool -> IO a
 modifyTableSort tbl cursor selIdxs grpIdxs asc =
   let cols = V.fromList
-             . Log.eraseDups
+             . nub
              . V.toList
              . V.filter (not . (`V.elem` grpIdxs))
              $ selIdxs V.++ V.singleton cursor

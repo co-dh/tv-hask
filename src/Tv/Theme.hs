@@ -23,6 +23,7 @@ module Tv.Theme
   ) where
 
 import Control.Exception (SomeException, try)
+import Data.List (find)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
@@ -188,7 +189,7 @@ load theme variant = do
   let lines_   = filter (not . T.null) (T.splitOn "\n" content)
       header   = T.splitOn "," (Log.headD "" lines_)
       colNames = drop 2 header  -- style names from header
-      row      = findFirst (\line ->
+      row      = find (\line ->
                     let cols = T.splitOn "," line
                     in Log.getD cols 0 "" == theme && Log.getD cols 1 "" == variant)
                  (drop 1 lines_)
@@ -208,10 +209,6 @@ load theme variant = do
                         sty' = sty V.// [(idx * 2, fg), (idx * 2 + 1, bg)]
                     in go sty' (i + 1)
       pure (go defaultDark 0)
-  where
-    findFirst :: (a -> Bool) -> [a] -> Maybe a
-    findFirst _ []     = Nothing
-    findFirst p (x:xs) = if p x then Just x else findFirst p xs
 
 -- | Load theme by index
 loadIdx :: Int -> IO (Vector Word32)

@@ -15,6 +15,7 @@ module Tv.Diff
 
 import Control.Monad (forM_)
 import Data.Either (partitionEithers)
+import Data.List (nub)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -87,7 +88,7 @@ resolveKeys parentGrp curGrp common =
                   . V.map fst
                   . V.filter (\(_, typ) -> not (isNumeric typ))
                   $ common
-      allKeys     = V.fromList (Log.eraseDups (V.toList (existingGrp V.++ autoKeys)))
+      allKeys     = V.fromList (nub (V.toList (existingGrp V.++ autoKeys)))
   in if V.null allKeys
        then Nothing
        else Just

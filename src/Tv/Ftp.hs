@@ -16,7 +16,7 @@ import qualified Data.ByteString as BS
 import Data.Word (Word8)
 import Text.Printf (printf)
 
-import qualified Tv.Util as Log
+import qualified Tv.Util as Util
 
 -- | URL-encode a string: encode all bytes not in [A-Za-z0-9._~/-]
 urlEncode :: Text -> Text
@@ -56,8 +56,8 @@ parseLs raw =
       in if length parts < 9
            then acc
            else
-             let name = Log.headD "" (T.splitOn " -> " (T.intercalate " " (drop 8 parts)))
-                 size = Log.getD parts 4 "0"
+             let name = Util.headD "" (T.splitOn " -> " (T.intercalate " " (drop 8 parts)))
+                 size = Util.getD parts 4 "0"
                  date = T.intercalate " " (take 3 (drop 5 parts))
-                 typ  = if T.isPrefixOf "d" (Log.getD parts 0 "") then "dir" else "file"
+                 typ  = if T.isPrefixOf "d" (Util.getD parts 0 "") then "dir" else "file"
              in (name <> "\t" <> size <> "\t" <> date <> "\t" <> typ) : acc
