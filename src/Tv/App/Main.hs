@@ -57,8 +57,8 @@ data CliArgs = CliArgs
   }
 makeFieldLabelsNoPrefix ''CliArgs
 
-defaultCliArgs :: CliArgs
-defaultCliArgs = CliArgs { path = Nothing, keys = V.empty, test = False, noSign = False, session = Nothing }
+defArgs :: CliArgs
+defArgs = CliArgs { path = Nothing, keys = V.empty, test = False, noSign = False, session = Nothing }
 
 -- extract flag with value, return (value?, remaining args)
 extractFlag :: Text -> [Text] -> (Maybe Text, [Text])
@@ -80,9 +80,9 @@ parseArgs args0 =
        (p : "-c" : k : _) ->
          CliArgs { path = Just p, keys = toK k, test = True, noSign = noSign_, session = session_ }
        (p : _) ->
-         defaultCliArgs & #path .~ Just p & #noSign .~ noSign_ & #session .~ session_
+         defArgs & #path .~ Just p & #noSign .~ noSign_ & #session .~ session_
        [] ->
-         defaultCliArgs & #noSign .~ noSign_ & #session .~ session_
+         defArgs & #noSign .~ noSign_ & #session .~ session_
 
 -- | Init/shutdown socket + terminal around a mainLoop call
 withTui :: Bool -> IO a -> IO a
@@ -97,7 +97,7 @@ withTui test_ f = do
 initState :: ViewStack AdbcTable -> Theme.State -> AppState
 initState stk_ th = AppState
   { stk         = stk_
-  , vs          = Render.viewStateDefault
+  , vs          = Render.defVS
   , theme       = th
   , info        = False
   , prevScroll  = 0
@@ -146,12 +146,12 @@ appMain args = do
       testMode  = test cli
       noSign_   = noSign cli
   envTest <- maybe False (const True) <$> lookupEnv "TV_TEST_MODE"
-  Fzf.setTestMode (testMode || envTest)
-  SourceConfig.setNoSign noSign_
+  Fzf.setTest (testMode || envTest)
+  SourceConfig.setNS noSign_
   pipeMode <- if testMode then pure False else not <$> Term.isattyStdin
   theme <- Theme.stateInit
   logPath <- Log.path
-  Log.setLogPath (T.pack logPath)
+  Log.setLog (T.pack logPath)
   td <- Log.tmpDir `seq` pure ""  -- Log.tmpDir is an IORef; fetch via Log.dir-style (stub)
   _  <- td `seq` pure ()
   tdStr <- Log.dir  -- use log dir as tmpdir surrogate for init log line
@@ -201,7 +201,7 @@ appMain args = do
             | not (T.null (SourceConfig.script cfg)) && not (T.null (SourceConfig.pfx cfg)) -> do
                 let rest = T.drop (T.length (SourceConfig.pfx cfg)) p
                 if not (T.null rest) then do
-                  m <- SourceConfig.configRunEnter cfg rest
+                  m <- SourceConfig.runEnter cfg rest
                   case m of
                     Just adbc ->
                       case View.fromTbl adbc (SourceConfig.pfx cfg <> rest) 0 V.empty 0 of
@@ -221,9 +221,9 @@ appMain args = do
         content <- TIO.readFile (T.unpack path_)
         _ <- runTsv (TextParse.fromText content) path_ pipeMode testMode theme keys_
         pure ()
-      else if T.isSuffixOf ".gz" path_ && not (FileFormat.isDataFile path_) then do
+      else if T.isSuffixOf ".gz" path_ && not (FileFormat.isData path_) then do
         -- Smart: try read_csv for unrecognized .gz (handles decompression natively)
-        mv <- FileFormat.tryReadCsv path_
+        mv <- FileFormat.readCsv path_
         case mv of
           Just v  -> do _ <- runApp v pipeMode testMode theme keys_; pure ()
           Nothing -> FileFormat.viewFile path_

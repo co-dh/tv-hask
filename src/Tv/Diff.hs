@@ -34,14 +34,10 @@ import qualified Tv.Render as Render
 import qualified Tv.Util as Log
 import Tv.Types
   ( ColType (..)
-  , colTypeIsNumeric
+  , isNumeric
   )
 import Tv.View (View (..), ViewStack (..))
 import qualified Tv.View as View
-
--- re-export Types.colTypeIsNumeric under Lean's name for clarity
-isNumeric :: ColType -> Bool
-isNumeric = colTypeIsNumeric
 
 -- | DuckDB double-quoted identifier (escapes " → "")
 quoted :: Text -> Text
@@ -69,7 +65,7 @@ onlyCols tbl common keys =
 -- | Compile PRQL query to SQL for creating temp views
 prepareView :: AdbcTable -> Text -> IO (Text, Text)
 prepareView tbl sfx = do
-  name <- Table.nextTmpName sfx
+  name <- Table.tmpName sfx
   mSql <- Prql.compile (Prql.queryRender (Table.query tbl))
   case mSql of
     Nothing  -> ioError (userError "PRQL compile failed")
@@ -123,7 +119,7 @@ buildJoinTbl left right allKeys valCols common = do
                    (V.toList (V.map (\k -> "L." <> q k <> " IS NOT DISTINCT FROM R." <> q k) allKeys))
       selCols = T.intercalate ", "
                   (V.toList (keySel V.++ valSel V.++ leftOnlySel V.++ rightOnlySel))
-  tblName <- Table.nextTmpName "diff"
+  tblName <- Table.tmpName "diff"
   let sql = "CREATE OR REPLACE TEMP TABLE " <> tblName <> " AS SELECT " <> selCols
          <> " FROM " <> lName <> " L FULL OUTER JOIN " <> rName
          <> " R ON " <> joinCond
@@ -132,8 +128,8 @@ buildJoinTbl left right allKeys valCols common = do
   pure tblName
 
 -- | Detect same-value column pairs → sameHide; rename differing pairs with Δ prefix.
-renameDiffCols :: Text -> Vector Text -> IO (Vector Text)
-renameDiffCols tblName valCols = do
+renameCols :: Text -> Vector Text -> IO (Vector Text)
+renameCols tblName valCols = do
   let q = quoted
   classified <- V.forM valCols $ \v -> do
     let leftCol  = v <> "_left"
@@ -173,7 +169,7 @@ run s = case tl s of
           pure Nothing
         Just (allKeys, valCols) -> do
           tblName <- buildJoinTbl left right allKeys valCols common
-          sameHide_ <- renameDiffCols tblName valCols
+          sameHide_ <- renameCols tblName valCols
           let query_ = Prql.defaultQuery { Prql.base = "from " <> tblName }
           total <- Table.queryCount query_
           mAdbc <- Table.requery query_ total

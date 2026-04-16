@@ -4,7 +4,41 @@
   Socket (unix socket IPC), Remote (URI path ops).
 -}
 {-# LANGUAGE OverloadedStrings #-}
-module Tv.Util where
+module Tv.Util
+  ( -- * Log
+    logDir
+  , dir
+  , path
+  , setLog
+  , localTimestamp
+  , timestamp
+  , write
+  , errorLog
+  , run
+    -- * TmpDir
+  , tmpDir
+  , tmpPath
+  , rmFile
+  , cleanupTmp
+    -- * Socket
+  , bufRef
+  , listener
+  , sockStart
+  , pollCmd
+  , sockClose
+  , setEnv
+  , getPid
+  , sockPath
+  , socketInit
+  , getPath
+  , shutdown
+  , bracket
+    -- * Remote
+  , joinRemote
+  , stripSlash
+  , parent
+  , dispName
+  ) where
 
 import Control.Concurrent (forkIO)
 import Control.Exception (SomeException, try, bracket_)
@@ -52,8 +86,8 @@ path = do
   pure (d ++ "/tv.log")
 
 -- | Set C-side log path (stub: C FFI sink not wired in Haskell port)
-setLogPath :: Text -> IO ()
-setLogPath _ = pure ()
+setLog :: Text -> IO ()
+setLog _ = pure ()
 
 -- | Format timestamp HH:MM:SS.mmm (local time)
 localTimestamp :: IO String
@@ -106,8 +140,8 @@ tmpPath name = do
   pure (d ++ "/" ++ name)
 
 -- | Remove file, ignoring errors (file may not exist)
-tryRemoveFile :: String -> IO ()
-tryRemoveFile p = do
+rmFile :: String -> IO ()
+rmFile p = do
   r <- try (removeFile p) :: IO (Either SomeException ())
   case r of
     Left _  -> pure ()
@@ -125,7 +159,7 @@ cleanupTmp = do
 -- /tmp/tv-<pid>.sock, spawn a listener thread that accepts one-shot
 -- connections, reads up to 256 bytes per connection, and stores the
 -- stripped command string in a single-slot mutex-guarded buffer
--- (`sockBufRef`). `sockPollCmd` is a destructive read — it returns the
+-- (`bufRef`). `pollCmd` is a destructive read — it returns the
 -- current buffered command and clears it in one atomic step, so main-loop
 -- polling consumes each command exactly once.
 --
@@ -135,24 +169,24 @@ cleanupTmp = do
 -- than the render cadence.
 -- ============================================================================
 
-sockBufRef :: IORef Text
-sockBufRef = unsafePerformIO (newIORef T.empty)
-{-# NOINLINE sockBufRef #-}
+bufRef :: IORef Text
+bufRef = unsafePerformIO (newIORef T.empty)
+{-# NOINLINE bufRef #-}
 
-sockListenSock :: IORef (Maybe NS.Socket)
-sockListenSock = unsafePerformIO (newIORef Nothing)
-{-# NOINLINE sockListenSock #-}
+listener :: IORef (Maybe NS.Socket)
+listener = unsafePerformIO (newIORef Nothing)
+{-# NOINLINE listener #-}
 
 sockStart :: String -> IO Bool
 sockStart p = do
   -- Stale socket file from a previous run: ignore errors, we'll rebind.
-  tryRemoveFile p
+  rmFile p
   r <- try $ do
     s <- NS.socket NS.AF_UNIX NS.Stream NS.defaultProtocol
     NS.bind s (NS.SockAddrUnix p)
     NS.listen s 4
     _ <- forkIO (acceptLoop s)
-    writeIORef sockListenSock (Just s)
+    writeIORef listener (Just s)
     pure ()
   case r of
     Right () -> pure True
@@ -172,26 +206,23 @@ sockStart p = do
       case bs of
         Right b  ->
           let cmd = T.strip (TE.decodeUtf8With TEE.lenientDecode b)
-          in writeIORef sockBufRef cmd
+          in writeIORef bufRef cmd
         Left _   -> pure ()
       void (try (NS.close conn) :: IO (Either SomeException ()))
 
-sockPollCmd :: IO String
-sockPollCmd = do
-  cmd <- atomicModifyIORef' sockBufRef (\t -> (T.empty, t))
+sockPoll :: IO String
+sockPoll = do
+  cmd <- atomicModifyIORef' bufRef (\t -> (T.empty, t))
   pure (T.unpack cmd)
 
 sockClose :: IO ()
 sockClose = do
-  m <- readIORef sockListenSock
+  m <- readIORef listener
   case m of
     Nothing -> pure ()
     Just s  -> do
       void (try (NS.close s) :: IO (Either SomeException ()))
-      writeIORef sockListenSock Nothing
-
-setEnvVar :: String -> String -> IO ()
-setEnvVar = setEnv
+      writeIORef listener Nothing
 
 getPid :: IO Int
 getPid = fromIntegral <$> getProcessID
@@ -211,14 +242,14 @@ socketInit = do
   if ok
     then do
       writeIORef sockPath p
-      setEnvVar "TV_SOCK" p
+      setEnv "TV_SOCK" p
     else
       write "socket" (T.pack ("failed to start: " ++ p))
 
 -- | Poll for pending command (empty string = nothing)
 pollCmd :: IO (Maybe Text)
 pollCmd = do
-  s <- sockPollCmd
+  s <- sockPoll
   pure (if null s then Nothing else Just (T.pack s))
 
 -- | Get socket path (empty if not started)

@@ -2,7 +2,11 @@
   FTP: parse curl's ls -l output into folder-view TSV.
   Names stored raw (readable); URL-encoding applied at curl command time.
 -}
-module Tv.Ftp where
+module Tv.Ftp
+  ( urlEncode
+  , encodeUrl
+  , parseLs
+  ) where
 
 import Data.Char (isAlphaNum)
 import Data.Text (Text)
@@ -27,8 +31,8 @@ urlEncode s = T.concat (map encChar (T.unpack s))
 
 -- | URL-encode an FTP URL: encode only path segments, not protocol/host.
 -- e.g. "ftp://host/a b/c d/" -> "ftp://host/a%20b/c%20d/"
-urlEncodeUrl :: Text -> Text -> Text
-urlEncodeUrl pfx url =
+encodeUrl :: Text -> Text -> Text
+encodeUrl pfx url =
   let rest = T.drop (T.length pfx) url
       segs = T.splitOn "/" rest
   in case segs of

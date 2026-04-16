@@ -22,7 +22,7 @@ import qualified Tv.Data.ADBC.Prql as Prql
 import Tv.Data.ADBC.Ops (quoteId)
 import qualified Tv.Data.ADBC.Table as Table
 import Tv.Data.ADBC.Table (AdbcTable)
-import Tv.Types (colTypeIsNumeric, joinWith)
+import Tv.Types (isNumeric, joinWith)
 import qualified Tv.Util as Log
 
 -- 9 levels: space + 8 Unicode block elements
@@ -41,7 +41,7 @@ compute t nBars = do
     then pure empty
     else do
       let stepQuery (ps, is) i name = case types V.!? i of
-            Just tp | colTypeIsNumeric tp ->
+            Just tp | isNumeric tp ->
               let q = quoteId name
                   -- LEAST clamps bucket to [0, nBars-1]; CASE handles constant columns
                   sql = "SELECT CASE WHEN mx = mn THEN " <> T.pack (show (nBars `div` 2)) <> " "

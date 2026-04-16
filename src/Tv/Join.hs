@@ -22,7 +22,7 @@ import Optics.Core ((&), (.~))
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import Tv.Data.ADBC.Ops ()
 import qualified Tv.Data.ADBC.Prql as Prql
-import Tv.Data.ADBC.Table (AdbcTable, nextTmpName, stripSemi)
+import Tv.Data.ADBC.Table (AdbcTable, tmpName, stripSemi)
 import qualified Tv.Data.ADBC.Table as Table
 import Tv.Fzf (fzfIdx)
 import qualified Tv.Nav as Nav
@@ -65,7 +65,7 @@ allOps = V.fromList [JoinInner, JoinLeft, JoinRight, JoinUnion, JoinDiff]
 -- Generate unique view name and compile PRQL to SQL (deferred DDL)
 prepareView :: AdbcTable -> Text -> IO (Text, Text)
 prepareView tbl suffix = do
-  name <- nextTmpName ("j" <> suffix)
+  name <- tmpName ("j" <> suffix)
   let prql = Prql.queryRender (Table.query tbl)
   Log.write "prql" prql
   mSql <- Prql.compile prql
@@ -85,7 +85,7 @@ execJoin s op leftGrp = do
       _ <- Adbc.query ("CREATE OR REPLACE TEMP VIEW " <> rName <> " AS " <> rSql)
       let prql = prqlStr lName rName leftGrp op
       Log.write "prql" prql
-      tblName <- nextTmpName "join"
+      tblName <- tmpName "join"
       mSql <- Prql.compile prql
       case mSql of
         Nothing  -> ioError (userError ("join PRQL compile failed: " <> T.unpack prql))
@@ -93,7 +93,7 @@ execJoin s op leftGrp = do
           _ <- Adbc.query
                  ("CREATE OR REPLACE TEMP TABLE " <> tblName
                   <> " AS " <> stripSemi sql)
-          mAdbc <- Table.fromTmpTbl tblName
+          mAdbc <- Table.fromTmp tblName
           case mAdbc of
             Nothing -> pure Nothing
             Just adbc -> case View.pop s of

@@ -3,7 +3,51 @@
 -}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Tv.Types where
+module Tv.Types
+  ( -- * Utility
+    joinWith
+  , toggle
+    -- * Column types
+  , ColType(..)
+  , typeStr
+  , ofString
+  , isNumeric
+  , isTime
+    -- * PRQL / SQL helpers
+  , toPrql
+  , escSql
+  , pctBar
+    -- * Render context
+  , RenderCtx(..)
+    -- * Filter
+  , filterPrql
+  , numType
+    -- * TblOps / ModifyTable
+  , TblOps(..)
+  , ModifyTable(..)
+  , modifyTableHide
+  , modifyTableSort
+  , keepCols
+  , colText
+    -- * Agg
+  , Agg(..)
+  , aggShort
+  , parseAgg
+    -- * Op
+  , Op(..)
+    -- * ViewKind
+  , ViewKind(..)
+  , vkindStr
+    -- * PlotKind / ExportFmt
+  , PlotKind(..)
+  , ExportFmt(..)
+    -- * Effect
+  , Effect(..)
+  , noEffect
+    -- * Cmd
+  , Cmd(..)
+  , plotKind
+  ) where
 
 import Data.Int (Int64)
 import Data.Text (Text)
@@ -32,39 +76,39 @@ data ColType
   | ColTypeOther
   deriving (Eq, Show)
 
-colTypeStr :: ColType -> Text
-colTypeStr ColTypeInt       = "int"
-colTypeStr ColTypeFloat     = "float"
-colTypeStr ColTypeDecimal   = "decimal"
-colTypeStr ColTypeStr       = "str"
-colTypeStr ColTypeDate      = "date"
-colTypeStr ColTypeTime      = "time"
-colTypeStr ColTypeTimestamp = "timestamp"
-colTypeStr ColTypeBool      = "bool"
-colTypeStr ColTypeOther     = "other"
+typeStr :: ColType -> Text
+typeStr ColTypeInt       = "int"
+typeStr ColTypeFloat     = "float"
+typeStr ColTypeDecimal   = "decimal"
+typeStr ColTypeStr       = "str"
+typeStr ColTypeDate      = "date"
+typeStr ColTypeTime      = "time"
+typeStr ColTypeTimestamp = "timestamp"
+typeStr ColTypeBool      = "bool"
+typeStr ColTypeOther     = "other"
 
-colTypeOfString :: Text -> ColType
-colTypeOfString "int"       = ColTypeInt
-colTypeOfString "float"     = ColTypeFloat
-colTypeOfString "decimal"   = ColTypeDecimal
-colTypeOfString "str"       = ColTypeStr
-colTypeOfString "date"      = ColTypeDate
-colTypeOfString "time"      = ColTypeTime
-colTypeOfString "timestamp" = ColTypeTimestamp
-colTypeOfString "bool"      = ColTypeBool
-colTypeOfString _           = ColTypeOther
+ofString :: Text -> ColType
+ofString "int"       = ColTypeInt
+ofString "float"     = ColTypeFloat
+ofString "decimal"   = ColTypeDecimal
+ofString "str"       = ColTypeStr
+ofString "date"      = ColTypeDate
+ofString "time"      = ColTypeTime
+ofString "timestamp" = ColTypeTimestamp
+ofString "bool"      = ColTypeBool
+ofString _           = ColTypeOther
 
-colTypeIsNumeric :: ColType -> Bool
-colTypeIsNumeric ColTypeInt     = True
-colTypeIsNumeric ColTypeFloat   = True
-colTypeIsNumeric ColTypeDecimal = True
-colTypeIsNumeric _              = False
+isNumeric :: ColType -> Bool
+isNumeric ColTypeInt     = True
+isNumeric ColTypeFloat   = True
+isNumeric ColTypeDecimal = True
+isNumeric _              = False
 
-colTypeIsTime :: ColType -> Bool
-colTypeIsTime ColTypeTime      = True
-colTypeIsTime ColTypeTimestamp = True
-colTypeIsTime ColTypeDate      = True
-colTypeIsTime _                = False
+isTime :: ColType -> Bool
+isTime ColTypeTime      = True
+isTime ColTypeTimestamp = True
+isTime ColTypeDate      = True
+isTime _                = False
 
 -- | Toggle element in array (add if absent, remove if present)
 toggle :: Eq a => Vector a -> a -> Vector a
@@ -73,10 +117,10 @@ toggle arr x =
 
 -- | Format raw text as PRQL literal based on column type.
 -- Raw text means: ints as "1234567" (no commas), floats as "1.234", strings as-is.
-textToPrql :: ColType -> Text -> Text
-textToPrql _ t | T.null t = "null"
-textToPrql typ t
-  | colTypeIsNumeric typ = t  -- bare numeric literal
+toPrql :: ColType -> Text -> Text
+toPrql _ t | T.null t = "null"
+toPrql typ t
+  | isNumeric typ = t  -- bare numeric literal
   | typ == ColTypeBool   = t  -- true/false are bare
   | otherwise = "'" <> T.replace "'" "''" t <> "'"
 
@@ -85,8 +129,8 @@ escSql :: Text -> Text
 escSql s = T.replace "'" "''" s
 
 -- | Compute pct and bar from count data (for freq → fromArrays).
-freqPctBar :: Vector Int64 -> (Vector Double, Vector Text)
-freqPctBar cntData =
+pctBar :: Vector Int64 -> (Vector Double, Vector Text)
+pctBar cntData =
   let total = V.sum cntData
       pct = V.map
               (\c -> if total > 0
@@ -110,7 +154,7 @@ data RenderCtx = RenderCtx
   , curRow     :: Int
   , curCol     :: Int
   , moveDir    :: Int
-  , selColIdxs :: Vector Int
+  , selIdxs :: Vector Int
   , rowSels    :: Vector Int
   , hiddenIdxs :: Vector Int
   , styles     :: Vector Word32
@@ -123,8 +167,8 @@ makeFieldLabelsNoPrefix ''RenderCtx
 
 -- | Build PRQL filter expression from fzf result (default for TblOps.buildFilter)
 -- With --print-query: line 0 = query, lines 1+ = selections
-buildFilterPrql :: Text -> Vector Text -> Text -> Bool -> Text
-buildFilterPrql col vals result numeric =
+filterPrql :: Text -> Vector Text -> Text -> Bool -> Text
+filterPrql col vals result numeric =
   let lines_ = V.fromList (filter (not . T.null) (T.splitOn "\n" result))
       input = maybe "" id (lines_ V.!? 0)
       fromHints = V.filter (`V.elem` vals) (V.slice 1 (max 0 (V.length lines_ - 1)) lines_)
@@ -142,8 +186,8 @@ buildFilterPrql col vals result numeric =
        else ""
 
 -- compat shim — prefer ColType.isNumeric on typed values
-isNumericType :: Text -> Bool
-isNumericType t = colTypeIsNumeric (colTypeOfString t)
+numType :: Text -> Bool
+numType t = isNumeric (ofString t)
 
 {- | TblOps: unified read-only table interface.
     Provides row/column access, metadata queries, filtering, and rendering. -}
@@ -164,11 +208,11 @@ class TblOps a where
   colType _ _ = ColTypeOther
   -- build filter expression from fzf result (default: PRQL syntax)
   buildFilter :: a -> Text -> Vector Text -> Text -> Bool -> Text
-  buildFilter _ = buildFilterPrql
+  buildFilter _ = filterPrql
   -- filter header hint (shown above fzf input, default: PRQL examples)
   filterPrompt :: a -> Text -> Text -> Text
   filterPrompt _ col typ =
-    let eg = if isNumericType typ
+    let eg = if numType typ
                then "e.g. " <> col <> " > 5,  " <> col <> " >= 10 && " <> col <> " < 100"
                else "e.g. " <> col <> " == 'USD',  " <> col <> " ~= 'pattern'"
     in "PRQL filter on " <> col <> " (" <> typ <> "):  " <> eg
@@ -226,9 +270,9 @@ keepCols nCols hideIdxs names =
   V.map (\i -> maybe "" id (names V.!? i))
     (V.filter (not . (`V.elem` hideIdxs)) (V.enumFromN 0 nCols))
 
--- | Convert text columns to tab-separated text (shared by Table toText impls)
-colsToText :: Vector Text -> Vector (Vector Text) -> Int -> Text
-colsToText names cols nr =
+-- | Convert columns to tab-separated text (shared by Table toText impls)
+colText :: Vector Text -> Vector (Vector Text) -> Int -> Text
+colText names cols nr =
   let header = joinWith names "\t"
       rowLines = V.generate nr $ \r ->
         let row = V.map (\col -> maybe "" id (col V.!? r)) cols
@@ -267,8 +311,8 @@ instance StrEnum Agg where
 aggShort :: Agg -> Text
 aggShort a = StrEnum.toString a
 
-aggFromStrQ :: Text -> Maybe Agg
-aggFromStrQ = StrEnum.ofStringQ
+parseAgg :: Text -> Maybe Agg
+parseAgg = StrEnum.ofStringQ
 
 -- | Table operation (single pipeline stage)
 data Op
@@ -290,11 +334,11 @@ data ViewKind
   deriving (Eq, Show)
 
 -- | Context string for config lookup (shared by Fzf and App dispatch)
-viewKindCtxStr :: ViewKind -> Text
-viewKindCtxStr (VkFreqV _ _) = "freqV"
-viewKindCtxStr VkColMeta     = "colMeta"
-viewKindCtxStr (VkFld _ _)   = "fld"
-viewKindCtxStr VkTbl         = "tbl"
+vkindStr :: ViewKind -> Text
+vkindStr (VkFreqV _ _) = "freqV"
+vkindStr VkColMeta     = "colMeta"
+vkindStr (VkFld _ _)   = "fld"
+vkindStr VkTbl         = "tbl"
 
 -- | Plot types and export formats
 data PlotKind
@@ -363,9 +407,9 @@ data Effect
   | EffectFreqFilter (Vector Text) Int
   deriving (Eq, Show)
 
-effectIsNone :: Effect -> Bool
-effectIsNone EffectNone = True
-effectIsNone _          = False
+noEffect :: Effect -> Bool
+noEffect EffectNone = True
+noEffect _          = False
 
 -- | Macro cmd_enum: Lean generates inductive + toStr + ToString + all + strMap + ofString?
 -- Haskell port lists commands explicitly.
@@ -534,14 +578,14 @@ instance StrEnum Cmd where
     ]
   ofStringQ s = V.find (\c -> StrEnum.toString c == s) (StrEnum.all :: Vector Cmd)
 
-cmdPlotKindQ :: Cmd -> Maybe PlotKind
-cmdPlotKindQ CmdPlotArea    = Just PlotArea
-cmdPlotKindQ CmdPlotLine    = Just PlotLine
-cmdPlotKindQ CmdPlotScatter = Just PlotScatter
-cmdPlotKindQ CmdPlotBar     = Just PlotBar
-cmdPlotKindQ CmdPlotBox     = Just PlotBox
-cmdPlotKindQ CmdPlotStep    = Just PlotStep
-cmdPlotKindQ CmdPlotHist    = Just PlotHist
-cmdPlotKindQ CmdPlotDensity = Just PlotDensity
-cmdPlotKindQ CmdPlotViolin  = Just PlotViolin
-cmdPlotKindQ _              = Nothing
+plotKind :: Cmd -> Maybe PlotKind
+plotKind CmdPlotArea    = Just PlotArea
+plotKind CmdPlotLine    = Just PlotLine
+plotKind CmdPlotScatter = Just PlotScatter
+plotKind CmdPlotBar     = Just PlotBar
+plotKind CmdPlotBox     = Just PlotBox
+plotKind CmdPlotStep    = Just PlotStep
+plotKind CmdPlotHist    = Just PlotHist
+plotKind CmdPlotDensity = Just PlotDensity
+plotKind CmdPlotViolin  = Just PlotViolin
+plotKind _              = Nothing

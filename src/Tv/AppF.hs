@@ -11,7 +11,18 @@
 -- (render, nextKey, readArg) are captured as AppM constructors; everything
 -- else lifts through `liftIO` so existing IO helpers (Socket.pollCmd,
 -- dispatchHandler, CmdConfig lookups, handler dispatch) stay put.
-module Tv.AppF where
+module Tv.AppF
+  ( -- * Program type
+    AppM(..)
+  , bindApp
+    -- * Smart constructors
+  , doRender
+  , poll
+  , readArg'
+    -- * Interpreter
+  , Interp(..)
+  , run
+  ) where
 
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Text (Text)
@@ -38,24 +49,24 @@ data AppM s a where
 
 -- Structural bind on the program value. `partial` because the recursion runs
 -- through the continuation function space — fine for a control flow effect.
-bindAppM :: AppM s a -> (a -> AppM s b) -> AppM s b
-bindAppM m f = case m of
+bindApp :: AppM s a -> (a -> AppM s b) -> AppM s b
+bindApp m f = case m of
   Pure x       -> f x
-  LiftIO io k  -> LiftIO io  (\b  -> bindAppM (k b ) f)
-  Render s k   -> Render s   (\s' -> bindAppM (k s') f)
-  NextKey k    -> NextKey    (\o  -> bindAppM (k o ) f)
-  ReadArg k    -> ReadArg    (\s  -> bindAppM (k s ) f)
+  LiftIO io k  -> LiftIO io  (\b  -> bindApp (k b ) f)
+  Render s k   -> Render s   (\s' -> bindApp (k s') f)
+  NextKey k    -> NextKey    (\o  -> bindApp (k o ) f)
+  ReadArg k    -> ReadArg    (\s  -> bindApp (k s ) f)
   Halt         -> Halt
 
 instance Functor (AppM s) where
-  fmap f m = bindAppM m (Pure . f)
+  fmap f m = bindApp m (Pure . f)
 
 instance Applicative (AppM s) where
   pure = Pure
-  mf <*> mx = bindAppM mf (\f -> bindAppM mx (Pure . f))
+  mf <*> mx = bindApp mf (\f -> bindApp mx (Pure . f))
 
 instance Monad (AppM s) where
-  (>>=) = bindAppM
+  (>>=) = bindApp
 
 -- Lift arbitrary IO into AppM so `<- someIOAction` works inside do-blocks.
 instance MonadIO (AppM s) where

@@ -7,12 +7,12 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Fzf
-  ( setTestMode
-  , getTestMode
+  ( setTest
+  , getTest
   , fzfCore
   , fzf
   , fzfIdx
-  , parseFlatSel
+  , parseSel
   , cmdMode
   ) where
 
@@ -34,7 +34,7 @@ import System.Process
 import Text.Read (readMaybe)
 
 import qualified Tv.CmdConfig as CmdConfig
-import Tv.Types (ViewKind, viewKindCtxStr)
+import Tv.Types (ViewKind, vkindStr)
 import qualified Tv.Term as Term
 
 -- | Global testMode flag (set by App.main)
@@ -43,19 +43,19 @@ testMode = unsafePerformIO (newIORef False)
 {-# NOINLINE testMode #-}
 
 -- | Set testMode
-setTestMode :: Bool -> IO ()
-setTestMode = writeIORef testMode
+setTest :: Bool -> IO ()
+setTest = writeIORef testMode
 
 -- | Get testMode
-getTestMode :: IO Bool
-getTestMode = readIORef testMode
+getTest :: IO Bool
+getTest = readIORef testMode
 
 -- | Core fzf: testMode returns first line, else spawn fzf
 -- Uses --tmux popup if in tmux (keeps table visible), otherwise compact at bottom
 -- poll: optional callback invoked in loop while fzf runs (tmux only, for live socket dispatch)
 fzfCore :: Vector Text -> Text -> IO () -> IO Text
 fzfCore opts input poll = do
-  tm <- getTestMode
+  tm <- getTest
   if tm
     then pure (headD "" (filter (not . T.null) (T.splitOn "\n" input)))
     else do
@@ -119,7 +119,7 @@ fzf opts input = do
 -- | Index select: testMode returns 0
 fzfIdx :: Vector Text -> Vector Text -> IO (Maybe Int)
 fzfIdx opts items = do
-  tm <- getTestMode
+  tm <- getTest
   if tm
     then pure (if V.null items then Nothing else Just 0)
     else do
@@ -135,7 +135,7 @@ fzfIdx opts items = do
 -- | Build aligned menu items: "handler | ctx | key | label" with padding
 flatItems :: ViewKind -> IO (Vector Text)
 flatItems vk = do
-  items <- CmdConfig.menuItems (viewKindCtxStr vk)
+  items <- CmdConfig.menuItems (vkindStr vk)
   let (maxH, maxX, maxK) = V.foldl
         (\(mh, mx, mk) (h, x, k, _) ->
            (max mh (T.length h), max mx (T.length x), max mk (T.length k)))
@@ -147,8 +147,8 @@ flatItems vk = do
     in hp <> " | " <> xp <> " | " <> kp <> " | " <> label) items
 
 -- | Parse flat selection: extract handler name before first |
-parseFlatSel :: Text -> Maybe Text
-parseFlatSel sel =
+parseSel :: Text -> Maybe Text
+parseSel sel =
   let h = T.stripEnd (headD "" (T.splitOn " | " sel))
   in if T.null h then Nothing else Just h
   where
@@ -168,4 +168,4 @@ cmdMode vk poll = do
       out <- fzfCore opts input poll
       if T.null out
         then pure Nothing
-        else pure (parseFlatSel out)
+        else pure (parseSel out)

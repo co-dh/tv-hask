@@ -43,9 +43,9 @@ import Tv.Types
   ( ColType(..)
   , PlotKind(..)
   , TblOps
-  , colTypeStr
-  , colTypeIsNumeric
-  , colTypeIsTime
+  , typeStr
+  , isNumeric
+  , isTime
   )
 import qualified Tv.Types as TblOps
 import qualified Tv.Util as Log
@@ -116,15 +116,15 @@ clearScreen :: IO ()
 clearScreen = TIO.putStr "\x1b[2J\x1b[H"
 
 -- | Enter/leave alternate screen buffer so plot output doesn't bleed into other panes
-enterAltScreen :: IO ()
-enterAltScreen = TIO.putStr "\x1b[?1049h\x1b[2J\x1b[H"
+altEnter :: IO ()
+altEnter = TIO.putStr "\x1b[?1049h\x1b[2J\x1b[H"
 
-leaveAltScreen :: IO ()
-leaveAltScreen = TIO.putStr "\x1b[?1049l"
+altLeave :: IO ()
+altLeave = TIO.putStr "\x1b[?1049l"
 
 -- | Restore terminal after plot mode: sane + leave alt screen + re-init TUI
-exitPlotMode :: IO ()
-exitPlotMode = do
+exitPlot :: IO ()
+exitPlot = do
   _ <- Log.run "stty" "stty" ["-F", "/dev/tty", "sane"]
   TIO.putStr "\x1b[?1049l"
   _ <- Term.init
@@ -143,8 +143,8 @@ setSane = do
   pure ()
 
 -- | Read one byte from /dev/tty (caller must be in raw mode)
-readKeyRaw :: IO Char
-readKeyRaw = do
+readKey :: IO Char
+readKey = do
   r <- try $ do
     tty <- openFile "/dev/tty" ReadMode
     c <- hGetChar tty
@@ -170,12 +170,12 @@ plotTitle kind xName yName hasCat catName =
               <> (if hasCat then " by " <> catName else "")
 
 -- | Single-column plots: no group needed, just cursor on a numeric column
-isSingleColPlot :: PlotKind -> Bool
-isSingleColPlot kind = kind == PlotHist || kind == PlotDensity
+singleCol :: PlotKind -> Bool
+singleCol kind = kind == PlotHist || kind == PlotDensity
 
 -- | Plot types that use category column as the x-axis (box/violin)
-usesCategoryAsX :: PlotKind -> Bool
-usesCategoryAsX kind = kind == PlotBox || kind == PlotViolin
+catAsX :: PlotKind -> Bool
+catAsX kind = kind == PlotBox || kind == PlotViolin
 
 -- | Plot types that use fill instead of color for category aesthetics
 addsFill :: PlotKind -> Bool
@@ -225,13 +225,13 @@ rScript dataPath pngPath kind xName yName hasCat catName hasFacet facetName xTyp
         ColTypeDate      ->
           "d[['" <> xName <> "']] <- as.Date(d[['" <> xName <> "']])\n"
         _ ->
-          if not (isSingleColPlot kind)
+          if not (singleCol kind)
             then "tryCatch(d[['" <> xName <> "']] <- as.numeric(d[['" <> xName
                    <> "']]), warning=function(w) NULL)\n"
             else ""
       aes
-        | isSingleColPlot kind = "aes(x = " <> yR <> ")"
-        | usesCategoryAsX kind =
+        | singleCol kind = "aes(x = " <> yR <> ")"
+        | catAsX kind =
             if hasCat
               then "aes(x = " <> catR <> ", y = " <> yR <> ")"
               else "aes(x = factor(''), y = " <> yR <> ")"
@@ -327,16 +327,16 @@ run s kind = do
   Log.write "plot" ("run entered, kind=" <> T.pack (show kind))
   let n = View.nav (View.cur s)
       names = Nav.colNames n
-  if isSingleColPlot kind
+  if singleCol kind
     then do
-      let yIdx = Nav.curColIdx n
-          yName = Nav.curColName n
-          yType = Nav.curColType n
-      if not (colTypeIsNumeric yType)
+      let yIdx = Nav.colIdx n
+          yName = Nav.colName n
+          yType = Nav.colType n
+      if not (isNumeric yType)
         then err s (StrEnum.toString kind <> " needs a numeric column")
         else do
           Term.shutdown
-          enterAltScreen
+          altEnter
           datPath <- Log.tmpPath "plot.dat"
           pngPath <- Log.tmpPath "plot.png"
           let nr = min (TblOps.nRows (Nav.tbl n)) maxPoints
@@ -356,10 +356,10 @@ run s kind = do
             Just msg -> TIO.putStrLn msg
           setRaw
           let loop = do
-                key <- readKeyRaw
+                key <- readKey
                 if handleKey key == KeyQuit then pure () else loop
           loop
-          exitPlotMode
+          exitPlot
           pure (Just s)
     else do
       -- all other plots need at least 1 group column
@@ -379,14 +379,14 @@ run s kind = do
                     | V.length (Nav.grp n) > 2 = Just facetName
                     | V.length (Nav.grp n) > 1 = Just catName
                     | otherwise                = Nothing
-                  yName = Nav.curColName n
+                  yName = Nav.colName n
               if V.elem yName (Nav.grp n)
                 then err s "move cursor to a non-group column"
                 else do
-                  let yType = Nav.curColType n
-                  if not (colTypeIsNumeric yType)
+                  let yType = Nav.colType n
+                  if not (isNumeric yType)
                     then err s ("y-axis '" <> yName <> "' must be numeric (got "
-                                 <> colTypeStr yType <> ")")
+                                 <> typeStr yType <> ")")
                     else do
                       let nr = TblOps.totalRows (Nav.tbl n)
                           xType0 = TblOps.colType (Nav.tbl n) xIdx
@@ -405,11 +405,11 @@ run s kind = do
                             then pure ColTypeTime
                           else pure xType0
                       Log.write "plot"
-                        ("xType=" <> colTypeStr xType
-                          <> " (raw=" <> colTypeStr xType0 <> ")"
+                        ("xType=" <> typeStr xType
+                          <> " (raw=" <> typeStr xType0 <> ")"
                           <> " xIdx=" <> T.pack (show xIdx)
                           <> " xName=" <> xName)
-                      let xIsTime = colTypeIsTime xType
+                      let xIsTime = isTime xType
                           needsDownsample = nr > maxPoints
                           baseStep = if nr > maxPoints then nr `div` maxPoints else 1
                           hasCat = V.length (Nav.grp n) > 1 && not hasFacet
@@ -419,7 +419,7 @@ run s kind = do
                           maxIdx = V.length intervals - 1
                       -- enter plot mode: shutdown TUI, alternate screen, raw mode
                       Term.shutdown
-                      enterAltScreen
+                      altEnter
                       setRaw
                       datPath <- Log.tmpPath "plot.dat"
                       pngPath <- Log.tmpPath "plot.png"
@@ -454,7 +454,7 @@ run s kind = do
                                   Just msg -> pure (Just msg)
                                   Nothing  -> renderR script
                                 renderFrame pngPath intervals idx err_
-                              key <- readKeyRaw
+                              key <- readKey
                               case handleKey key of
                                 KeyQuit -> writeIORef continueRef False
                                 KeyInterval d -> do
@@ -468,10 +468,10 @@ run s kind = do
                                 KeyNoop -> writeIORef needRenderRef False
                               loop
                       loop
-                      exitPlotMode
+                      exitPlot
                       pure (Just s)
 
--- Silence unused-import warnings for leaveAltScreen/setSane (Lean defines them
--- as private helpers but the current run path uses exitPlotMode instead).
+-- Silence unused-import warnings for altLeave/setSane (Lean defines them
+-- as private helpers but the current run path uses exitPlot instead).
 _unused :: IO ()
-_unused = leaveAltScreen >> setSane
+_unused = altLeave >> setSane

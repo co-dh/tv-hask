@@ -4,7 +4,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Key
-  ( evToKey
+  ( toKey
   , tokenizeKeys
   , nextKey
   ) where
@@ -33,34 +33,34 @@ keyNames = V.fromList
 
 modPfx :: Event -> Text
 modPfx ev =
-  (if eventMod ev .&. Term.modShift /= 0 then "S-" else "") <>
-  (if eventMod ev .&. Term.modCtrl  /= 0 then "C-" else "") <>
-  (if eventMod ev .&. Term.modAlt   /= 0 then "A-" else "")
+  (if mods ev .&. Term.modShift /= 0 then "S-" else "") <>
+  (if mods ev .&. Term.modCtrl  /= 0 then "C-" else "") <>
+  (if mods ev .&. Term.modAlt   /= 0 then "A-" else "")
 
 -- | Normalize terminal event to readable key string.
 -- Regular chars -> "j", " "; special keys -> "<ret>", "<pgdn>"; modifiers -> "<S-left>", "<C-d>", "<A-x>"
-evToKey :: Event -> Text
-evToKey ev =
-  if eventType ev /= Term.eventKey then "" else
+toKey :: Event -> Text
+toKey ev =
+  if typ ev /= Term.eventKey then "" else
   let pfx = modPfx ev
       found = V.foldr step Nothing keyNames
       step (k, bare, modN) acc =
-        if eventKeyCode ev == k then Just (bare, modN) else acc
+        if keyCode ev == k then Just (bare, modN) else acc
   in case found of
     Just (bare, modN) ->
       -- termbox2 sets TB_MOD_CTRL for ASCII control chars (Enter=0x0D, Bs=0x08, Esc=0x1B).
       -- Strip that implicit ctrl so Enter produces "<ret>" not "<C-ret>".
-      let pfx' = if eventKeyCode ev < 0x20 then T.replace "C-" "" pfx else pfx
+      let pfx' = if keyCode ev < 0x20 then T.replace "C-" "" pfx else pfx
       in if T.null pfx'
            then (if T.length bare == 1 then bare else "<" <> bare <> ">")
            else "<" <> pfx' <> modN <> ">"
     Nothing ->
       let code :: Word32
-          code = if eventCh ev > 0 then eventCh ev else fromIntegral (eventKeyCode ev)
+          code = if ch ev > 0 then ch ev else fromIntegral (keyCode ev)
       in if code > 0 && code < 32
            then "<C-" <> T.singleton (chr (fromIntegral code + 96)) <> ">"
-           else if eventCh ev > 0
-             then let c = T.singleton (chr (fromIntegral (eventCh ev)))
+           else if ch ev > 0
+             then let c = T.singleton (chr (fromIntegral (ch ev)))
                   in if T.null pfx then c else "<" <> pfx <> c <> ">"
              else ""
 
@@ -100,4 +100,4 @@ nextKey keys =
     then pure (V.head keys, V.slice 1 (V.length keys - 1) keys)
     else do
       e <- Term.pollEvent
-      pure (evToKey e, V.empty)
+      pure (toKey e, V.empty)

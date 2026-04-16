@@ -118,8 +118,8 @@ listDir path_ depth = do
       | otherwise = Just (xs !! i)
 
 -- | Find path column index (tries "path", "name", "id" in order)
-pathColIdx :: Vector Text -> Maybe Int
-pathColIdx names =
+pathIdx :: Vector Text -> Maybe Int
+pathIdx names =
   case Nav.idxOf names "path" of
     Just i  -> Just i
     Nothing -> case Nav.idxOf names "name" of
@@ -139,7 +139,7 @@ cellStr v colIdx = do
 curPath :: View AdbcTable -> IO (Maybe Text)
 curPath v = case View.vkind v of
   VkFld _ _ ->
-    case pathColIdx (Nav.colNames (View.nav v)) of
+    case pathIdx (Nav.colNames (View.nav v)) of
       Just col -> Just <$> cellStr v col
       Nothing  -> pure Nothing
   _ -> pure Nothing
@@ -160,8 +160,8 @@ curType v = case View.vkind v of
   _ -> pure Nothing
 
 -- | Build folder view from AdbcTable
-mkFldView :: AdbcTable -> Text -> Int -> Text -> Vector Text -> Maybe (View AdbcTable)
-mkFldView adbc path_ depth disp grp =
+fldView :: AdbcTable -> Text -> Int -> Text -> Vector Text -> Maybe (View AdbcTable)
+fldView adbc path_ depth disp grp =
   fmap (\v -> v & #vkind .~ VkFld path_ depth & #disp .~ disp)
        (View.fromTbl adbc path_ 0 grp 0)
 
@@ -171,13 +171,13 @@ mkView path_ depth = do
   msrc <- SourceConfig.findSource path_
   case msrc of
     Just cfg -> do
-      m <- SourceConfig.configRunList cfg path_
+      m <- SourceConfig.runList cfg path_
       case m of
         Nothing -> pure Nothing
         Just adbc -> do
           let grp = if T.null (SourceConfig.grp cfg) then V.empty
                     else V.singleton (SourceConfig.grp cfg)
-          pure (mkFldView adbc path_ depth (Remote.dispName path_) grp)
+          pure (fldView adbc path_ depth (Remote.dispName path_) grp)
     Nothing -> do
       (ec, rpOut, _) <- readProcessWithExitCode "realpath" [T.unpack path_] ""
       let absPath = if ec == ExitSuccess then T.strip (T.pack rpOut) else path_
@@ -188,7 +188,7 @@ mkView path_ depth = do
       m <- Table.fromTsv content
       case m of
         Nothing -> pure Nothing
-        Just adbc -> pure (mkFldView adbc absPath depth disp V.empty)
+        Just adbc -> pure (fldView adbc absPath depth disp V.empty)
 
 -- | Push new folder view onto stack
 push :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
@@ -242,7 +242,7 @@ openFile :: ViewStack AdbcTable -> Text -> Text -> Maybe Config
          -> IO (Maybe (ViewStack AdbcTable))
 openFile s curDir_ p cfg = do
   let fullPath = joinPath curDir_ p
-  if FileFormat.isDataFile p
+  if FileFormat.isData p
     then do
       openPath <- case cfg of
         Just c  -> SourceConfig.configResolve c fullPath
@@ -257,12 +257,12 @@ openFile s curDir_ p cfg = do
           pure (Just s)
     else do
       viewPath <- case cfg of
-        Just c  -> SourceConfig.configRunDownload c fullPath
+        Just c  -> SourceConfig.runDl c fullPath
         Nothing -> pure fullPath
       done <-
         if T.isSuffixOf ".gz" p
           then do
-            mv <- FileFormat.tryReadCsv viewPath
+            mv <- FileFormat.readCsv viewPath
             case mv of
               Just v  -> pure (Just (View.push s v))
               Nothing -> pure Nothing
@@ -288,7 +288,7 @@ enter s = do
       case mTbl of
         Nothing -> pure (Just s)
         Just tableName -> do
-          mAK <- Table.fromDuckDBTable tableName
+          mAK <- Table.fromTable tableName
           case mAK of
             Nothing -> pure (Just s)
             Just (adbc, keys) ->
@@ -312,7 +312,7 @@ enter s = do
           -- Config-driven enter: script cmd -> JSON, or enterUrl redirect
           case cfg of
             Just c | not (T.null (SourceConfig.script c)) -> do
-              mAdbc <- SourceConfig.configRunEnter c p
+              mAdbc <- SourceConfig.runEnter c p
               case mAdbc of
                 Just adbc ->
                   case View.fromTbl adbc (SourceConfig.pfx c <> p) 0 V.empty 0 of
@@ -351,7 +351,7 @@ trashCmd = do
 selPaths :: View AdbcTable -> IO (Vector Text)
 selPaths v = case View.vkind v of
   VkFld curDir_ _ ->
-    case pathColIdx (Nav.colNames (View.nav v)) of
+    case pathIdx (Nav.colNames (View.nav v)) of
       Nothing -> pure V.empty
       Just pathCol -> do
         cols <- TblOps.getCols (Nav.tbl (View.nav v)) (V.singleton pathCol)
@@ -404,11 +404,11 @@ drawDialog title lines_ footer = do
 waitYN :: IO Bool
 waitYN = do
   ev <- Term.pollEvent
-  if Term.eventType ev /= Term.eventKey
+  if Term.typ ev /= Term.eventKey
     then waitYN
     else
-      let ch = Term.eventCh ev
-          k  = Term.eventKeyCode ev
+      let ch = Term.ch ev
+          k  = Term.keyCode ev
           yC = fromIntegral (ord 'y')
           yU = fromIntegral (ord 'Y')
           nC = fromIntegral (ord 'n')
@@ -420,7 +420,7 @@ waitYN = do
 -- | Confirm deletion with popup dialog (auto-decline in test mode)
 confirmDel :: Vector Text -> IO Bool
 confirmDel paths = do
-  tm <- Fzf.getTestMode
+  tm <- Fzf.getTest
   if tm then pure False
   else do
     let title = "Delete " <> T.pack (show (V.length paths)) <> " file(s)?"

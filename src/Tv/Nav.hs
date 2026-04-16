@@ -11,7 +11,39 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Tv.Nav where
+module Tv.Nav
+  ( -- * Utility
+    clamp
+  , adjOff
+  , finClamp
+    -- * NavAxis
+  , NavAxis(..)
+  , defAxis
+  , RowNav
+  , ColNav
+    -- * Display order
+  , idxOf
+  , dispOrder
+  , idxAt
+    -- * NavState
+  , NavState(..)
+  , colNames
+  , colIdx
+  , colName
+  , colType
+  , dispNames
+  , selIdxs
+  , hiddenIdxs
+    -- * Constructors
+  , new
+  , newAt
+    -- * Lenses
+  , rowCur
+  , colCur
+  , rowSels
+    -- * Exec
+  , exec
+  ) where
 
 import Data.Text (Text)
 import Data.Vector (Vector)
@@ -53,8 +85,8 @@ makeFieldLabelsNoPrefix ''NavAxis
 
 -- Default NavAxis (cursor at 0, no selections).
 -- Lean requires `h : n > 0`; caller guarantees this in Haskell.
-navAxisDefault :: NavAxis elem
-navAxisDefault = NavAxis { cur = 0, sels = V.empty }
+defAxis :: NavAxis elem
+defAxis = NavAxis { cur = 0, sels = V.empty }
 
 -- Type aliases: Row uses Int (index), Col uses Text (name, stable across deletion)
 type RowNav = NavAxis Int
@@ -87,8 +119,8 @@ dispOrder group names =
       in sortByKey k lt ++ [x] ++ sortByKey k ge
 
 -- Get column index at display position
-colIdxAt :: Vector Text -> Vector Text -> Int -> Int
-colIdxAt group names i = maybe 0 id (dispOrder group names V.!? i)
+idxAt :: Vector Text -> Vector Text -> Int -> Int
+idxAt group names i = maybe 0 id (dispOrder group names V.!? i)
 
 -- NavState: generic over table type + navigation state
 -- Lean parameterizes on nRows/nCols type params for `Fin` bounds. Haskell uses
@@ -109,26 +141,26 @@ colNames :: TblOps t => NavState t -> Vector Text
 colNames nav = TblOps.colNames (nav ^. #tbl)
 
 -- | Current column index in data order
-curColIdx :: TblOps t => NavState t -> Int
-curColIdx nav = colIdxAt (nav ^. #grp) (colNames nav) (nav ^. #col % #cur)
+colIdx :: TblOps t => NavState t -> Int
+colIdx nav = idxAt (nav ^. #grp) (colNames nav) (nav ^. #col % #cur)
 
 -- | Current column name
-curColName :: TblOps t => NavState t -> Text
-curColName nav = maybe "" id (colNames nav V.!? curColIdx nav)
+colName :: TblOps t => NavState t -> Text
+colName nav = maybe "" id (colNames nav V.!? colIdx nav)
 
 -- | Current column type
-curColType :: TblOps t => NavState t -> ColType
-curColType nav = TblOps.colType (nav ^. #tbl) (curColIdx nav)
+colType :: TblOps t => NavState t -> ColType
+colType nav = TblOps.colType (nav ^. #tbl) (colIdx nav)
 
 -- | Column names in display order (grouped first, then rest)
-dispColNames :: TblOps t => NavState t -> Vector Text
-dispColNames nav =
+dispNames :: TblOps t => NavState t -> Vector Text
+dispNames nav =
   let grp_ = nav ^. #grp
   in grp_ V.++ V.filter (not . (`V.elem` grp_)) (colNames nav)
 
 -- | Selected column indices
-selColIdxs :: TblOps t => NavState t -> Vector Int
-selColIdxs nav =
+selIdxs :: TblOps t => NavState t -> Vector Int
+selIdxs nav =
   let names = colNames nav
   in V.mapMaybe (idxOf names) (nav ^. #col % #sels)
 
@@ -143,8 +175,8 @@ hiddenIdxs nav =
 new :: TblOps t => t -> NavState t
 new t = NavState
   { tbl      = t
-  , row      = navAxisDefault
-  , col      = navAxisDefault
+  , row      = defAxis
+  , col      = defAxis
   , grp      = V.empty
   , hidden   = V.empty
   , dispIdxs = dispOrder V.empty (TblOps.colNames t)
@@ -167,15 +199,15 @@ newAt t colIx grp_ rowIx =
        }
 
 -- | Named composites reused as atoms by `exec` and by Filter (both hot
--- paths); `rowSelsL` is the atom for `CmdRowSel`.
-rowCurL :: Lens' (NavState t) Int
-rowCurL = #row % #cur
+-- paths); `rowSels` is the atom for `CmdRowSel`.
+rowCur :: Lens' (NavState t) Int
+rowCur = #row % #cur
 
-colCurL :: Lens' (NavState t) Int
-colCurL = #col % #cur
+colCur :: Lens' (NavState t) Int
+colCur = #col % #cur
 
-rowSelsL :: Lens' (NavState t) (Vector Int)
-rowSelsL = #row % #sels
+rowSels :: Lens' (NavState t) (Vector Int)
+rowSels = #row % #sels
 
 -- Execute by command, no (obj,verb) chars
 exec :: TblOps t => Cmd -> NavState t -> Int -> Maybe (NavState t)
@@ -186,8 +218,8 @@ exec h nav rowPg =
       rCur   = nav ^. #row % #cur
       cCur   = nav ^. #col % #cur
       grp_   = nav ^. #grp
-      r d = Just (over rowCurL (\f -> finClamp nRows_ f d) nav)
-      c d = Just (over colCurL (\f -> finClamp nCols_ f d) nav)
+      r d = Just (over rowCur (\f -> finClamp nRows_ f d) nav)
+      c d = Just (over colCur (\f -> finClamp nCols_ f d) nav)
   in case h of
        CmdRowInc   -> r 1
        CmdRowDec   -> r (-1)
@@ -199,17 +231,17 @@ exec h nav rowPg =
        CmdRowTop   -> r (- rCur)
        CmdColFirst -> c (- cCur)
        CmdColLast  -> c (nCols_ - 1 - cCur)
-       CmdRowSel   -> Just (over rowSelsL (`toggle` rCur) nav)
+       CmdRowSel   -> Just (over rowSels (`toggle` rCur) nav)
        CmdColGrp   ->
-         let newGrp = toggle grp_ (curColName nav)
+         let newGrp = toggle grp_ (colName nav)
          in Just (nav & #grp .~ newGrp & #dispIdxs .~ dispOrder newGrp (colNames nav))
-       CmdColHide  -> Just (over #hidden (`toggle` curColName nav) nav)
+       CmdColHide  -> Just (over #hidden (`toggle` colName nav) nav)
        CmdColShiftL -> shiftGrp False grp_ nCols_
        CmdColShiftR -> shiftGrp True  grp_ nCols_
        _ -> Nothing
   where
     shiftGrp fwd grp_ nCols_ =
-      let name = curColName nav
+      let name = colName nav
       in case idxOf grp_ name of
            Nothing -> Nothing
            Just i
@@ -222,4 +254,4 @@ exec h nav rowPg =
                      newGrp = grp_ V.// [(i, gj), (j, gi)]
                      d = if fwd then 1 else -1
                      nav' = nav & #grp .~ newGrp & #dispIdxs .~ dispOrder newGrp (colNames nav)
-                 in Just (over colCurL (\f -> finClamp nCols_ f d) nav')
+                 in Just (over colCur (\f -> finClamp nCols_ f d) nav')

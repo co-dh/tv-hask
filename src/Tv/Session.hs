@@ -13,8 +13,8 @@ module Tv.Session
   , save
   , load
   , list
-  , pickSaveName
-  , pickLoadName
+  , saveName
+  , loadName
   , saveWith
   , loadWith
   ) where
@@ -83,18 +83,18 @@ sessPath name = do
 
 -- ## ToJson / FromJson instances
 
-aggToJson :: Agg -> Value
-aggToJson a = String (StrEnum.toString a)
+aggToJ :: Agg -> Value
+aggToJ a = String (StrEnum.toString a)
 
-aggFromJson :: Value -> A.Parser Agg
-aggFromJson v = do
+aggFromJ :: Value -> A.Parser Agg
+aggFromJ v = do
   s <- A.parseJSON v
   case StrEnum.ofStringQ s of
     Just a  -> pure a
     Nothing -> fail "unknown agg"
 
-opToJson :: Op -> Value
-opToJson op = case op of
+opToJ :: Op -> Value
+opToJ op = case op of
   OpFilter e ->
     mkObj [("type", String "filter"), ("expr", String e)]
   OpSort cols ->
@@ -108,7 +108,7 @@ opToJson op = case op of
   OpGroup keys aggs ->
     let as = V.map
                (\(fn, name, col) ->
-                  Array (V.fromList [aggToJson fn, String name, String col]))
+                  Array (V.fromList [aggToJ fn, String name, String col]))
                aggs
     in mkObj [("type", String "group"), ("keys", textArrJson keys), ("aggs", Array as)]
   OpTake n ->
@@ -123,8 +123,8 @@ opToJson op = case op of
     pairArrJson :: Vector (Text, Text) -> Value
     pairArrJson v = Array (V.map (\(a, b) -> Array (V.fromList [String a, String b])) v)
 
-opFromJson :: Value -> A.Parser Op
-opFromJson = A.withObject "Op" $ \o -> do
+opFromJ :: Value -> A.Parser Op
+opFromJ = A.withObject "Op" $ \o -> do
   t <- o A..: "type"
   case (t :: Text) of
     "filter"  -> OpFilter <$> o A..: "expr"
@@ -153,14 +153,14 @@ opFromJson = A.withObject "Op" $ \o -> do
     parseAggTriple :: Vector Value -> A.Parser (Agg, Text, Text)
     parseAggTriple a
       | V.length a >= 3 = do
-          fn   <- aggFromJson (a V.! 0)
+          fn   <- aggFromJ (a V.! 0)
           name <- A.parseJSON (a V.! 1)
           col  <- A.parseJSON (a V.! 2)
           pure (fn, name, col)
       | otherwise = fail "agg triple expected"
 
-vkindToJson :: ViewKind -> Value
-vkindToJson vk = case vk of
+vkToJ :: ViewKind -> Value
+vkToJ vk = case vk of
   VkTbl ->
     mkObj [("kind", String "tbl")]
   VkFreqV cols total ->
@@ -173,8 +173,8 @@ vkindToJson vk = case vk of
     mkObj :: [(Text, Value)] -> Value
     mkObj ps = Object (KM.fromList (map (\(k, v) -> (K.fromText k, v)) ps))
 
-vkindFromJson :: Value -> A.Parser ViewKind
-vkindFromJson = A.withObject "ViewKind" $ \o -> do
+vkFromJ :: Value -> A.Parser ViewKind
+vkFromJ = A.withObject "ViewKind" $ \o -> do
   kind <- o A..: "kind" :: A.Parser Text
   case kind of
     "freqV"   -> VkFreqV <$> o A..: "cols" <*> o A..: "total"
@@ -194,7 +194,7 @@ viewEncoding v =
             ( E.pair "col" (E.int i)
            <> E.pair "val" (E.text s) )
         Nothing -> E.null_
-      opsEnc = E.list (E.value . opToJson) (V.toList (ops q))
+      opsEnc = E.list (E.value . opToJ) (V.toList (ops q))
       queryEnc =
         E.pairs
           ( E.pair "base" (E.text (base q))
@@ -202,7 +202,7 @@ viewEncoding v =
       n = View.nav v
   in E.pairs
        ( E.pair "path"     (E.text (View.path v))
-      <> E.pair "vkind"    (E.value (vkindToJson (View.vkind v)))
+      <> E.pair "vkind"    (E.value (vkToJ (View.vkind v)))
       <> E.pair "disp"     (E.text (View.disp v))
       <> E.pair "prec"     (E.int (View.prec v))
       <> E.pair "widthAdj" (E.int (View.widthAdj v))
@@ -214,8 +214,8 @@ viewEncoding v =
       <> E.pair "search"   searchEnc
       <> E.pair "query"    queryEnc )
 
-stackToJson :: ViewStack AdbcTable -> Text
-stackToJson s =
+stkToJ :: ViewStack AdbcTable -> Text
+stkToJ s =
   let views = View.hd s : View.tl s
       viewsEnc = E.list viewEncoding views
       topEnc = E.pairs
@@ -238,13 +238,13 @@ jdMaybe j k = case j of
   _        -> Nothing
 
 -- | Get raw sub-Value for a key.
-getObjVal :: Value -> Text -> Maybe Value
-getObjVal (Object o) k = KM.lookup (K.fromText k) o
-getObjVal _ _ = Nothing
+objVal :: Value -> Text -> Maybe Value
+objVal (Object o) k = KM.lookup (K.fromText k) o
+objVal _ _ = Nothing
 
--- | Get sub-Value with null fallback (like Lean's `getObjValD`).
-getObjValD :: Value -> Text -> Value
-getObjValD j k = fromMaybe Null (getObjVal j k)
+-- | Get sub-Value with null fallback (like Lean's `objValD`).
+objValD :: Value -> Text -> Value
+objValD j k = fromMaybe Null (objVal j k)
 
 -- | Restore a single view from JSON, re-executing the query pipeline.
 --   Errors are caught per-view so partial restoration works.
@@ -267,11 +267,11 @@ restoreView j = do
           colSels_ = jd j "colSels" V.empty :: Vector Text
           search_ :: Maybe (Int, Text)
           search_ = do
-            s <- getObjVal j "search"
+            s <- objVal j "search"
             case s of
               Null -> Nothing
               _    -> Just (jd s "col" 0, jd s "val" "")
-          qObj = getObjValD j "query"
+          qObj = objValD j "query"
           baseDefault = "from `" <> path_ <> "`"
           base_ = fromMaybe baseDefault (jdMaybe qObj "base")
           ops_ = jd qObj "ops" V.empty :: Vector Op
@@ -330,7 +330,7 @@ save :: ViewStack AdbcTable -> Text -> IO ()
 save stk name = do
   let nm = if T.null name then autoName stk else name
   p <- sessPath nm
-  TIO.writeFile p (stackToJson stk)
+  TIO.writeFile p (stkToJ stk)
   let views = View.hd stk : View.tl stk
   Log.write "session"
     ("saved " <> T.pack (show (length views)) <> " view(s) to " <> T.pack p)
@@ -370,8 +370,8 @@ list = do
     isSuffixOf s xs = length xs >= length s && drop (length xs - length s) xs == s
 
 -- | Prompt for session name; returns none on cancel or empty input
-pickSaveName :: IO (Maybe Text)
-pickSaveName = do
+saveName :: IO (Maybe Text)
+saveName = do
   existing <- list
   let input = T.intercalate "\n" (V.toList existing)
   m <- Fzf.fzf (V.fromList ["--prompt=session name: ", "--print-query"]) input
@@ -387,8 +387,8 @@ pickSaveName = do
           name = sanitize pick
       pure (if T.null name then Nothing else Just name)
 
-pickLoadName :: IO (Maybe Text)
-pickLoadName = do
+loadName :: IO (Maybe Text)
+loadName = do
   existing <- list
   if V.null existing
     then Render.statusMsg "no saved sessions" >> pure Nothing
@@ -410,8 +410,8 @@ loadWith name =
 
 -- Required FromJSON instances for `Op` and `ViewKind` so `jd` works.
 instance A.FromJSON Op where
-  parseJSON = opFromJson
+  parseJSON = opFromJ
 
 instance A.FromJSON ViewKind where
-  parseJSON = vkindFromJson
+  parseJSON = vkFromJ
 

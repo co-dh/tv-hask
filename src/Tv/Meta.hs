@@ -34,8 +34,8 @@ import Tv.Data.ADBC.Table (AdbcTable)
 
 -- | Extract meta table name from the current view's AdbcTable query base.
 --   e.g. "from tc_meta_3" -> "tc_meta_3"
-metaTblName :: ViewStack AdbcTable -> Text
-metaTblName s = T.strip (T.drop 5 (Prql.base (Table.query (View.tbl s))))  -- drop "from "
+tblName :: ViewStack AdbcTable -> Text
+tblName s = T.strip (T.drop 5 (Prql.base (Table.query (View.tbl s))))  -- drop "from "
 
 -- | Push column metadata view onto stack
 push :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
@@ -61,7 +61,7 @@ selBy :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 selBy s flt =
   if View.cur s ^. #vkind /= VkColMeta then pure s
   else do
-    rows <- Ops.queryMetaIndices (metaTblName s) flt
+    rows <- Ops.metaIdxs (tblName s) flt
     pure (View.setCur s (View.cur s & #nav % #row % #sels .~ rows))
 
 selNull :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
@@ -76,7 +76,7 @@ setKey s =
   if View.cur s ^. #vkind /= VkColMeta then pure (Just s)
   else if not (View.hasParent s) then pure (Just s)
   else do
-    colNames <- Ops.queryMetaColNames (metaTblName s) (View.cur s ^. #nav % #row % #sels)
+    colNames <- Ops.metaNames (tblName s) (View.cur s ^. #nav % #row % #sels)
     case View.pop s of
       Just s' -> do
         let di = Nav.dispOrder colNames (TblOps.colNames (View.tbl s'))

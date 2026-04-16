@@ -5,7 +5,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-module Tv.CmdConfig where
+module Tv.CmdConfig
+  ( -- * Types
+    CmdInfo(..)
+  , Entry(..)
+    -- * Cached refs
+  , keyInfoMap
+  , cmdInfoMap
+  , argCmdSet
+  , menuCache
+    -- * Init / lookup
+  , Tv.CmdConfig.init
+  , keyLookup
+  , cmdLookup
+  , handlerLookup
+  , isArgCmd
+  , menuItems
+  ) where
 
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
@@ -32,20 +48,20 @@ instance Hashable Cmd where
 
 -- | Lookup result for dispatch
 data CmdInfo = CmdInfo
-  { ciCmd      :: Cmd
-  , ciResetsVS :: Bool
+  { ciCmd    :: Cmd
+  , ciResets :: Bool
   }
 makeFieldLabelsNoPrefix ''CmdInfo
 
 -- | Command entry: metadata for key binding, menu, and dispatch
 data Entry = Entry
-  { entryCmd      :: Cmd
-  , entryCtx      :: Text    -- input context: r=current row, c=current column,
+  { cmd      :: Cmd
+  , ctx      :: Text    -- input context: r=current row, c=current column,
                              -- g=group columns, s=selected rows, a=user arg, S=stack(2+ views)
-  , entryKey      :: Text    -- key name: "j", "<ret>", "<C-d>", "<S-left>", etc.
-  , entryLabel    :: Text    -- fzf menu label (empty = hidden from menu)
-  , entryResetsVS :: Bool
-  , entryViewCtx  :: Text    -- context filter: "freqV", "colMeta", "fld", "tbl", or "" (global)
+  , key      :: Text    -- key name: "j", "<ret>", "<C-d>", "<S-left>", etc.
+  , label    :: Text    -- fzf menu label (empty = hidden from menu)
+  , resets :: Bool
+  , viewCtx  :: Text    -- context filter: "freqV", "colMeta", "fld", "tbl", or "" (global)
   }
 makeFieldLabelsNoPrefix ''Entry
 
@@ -73,13 +89,13 @@ menuCache = unsafePerformIO (newIORef V.empty)
 init :: Vector Entry -> IO ()
 init cmds = do
   let step (kI, cI, aS) e =
-        let ci = CmdInfo { ciCmd = entryCmd e, ciResetsVS = entryResetsVS e }
-            kI' = if T.null (entryKey e)
+        let ci = CmdInfo { ciCmd = cmd e, ciResets = resets e }
+            kI' = if T.null (key e)
                     then kI
-                    else HashMap.insert (entryKey e, entryViewCtx e) ci kI
-            cI' = HashMap.insert (entryCmd e) ci cI
-            aS' = if T.any (== 'a') (entryCtx e)
-                    then HashSet.insert (entryCmd e) aS
+                    else HashMap.insert (key e, viewCtx e) ci kI
+            cI' = HashMap.insert (cmd e) ci cI
+            aS' = if T.any (== 'a') (ctx e)
+                    then HashSet.insert (cmd e) aS
                     else aS
         in (kI', cI', aS')
       (keyInfo, cmdInfo, argSet) =
@@ -102,7 +118,7 @@ keyLookup key viewCtx = do
 cmdLookup :: Cmd -> IO CmdInfo
 cmdLookup c = do
   m <- readIORef cmdInfoMap
-  pure (HashMap.lookupDefault (CmdInfo { ciCmd = c, ciResetsVS = False }) c m)
+  pure (HashMap.lookupDefault (CmdInfo { ciCmd = c, ciResets = False }) c m)
 
 -- | Lookup by handler name string (socket/external boundary only)
 handlerLookup :: Text -> IO (Maybe CmdInfo)
@@ -121,11 +137,11 @@ isArgCmd c = do
 
 -- | Menu items for fzf, filtered by view context. Returns (handler, ctx, key, label).
 menuItems :: Text -> IO (Vector (Text, Text, Text, Text))
-menuItems viewCtx = do
+menuItems vctx = do
   cmds <- readIORef menuCache
   pure (V.mapMaybe go cmds)
   where
     go e
-      | T.null (entryLabel e) = Nothing
-      | not (T.null (entryViewCtx e)) && entryViewCtx e /= viewCtx = Nothing
-      | otherwise = Just (StrEnum.toString (entryCmd e), entryCtx e, entryKey e, entryLabel e)
+      | T.null (label e) = Nothing
+      | not (T.null (viewCtx e)) && viewCtx e /= vctx = Nothing
+      | otherwise = Just (StrEnum.toString (cmd e), ctx e, key e, label e)

@@ -25,7 +25,7 @@ import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Data.ADBC.Ops as Ops
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
-import Tv.Types (ColType (..), colTypeIsNumeric)
+import Tv.Types (ColType (..), isNumeric)
 
 -- | Cache: (path, colIdx, formatted agg string)
 type Cache = (Text, Int, Text)
@@ -44,7 +44,7 @@ compute t colIdx = do
       let colName = fromMaybe "" (Table.colNames t V.!? colIdx)
           colTy   = fromMaybe ColTypeOther (Table.colTypes t V.!? colIdx)
           q       = Ops.quoteId colName
-          isNum   = colTypeIsNumeric colTy
+          isNum   = isNumeric colTy
       mSql <- do
         mBase <- Prql.compile (Prql.queryRender (Table.query t))
         case mBase of
