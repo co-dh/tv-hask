@@ -389,7 +389,7 @@ cellAny cv row = case cvType cv of
   ColTypeInt       -> maybe "" (T.pack . show) (cellInt cv row)
   ColTypeBool      -> case cellInt cv row of
                         Just 0 -> "false"; Just _ -> "true"; Nothing -> ""
-  -- 3-decimal precision matches Lean adbc_core.c format_cell_view
+  -- 3-decimal precision matches Lean's format_cell_view
   -- (`format_struct_cell` passes decimals=3). Used by status-bar aggregates
   -- and any generic cellStr consumer.
   ColTypeFloat     -> maybe "" (T.pack . printf "%.3f") (cellDbl cv row)

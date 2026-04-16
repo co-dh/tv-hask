@@ -1,40 +1,20 @@
 # tv-hask
 
-Haskell port of the Lean `Tc` project at `/home/dh/repo/Tc/`.
+Haskell port of the Lean `Tc` project at `/home/dh/repo/Tc/`. The Lean code
+is a read-only reference — consult it when behavior is ambiguous, but the
+Haskell tree is free to diverge in structure, abstraction, and idiom.
 
-## Porting discipline (read first)
+## Project rules
 
-**Port from Lean exactly — file by file, function by function, line by line.**
-Make the Haskell output byte-for-byte identical to the Lean reference and make
-the tests pass. Only after that do we refactor into more idiomatic Haskell.
-
-Rules while porting:
-
-- **One Lean file → one Haskell module.** Keep the same name, the same set of
-  functions, the same order, the same comments. If Lean has `samples`,
-  `colHints`, `parseDerive`, `runWith`, `run` in `Tc/Derive.lean`, then
-  `src/Tv/Derive.hs` exports the same five names in the same order.
-- **Don't invent abstractions Lean doesn't have.** No new record fields, no
-  new helper layers, no new `Op` constructors, no new method dictionaries. If
-  Lean's `AdbcTable` exposes `conn` + `Prql.Query` directly, the Haskell port
-  exposes `conn` + `Prql.Query` directly — not a `_tblPipe` closure.
-- **Don't skip helper functions.** If Lean calls `fzf`, the port calls `fzf`.
-  If Lean builds a header from `samples ++ colHints`, the port builds it the
-  same way. Missing the fzf call or the samples helper is a bug, not a
-  simplification.
+- **Output parity with the Lean reference.** `gen_demo.py` cast files from
+  the Haskell binary must match the Lean reference casts. Render output,
+  status text, tab lines, overlays — all identical. This is the acceptance
+  criterion regardless of how the internals are organized.
 - **No raw SQL in feature modules.** All queries go via PRQL. Exactly one
   place compiles PRQL → SQL (`Tv.Data.DuckDB`). Feature modules call
-  `Prql.pipe` / `requery`, matching how Lean calls `t.query.pipe` /
-  `AdbcTable.requery`.
-- **Don't disable tests to make them pass.** If a test fails after a port,
-  the port is wrong — fix the port, don't mark the test `pending`. The only
-  legitimate reason to skip is if the Lean reference itself skips it.
-- **Output parity is the acceptance criterion.** `gen_demo.py` cast files
-  from the Haskell binary must match the Lean reference casts. Render
-  output, status text, tab lines, overlays — all identical.
-
-Refactoring to idiomatic Haskell happens **after** parity is reached and
-tests pass. Not before, not interleaved.
+  `Prql.pipe` / `requery`.
+- **Don't disable tests to make them pass.** If a test fails, fix the code
+  or the test — don't mark it `pending`.
 
 ## Field access: OverloadedLabels + optics-core
 
@@ -56,6 +36,22 @@ kept as top-level `Lens'` bindings defined via `(%)`.
 
 Only external library in the optics layer: **`optics-core`** + **`optics-th`**.
 No hand-rolled `Tv.Lens` module — it was deleted after the refactor.
+
+**Records earn their keep at 4+ fields.** Below that, don't use
+`makeFieldLabelsNoPrefix` / optics — use plain record syntax or a bare
+type alias. A 1-field record is just the inner type; a 2-field record
+used primarily at construction sites is clearer with `{ base = X }` than
+`& #base .~ X`. Reserve optics for records where named-field access
+across many call sites justifies the TH splice + import overhead.
+
+## SourceConfig is data-driven
+
+`Tv.SourceConfig.Config` is a plain record of `Text` fields — not a sum
+type. New backends (S3, FTP, HuggingFace, …) are added by inserting a
+config row, not a new constructor. The configs were originally stored in a
+database table and may move to a config file. String sentinels in fields
+like `listSql` (e.g. `"FTP"`) are intentional: they keep dispatch
+extensible at runtime without recompilation.
 
 ## Project layout
 

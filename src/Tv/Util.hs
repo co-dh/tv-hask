@@ -155,7 +155,7 @@ cleanupTmp = do
 -- ============================================================================
 -- Socket: unix socket command channel
 --
--- Matches Tc/c/sock_shim.c's wire protocol: bind a Unix domain socket at
+-- Wire protocol: bind a Unix domain socket at
 -- /tmp/tv-<pid>.sock, spawn a listener thread that accepts one-shot
 -- connections, reads up to 256 bytes per connection, and stores the
 -- stripped command string in a single-slot mutex-guarded buffer

@@ -117,7 +117,7 @@ data AdbcTable = AdbcTable
   { qr        :: Adbc.QueryResult  -- arrow data (opaque, C memory)
   , colNames  :: Vector Text       -- cached column names
   , colFmts   :: Vector Char       -- cached format chars per column
-  , colTypes  :: Vector ColType    -- cached type names (via nanoarrow)
+  , colTypes  :: Vector ColType    -- cached type names
   , nRows     :: Int               -- rows in current result (<= prqlLimit)
   , query     :: Query             -- PRQL query (base + ops)
   , totalRows :: Int               -- total rows in underlying data

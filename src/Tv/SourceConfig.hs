@@ -68,7 +68,7 @@ data Config = Config
   { pfx            :: Text  -- URI prefix: "s3://", "hf://", etc. Empty = catch-all.
   , minParts       :: Int   -- min URI parts before parent returns none
   , listCmd        :: Text  -- shell cmd template -> stdout JSON. Empty = run listSql directly.
-  , listSql        :: Text  -- SQL to transform JSON (with {src}) or query directly (no {src})
+  , listSql        :: Text  -- SQL to transform JSON (with {src}) or query directly. Sentinels like "FTP" are intentional: configs are data-driven (originally a DB table) so new backends don't need recompilation.
   , downloadCmd    :: Text  -- shell cmd template to download a file
   , needsDownload  :: Bool  -- true: download before DuckDB read. false: DuckDB reads URI
   , dirSuffix      :: Bool  -- true: append "/" when joining child dir paths
