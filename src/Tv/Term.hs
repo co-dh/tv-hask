@@ -316,6 +316,14 @@ clear = do
   (_, _, buf) <- readIORef screenBuf
   VSM.set buf emptyCell
 
+-- | Fold state for `present`: last emitted style, last cursor position,
+-- and the accumulated output Builder. Strict fields keep the builder
+-- from stacking thunks across the w*h cells (render hot path).
+data PresentAcc = PresentAcc
+  !(Maybe (Word32, Word32))  -- lastStyle
+  !(Int, Int)                -- lastCursor
+  !TB.Builder                -- out
+
 -- | Flush cell buffer to the terminal. No-op in headless mode (tests, -c
 -- mode) so stdout stays clean for `bufferStr` capture.
 --
@@ -331,36 +339,46 @@ present = do
   when (not headless) $ do
     (w, h, buf) <- readIORef screenBuf
     front <- readIORef frontBuf
-    -- Accumulate the whole frame into a single Text builder and write it
-    -- in one TIO.hPutStr call. Mirrors termbox2's tb_present which
-    -- flushes its internal output buffer once per call — keeps the PTY
-    -- recorder's `drain()` from slicing the frame across multiple cast
-    -- frames, which was breaking byte parity for multi-step demos.
-    styleRef  <- newIORef (Nothing :: Maybe (Word32, Word32))
-    cursorRef <- newIORef ((-1, -1) :: (Int, Int))
-    outRef    <- newIORef (mempty :: TB.Builder)
-    let emit t = modifyIORef' outRef (<> TB.fromText t)
-    forM_ [0 .. h - 1] $ \y ->
-      forM_ [0 .. w - 1] $ \x -> do
-        let idx = y * w + x
-        cell     <- VSM.read buf idx
-        prevCell <- VSM.read front idx
-        when (cell /= prevCell) $ do
-          let Cell ch fg bg = cell
-          lastStyle <- readIORef styleRef
-          let style = (fg, bg)
-          when (Just style /= lastStyle) $ do
-            emit (sgrFor fg bg)
-            writeIORef styleRef (Just style)
-          lastCursor <- readIORef cursorRef
-          when (lastCursor /= (y, x)) $
-            emit (cursorAt y x)
-          emit (T.singleton (chr (fromIntegral ch)))
-          writeIORef cursorRef (y, x + 1)
-          VSM.write front idx cell
-    out <- TL.toStrict . TB.toLazyText <$> readIORef outRef
-    TIO.hPutStr stdout out
+    -- One TIO.hPutStr per frame mirrors termbox2's tb_present flush —
+    -- keeps the PTY recorder's `drain()` from slicing the frame across
+    -- multiple cast frames, which breaks byte parity for multi-step demos.
+    let s0 = PresentAcc Nothing (-1, -1) mempty
+        -- Walk row-major, bumping (y, x) explicitly instead of dividing
+        -- idx by w per cell.
+        go !acc !y !x !idx
+          | y == h    = pure acc
+          | x == w    = go acc (y + 1) 0 idx
+          | otherwise = do
+              acc' <- stepCell buf front acc y x idx
+              go acc' y (x + 1) (idx + 1)
+    PresentAcc _ _ outB <- go s0 0 0 0
+    TIO.hPutStr stdout (TL.toStrict (TB.toLazyText outB))
     hFlush stdout
+
+stepCell
+  :: VSM.IOVector Cell
+  -> VSM.IOVector Cell
+  -> PresentAcc
+  -> Int -> Int -> Int
+  -> IO PresentAcc
+stepCell buf front acc@(PresentAcc lastStyle lastCursor b) y x idx = do
+  cell     <- VSM.read buf idx
+  prevCell <- VSM.read front idx
+  if cell == prevCell
+    then pure acc
+    else do
+      let Cell ch fg bg = cell
+          style = (fg, bg)
+          (b1, lastStyle') =
+            if Just style /= lastStyle
+              then (b <> TB.fromText (sgrFor fg bg), Just style)
+              else (b, lastStyle)
+          b2 = if lastCursor /= (y, x)
+                 then b1 <> TB.fromText (cursorAt y x)
+                 else b1
+          b3 = b2 <> TB.singleton (chr (fromIntegral ch))
+      VSM.write front idx cell
+      pure (PresentAcc lastStyle' (y, x + 1) b3)
 
 -- | Build the SGR + charset-reset prefix for a cell. Extracts attr bits
 -- from `fg` before masking off the color. Matches Lean termbox2's output
