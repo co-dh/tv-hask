@@ -41,7 +41,6 @@ import qualified Tv.StrEnum as StrEnum
 import qualified Tv.Term as Term
 import Tv.Types
   ( ColType(..)
-  , Column(..)
   , PlotKind(..)
   , TblOps
   , colTypeStr
@@ -342,11 +341,7 @@ run s kind = do
           pngPath <- Log.tmpPath "plot.png"
           let nr = min (TblOps.nRows (Nav.tbl n)) maxPoints
           cols <- TblOps.getCols (Nav.tbl n) (V.singleton yIdx) 0 nr
-          let vals = case cols V.!? 0 of
-                Just (ColumnStrs vs)   -> vs
-                Just (ColumnInts vs)   -> V.map (T.pack . show) vs
-                Just (ColumnFloats vs) -> V.map (T.pack . show) vs
-                Nothing -> V.empty
+          let vals = maybe V.empty id (cols V.!? 0)
           TIO.writeFile datPath
             (yName <> "\n"
               <> T.intercalate "\n" (V.toList (V.filter (not . T.null) vals))
@@ -399,10 +394,7 @@ run s kind = do
                         if xType0 /= ColTypeStr then pure xType0
                         else do
                           cols <- TblOps.getCols (Nav.tbl n) (V.singleton xIdx) 0 1
-                          let v = case cols V.!? 0 of
-                                Just (ColumnStrs vals) ->
-                                  T.strip (maybe "" id (vals V.!? 0))
-                                _ -> ""
+                          let v = T.strip (maybe "" id (cols V.!? 0 >>= (V.!? 0)))
                               cs = T.unpack v
                               at_ i = if i < length cs then cs !! i else ' '
                           if length cs >= 19 && at_ 4 == '-' && at_ 10 == ' '

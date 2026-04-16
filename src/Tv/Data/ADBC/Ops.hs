@@ -43,6 +43,7 @@ import Tv.Types
   , RenderCtx(..)
   , TblOps(..)
   , ModifyTable(..)
+  , colsToText
   , escSql
   )
 import qualified Tv.Types as Types
@@ -59,7 +60,9 @@ instance TblOps AdbcTable where
   distinct  = Table.distinct
   findRow   = Table.findRow
   getCols t idxs r0_ r1_ =
-    V.mapM (\i -> Table.getCol t i r0_ r1_) idxs
+    V.mapM (\i -> V.generateM (r1_ - r0_) $ \ri ->
+      Adbc.cellStr (Table.qr t) (fromIntegral (r0_ + ri) :: Word64) (fromIntegral i :: Word64)
+    ) idxs
   colType t col =
     fromMaybe ColTypeOther (Table.colTypes t V.!? col)
   cellStr t row col =
@@ -68,10 +71,12 @@ instance TblOps AdbcTable where
   fetchMore  = Table.fetchMore
   fromFile   = Table.fromFile
   render t ctx = do
-    cols <- V.generateM (V.length (Table.colNames t)) $ \i ->
-              Table.getCol t i (r0 ctx) (r1 ctx)
-    Render.renderCols cols (Table.colNames t) (Table.colFmts t)
-      (Table.nRows t) ctx (r0 ctx) (r1 ctx - r0 ctx)
+    texts <- Adbc.fetchRows (Table.qr t) (r0 ctx) (r1 ctx) (prec ctx)
+    heatDs <- if heatMode ctx == 0
+      then pure V.empty
+      else Adbc.fetchHeatDoubles (Table.qr t) (r0 ctx) (r1 ctx)
+    Render.renderCols texts (Table.colNames t) (Table.colFmts t) (Table.colTypes t)
+      (Table.nRows t) ctx (r0 ctx) (r1 ctx - r0 ctx) heatDs
 
 -- ----------------------------------------------------------------------------
 -- instance : ModifyTable AdbcTable
@@ -88,8 +93,10 @@ instance ModifyTable AdbcTable where
 toText :: AdbcTable -> IO Text
 toText t = do
   let nc = V.length (Table.colNames t)
-  cols <- V.generateM nc $ \i -> Table.getCol t i 0 (Table.nRows t)
-  pure (Types.colsToText (Table.colNames t) cols (Table.nRows t))
+  cols <- V.generateM nc $ \i ->
+    V.generateM (Table.nRows t) $ \r ->
+      Adbc.cellStr (Table.qr t) (fromIntegral r :: Word64) (fromIntegral i :: Word64)
+  pure (colsToText (Table.colNames t) cols (Table.nRows t))
 
 -- ----------------------------------------------------------------------------
 -- ## Meta: column statistics from parquet metadata or SQL aggregation

@@ -21,8 +21,7 @@ import Tv.Types
   ( Cmd (..)
   , Effect (..)
   , ViewKind (..)
-  , cellToPrql
-  , columnGet
+  , textToPrql
   )
 import qualified Tv.Types as TblOps
 import qualified Tv.View as View
@@ -36,7 +35,9 @@ filterExprIO tbl cols row = do
   let names = TblOps.colNames tbl
       idxs  = V.mapMaybe (Nav.idxOf names) cols
   fetchedCols <- TblOps.getCols tbl idxs row (row + 1)
-  let vals  = V.map (\col -> cellToPrql (columnGet col 0)) fetchedCols
+  let vals = V.zipWith (\txtCol colIdx ->
+        textToPrql (TblOps.colType tbl colIdx) (maybe "" id (txtCol V.!? 0))
+        ) fetchedCols idxs
       exprs = V.zipWith (\c v -> c <> " == " <> v) cols vals
   pure (T.intercalate " && " (V.toList exprs))
 

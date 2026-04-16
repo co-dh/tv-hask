@@ -1,6 +1,5 @@
 {-
-  Core types: Cell, Column, Table, PureKey
-  Table stores columns by name (HashMap) for direct name-based access
+  Core types: ColType, RenderCtx, TblOps, ModifyTable, Cmd, Effect, etc.
 -}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -72,78 +71,14 @@ toggle :: Eq a => Vector a -> a -> Vector a
 toggle arr x =
   if V.elem x arr then V.filter (/= x) arr else V.snoc arr x
 
--- | Cell value (sum type)
--- Uses Int64 to guarantee scalar representation (no MPZ boxing)
-data Cell
-  = CellNull
-  | CellInt Int64
-  | CellFloat Double
-  | CellStr Text
-  | CellBool Bool
-
--- | Column: uniform typed storage (one type per column)
--- More efficient than Array Cell (no per-cell tag overhead)
--- ints: no null support; floats: NaN = null; strs: empty = null
-data Column
-  = ColumnInts   (Vector Int64)
-  | ColumnFloats (Vector Double)
-  | ColumnStrs   (Vector Text)
-
-columnMapArr
-  :: Column
-  -> (Vector Int64 -> Vector Int64)
-  -> (Vector Double -> Vector Double)
-  -> (Vector Text -> Vector Text)
-  -> Column
-columnMapArr col fi ff fs = case col of
-  ColumnInts   d -> ColumnInts   (fi d)
-  ColumnFloats d -> ColumnFloats (ff d)
-  ColumnStrs   d -> ColumnStrs   (fs d)
-
--- | Get cell at row index
-columnGet :: Column -> Int -> Cell
-columnGet col i = case col of
-  ColumnInts data_ -> CellInt (maybe 0 id (data_ V.!? i))
-  ColumnFloats data_ ->
-    let f = maybe 0 id (data_ V.!? i)
-    in if isNaN f then CellNull else CellFloat f
-  ColumnStrs data_ ->
-    let s = maybe "" id (data_ V.!? i)
-    in if T.null s then CellNull else CellStr s
-
--- | Row count
-columnSize :: Column -> Int
-columnSize col = case col of
-  ColumnInts d   -> V.length d
-  ColumnFloats d -> V.length d
-  ColumnStrs d   -> V.length d
-
-columnGather :: Column -> Vector Int -> Column
-columnGather col idxs =
-  columnMapArr col
-    (\d -> V.map (\i -> maybe 0 id (d V.!? i)) idxs)
-    (\d -> V.map (\i -> maybe 0 id (d V.!? i)) idxs)
-    (\d -> V.map (\i -> maybe "" id (d V.!? i)) idxs)
-
-columnTake :: Column -> Int -> Column
-columnTake col n =
-  columnMapArr col (V.take n) (V.take n) (V.take n)
-
--- | Raw string value (for PRQL filters)
-cellToRaw :: Cell -> Text
-cellToRaw CellNull      = ""
-cellToRaw (CellInt n)   = T.pack (show n)
-cellToRaw (CellFloat f) = T.pack (show f)
-cellToRaw (CellStr s)   = s
-cellToRaw (CellBool b)  = if b then "true" else "false"
-
--- | Format cell value as PRQL literal
-cellToPrql :: Cell -> Text
-cellToPrql CellNull      = "null"
-cellToPrql (CellInt n)   = T.pack (show n)
-cellToPrql (CellFloat f) = T.pack (show f)
-cellToPrql (CellStr s)   = "'" <> T.replace "'" "''" s <> "'"
-cellToPrql (CellBool b)  = if b then "true" else "false"
+-- | Format raw text as PRQL literal based on column type.
+-- Raw text means: ints as "1234567" (no commas), floats as "1.234", strings as-is.
+textToPrql :: ColType -> Text -> Text
+textToPrql _ t | T.null t = "null"
+textToPrql typ t
+  | colTypeIsNumeric typ = t  -- bare numeric literal
+  | typ == ColTypeBool   = t  -- true/false are bare
+  | otherwise = "'" <> T.replace "'" "''" t <> "'"
 
 -- | Escape single quotes for SQL string literals
 escSql :: Text -> Text
@@ -221,8 +156,8 @@ class TblOps a where
   distinct  :: a -> Int -> IO (Vector Text)                        -- distinct values
   findRow   :: a -> Int -> Text -> Int -> Bool -> IO (Maybe Int)   -- find row
   render    :: a -> RenderCtx -> IO (Vector Int)
-  -- extract columns [r0, r1) by index (for plot/export)
-  getCols   :: a -> Vector Int -> Int -> Int -> IO (Vector Column)
+  -- extract columns [r0, r1) by index as raw text (for plot/export/PRQL)
+  getCols   :: a -> Vector Int -> Int -> Int -> IO (Vector (Vector Text))
   getCols _ _ _ _ = pure V.empty
   -- column type
   colType   :: a -> Int -> ColType
@@ -291,12 +226,12 @@ keepCols nCols hideIdxs names =
   V.map (\i -> maybe "" id (names V.!? i))
     (V.filter (not . (`V.elem` hideIdxs)) (V.enumFromN 0 nCols))
 
--- | Convert columns to tab-separated text (shared by Table toText impls)
-colsToText :: Vector Text -> Vector Column -> Int -> Text
+-- | Convert text columns to tab-separated text (shared by Table toText impls)
+colsToText :: Vector Text -> Vector (Vector Text) -> Int -> Text
 colsToText names cols nr =
   let header = joinWith names "\t"
       rowLines = V.generate nr $ \r ->
-        let row = V.map (\col -> cellToRaw (columnGet col r)) cols
+        let row = V.map (\col -> maybe "" id (col V.!? r)) cols
         in joinWith row "\t"
   in joinWith (V.cons header rowLines) "\n"
 

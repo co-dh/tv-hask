@@ -29,7 +29,6 @@ module Tv.Data.ADBC.Table
   , init
   , shutdown
   , ofQueryResult
-  , getCol
   , queryCount
   , requery
   , fromTmpTbl
@@ -51,7 +50,6 @@ module Tv.Data.ADBC.Table
   , filter
   , distinct
   , findRow
-  , fromArrays
   ) where
 
 import Prelude hiding (init, filter)
@@ -76,7 +74,6 @@ import qualified Tv.Data.ADBC.Prql as Prql
 import Tv.Data.ADBC.Prql (Query (..))
 import Tv.Types
   ( ColType (..)
-  , Column (..)
   , Op (..)
   , colTypeOfString
   , escSql
@@ -206,26 +203,6 @@ ofQueryResult qr_ q total = do
     , query     = q
     , totalRows = total
     }
-
--- | Extract column slice [r0, r1) as typed Column
-getCol :: AdbcTable -> Int -> Int -> Int -> IO Column
-getCol t col r0 r1 = do
-  let typ = fromMaybe ColTypeOther (colTypes t V.!? col)
-      n   = max 0 (r1 - r0)
-      colW = fromIntegral col :: Word64
-  case typ of
-    ColTypeInt -> do
-      arr <- V.generateM n $ \i -> Adbc.cellInt (qr t) (fromIntegral (r0 + i)) colW
-      pure (ColumnInts arr)
-    ColTypeFloat -> do
-      arr <- V.generateM n $ \i -> Adbc.cellFloat (qr t) (fromIntegral (r0 + i)) colW
-      pure (ColumnFloats arr)
-    ColTypeDecimal -> do
-      arr <- V.generateM n $ \i -> Adbc.cellFloat (qr t) (fromIntegral (r0 + i)) colW
-      pure (ColumnFloats arr)
-    _ -> do
-      arr <- V.generateM n $ \i -> Adbc.cellStr (qr t) (fromIntegral (r0 + i)) colW
-      pure (ColumnStrs arr)
 
 -- | Query total row count using cnt function
 queryCount :: Query -> IO Int
@@ -557,36 +534,3 @@ findRow t col val start fwd = do
                       Just r  -> pure (Just r)
                       Nothing -> pure (Just (V.last rows))
 
--- | Create AdbcTable from column names + Column arrays via DuckDB temp table
-fromArrays :: Vector Text -> Vector Column -> IO (Maybe AdbcTable)
-fromArrays names cols
-  | V.null names || V.null cols = pure Nothing
-  | otherwise = do
-      let nRows_ = columnSize (V.head cols)
-      if nRows_ == 0
-        then pure Nothing
-        else do
-          let colAliases = V.map (\n -> "\"" <> escSql n <> "\"") names
-              mkVal c r = case c of
-                ColumnInts d   -> T.pack (show (fromMaybe 0 (d V.!? r)))
-                ColumnFloats d -> T.pack (show (fromMaybe 0 (d V.!? r)))
-                ColumnStrs d   -> "'" <> escSql (fromMaybe "" (d V.!? r)) <> "'"
-              rows = V.generate nRows_ $ \r ->
-                let vals = V.map (\c -> mkVal c r) cols
-                in "(" <> T.intercalate ", " (V.toList vals) <> ")"
-              valuesSql = T.intercalate ", " (V.toList rows)
-              aliasSql  = T.intercalate ", " (V.toList colAliases)
-          tblName <- nextTmpName "arr"
-          let sql = "CREATE OR REPLACE TEMP TABLE " <> tblName
-                 <> " AS SELECT * FROM (VALUES " <> valuesSql
-                 <> ") AS t(" <> aliasSql <> ")"
-          Log.write "fromArrays" sql
-          _ <- Adbc.query sql
-          qr_ <- Adbc.query ("SELECT * FROM " <> tblName)
-          Just <$> ofQueryResult qr_ (Prql.defaultQuery { Prql.base = "from " <> tblName }) nRows_
-
--- local helper: column row count (matches Tv.Types.columnSize)
-columnSize :: Column -> Int
-columnSize (ColumnInts d)   = V.length d
-columnSize (ColumnFloats d) = V.length d
-columnSize (ColumnStrs d)   = V.length d
