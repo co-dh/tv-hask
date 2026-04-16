@@ -164,7 +164,7 @@ attachFile ap fmt = do
       if totalN == 0
         then pure Nothing
         else do
-          adbc <- Table.ofQueryResult qr (Prql.defaultQuery & #base .~ Prql.ducktabs) totalN
+          adbc <- Table.ofQueryResult qr (Prql.defaultQuery { Prql.base = Prql.ducktabs }) totalN
           let disp_ = case reverse (T.splitOn "/" ap) of
                         (x:_) -> x
                         []    -> ap

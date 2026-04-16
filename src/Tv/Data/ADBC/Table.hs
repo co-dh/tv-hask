@@ -252,7 +252,7 @@ requery q total = do
 -- | Build AdbcTable from an existing temp table name
 fromTmpTbl :: Text -> IO (Maybe AdbcTable)
 fromTmpTbl tblName = do
-  let q = Prql.defaultQuery & #base .~ ("from " <> tblName)
+  let q = Prql.defaultQuery { Prql.base = "from " <> tblName }
   total <- queryCount q
   requery q total
 
@@ -275,9 +275,9 @@ fromFile path_ = do
            _ <- Adbc.query
                   ( "CREATE OR REPLACE TEMP TABLE \"" <> tbl
                  <> "\" AS (SELECT * FROM '" <> escSql path_ <> "')" )
-           pure (Prql.defaultQuery & #base .~ ("from " <> tbl))
+           pure (Prql.defaultQuery { Prql.base = "from " <> tbl })
          else
-           pure (Prql.defaultQuery & #base .~ ("from `" <> path_ <> "`"))
+           pure (Prql.defaultQuery { Prql.base = "from `" <> path_ <> "`" })
   total <- queryCount q
   requery q total
 
@@ -292,7 +292,7 @@ listDuckDBTables path_ = do
       total <- Adbc.nrows qr_
       if fromIntegral total == (0 :: Int)
         then pure Nothing
-        else Just <$> ofQueryResult qr_ (Prql.defaultQuery & #base .~ Prql.ducktabs) (fromIntegral total)
+        else Just <$> ofQueryResult qr_ (Prql.defaultQuery { Prql.base = Prql.ducktabs }) (fromIntegral total)
 
 -- | Get primary key columns for a table in the attached extdb
 duckDBPrimaryKeys :: Text -> IO (Vector Text)
@@ -316,7 +316,7 @@ fromDuckDBTable :: Text -> IO (Maybe (AdbcTable, Vector Text))
 fromDuckDBTable table = do
   keys <- duckDBPrimaryKeys table
   let qualName = if T.isInfixOf "." table then table else "extdb." <> table
-      q = Prql.defaultQuery & #base .~ ("from " <> qualName)
+      q = Prql.defaultQuery { Prql.base = "from " <> qualName }
   total <- queryCount q
   m <- requery q total
   pure (fmap (\t -> (t, keys)) m)
@@ -438,7 +438,7 @@ fromIngest content label reader
           pure Nothing
         Right _ -> do
           Log.tryRemoveFile tmp
-          let q = Prql.defaultQuery & #base .~ ("from " <> tbl)
+          let q = Prql.defaultQuery { Prql.base = "from " <> tbl }
           total <- queryCount q
           requery q total
 
@@ -464,7 +464,7 @@ fromFileWith path_ reader duckdbExt = do
              ( "CREATE OR REPLACE TEMP TABLE \"" <> tbl
             <> "\" AS (SELECT * FROM " <> reader
             <> "('" <> escSql path_ <> "'))" )
-      let q = Prql.defaultQuery & #base .~ ("from " <> tbl)
+      let q = Prql.defaultQuery { Prql.base = "from " <> tbl }
       total <- queryCount q
       requery q total
 
@@ -497,7 +497,7 @@ freqTable t cNames
         Just sql -> do
           let sql' = stripSemi sql
           _ <- Adbc.query ("CREATE TEMP TABLE " <> tblName <> " AS " <> sql')
-          m <- requery (Prql.defaultQuery & #base .~ ("from " <> tblName)) 0
+          m <- requery (Prql.defaultQuery { Prql.base = "from " <> tblName }) 0
           case m of
             Just t' -> pure (Just (t', totalGroups))
             Nothing -> pure Nothing
@@ -583,7 +583,7 @@ fromArrays names cols
           Log.write "fromArrays" sql
           _ <- Adbc.query sql
           qr_ <- Adbc.query ("SELECT * FROM " <> tblName)
-          Just <$> ofQueryResult qr_ (Prql.defaultQuery & #base .~ ("from " <> tblName)) nRows_
+          Just <$> ofQueryResult qr_ (Prql.defaultQuery { Prql.base = "from " <> tblName }) nRows_
 
 -- local helper: column row count (matches Tv.Types.columnSize)
 columnSize :: Column -> Int

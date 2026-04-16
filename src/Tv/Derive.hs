@@ -24,8 +24,7 @@ import Optics.Core ((&), (.~))
 
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
-import qualified Tv.StrEnum as StrEnum
-import Tv.Types (ColType (..), Op (..))
+import Tv.Types (ColType (..), Op (..), colTypeStr)
 import qualified Tv.Types as TblOps
 import qualified Tv.Util as Log
 import qualified Tv.View as View
@@ -61,9 +60,6 @@ samples col ty = case ty of
     timeSamples =
       "d = " <> col <> " != null | d = " <> col <> " | date.hour | d = " <> col <> " | date.minute"
 
--- | ColType as the canonical lowercase string (matches Lean's strEnum toString)
-colTypeStr :: ColType -> Text
-colTypeStr = StrEnum.toString
 
 -- | Build "col : type" lines with aligned ":"
 colHints :: Vector Text -> Vector ColType -> Text

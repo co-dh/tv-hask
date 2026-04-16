@@ -35,15 +35,12 @@ import Tv.Types
   , joinWith
   )
 import qualified Tv.Util as Log
-import Optics.Core ((&), (%~))
-import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | PRQL query: base table + operations (PRQL-specific base format)
 data Query = Query
   { base :: Text      -- PRQL from clause
   , ops  :: Vector Op
   }
-makeFieldLabelsNoPrefix ''Query
 
 -- | Default query: "from df" with no ops
 defaultQuery :: Query
@@ -104,7 +101,7 @@ queryRender q =
 
 -- | Pipe: append operation to query
 pipe :: Query -> Op -> Query
-pipe q op = q & #ops %~ (`V.snoc` op)
+pipe q op = q { ops = V.snoc (ops q) op }
 
 -- | Filter helper
 queryFilter :: Query -> Text -> Query

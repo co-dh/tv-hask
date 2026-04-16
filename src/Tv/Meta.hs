@@ -35,7 +35,7 @@ import Tv.Data.ADBC.Table (AdbcTable)
 -- | Extract meta table name from the current view's AdbcTable query base.
 --   e.g. "from tc_meta_3" -> "tc_meta_3"
 metaTblName :: ViewStack AdbcTable -> Text
-metaTblName s = T.strip (T.drop 5 (Table.query (View.tbl s) ^. #base))  -- drop "from "
+metaTblName s = T.strip (T.drop 5 (Prql.base (Table.query (View.tbl s))))  -- drop "from "
 
 -- | Push column metadata view onto stack
 push :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
@@ -45,7 +45,7 @@ push s = do
     Nothing -> pure Nothing
     Just adbc0 -> do
       -- Enrich meta with DuckDB column comments (e.g. osquery views with COMMENT ON COLUMN)
-      let metaBase = T.strip (T.drop 5 (Table.query adbc0 ^. #base))
+      let metaBase = T.strip (T.drop 5 (Prql.base (Table.query adbc0)))
       enriched <- Ops.enrichComments metaBase (View.cur s ^. #path)
       adbc <-
         if enriched

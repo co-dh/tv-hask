@@ -1,13 +1,12 @@
 {-
   Info overlay: context-specific key hints per view kind.
 
-  Literal port of Tc/Tc/UI/Info.lean — same State, viewHints, render.
+  Literal port of Tc/Tc/UI/Info.lean — viewHints, render. The Lean `State`
+  struct was a single `vis : Bool`; here we use the Bool directly.
 -}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 module Tv.UI.Info
-  ( State(..)
-  , update
+  ( update
   , viewHints
   , render
   ) where
@@ -19,23 +18,14 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word32)
 
-import Optics.Core ((%~), (&))
-import Optics.TH (makeFieldLabelsNoPrefix)
-
 import Tv.Types (Cmd(..), ViewKind(..))
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 
--- | Info state
-data State = State
-  { vis :: Bool
-  }
-makeFieldLabelsNoPrefix ''State
-
 -- | Pure update by Cmd
-update :: State -> Cmd -> Maybe State
-update s CmdInfoTog = Just (s & #vis %~ not)
-update _ _          = Nothing
+update :: Bool -> Cmd -> Maybe Bool
+update vis CmdInfoTog = Just (not vis)
+update _   _          = Nothing
 
 -- | Context-specific key hints per view (no common navigation)
 viewHints :: ViewKind -> Vector (Text, Text)
