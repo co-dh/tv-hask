@@ -61,11 +61,11 @@ getConn = do
 -- DuckDB chunk list once at query time so `cellStr` can index by (row,col)
 -- without re-iterating the one-shot `duckdb_fetch_chunk` cursor.
 data QueryResult = QueryResult
-  { qrChunks   :: V.Vector DB.DataChunk
-  , qrOffsets  :: V.Vector Int          -- prescan of chunk sizes: row → chunk idx
-  , qrNRows    :: Int
-  , qrColNames :: V.Vector Text
-  , qrColTypes :: V.Vector Tc.ColType
+  { chunks   :: V.Vector DB.DataChunk
+  , offsets  :: V.Vector Int          -- prescan of chunk sizes: row → chunk idx
+  , nRows    :: Int
+  , colNames :: V.Vector Text
+  , colTypes :: V.Vector Tc.ColType
   }
 makeFieldLabelsNoPrefix ''QueryResult
 
@@ -103,11 +103,11 @@ query sql = do
       offs  = V.prescanl' (+) 0 sizes
       nr    = V.sum sizes
   pure QueryResult
-    { qrChunks   = chVec
-    , qrOffsets  = offs
-    , qrNRows    = nr
-    , qrColNames = DB.columnNames r
-    , qrColTypes = DB.columnTypes r
+    { chunks   = chVec
+    , offsets  = offs
+    , nRows    = nr
+    , colNames = DB.columnNames r
+    , colTypes = DB.columnTypes r
     }
 
 -- | Parameterized query — Lean uses this for INSERT ... VALUES. For now it
@@ -116,13 +116,13 @@ queryParam :: Text -> Text -> IO QueryResult
 queryParam sql _param = query sql
 
 ncols :: QueryResult -> IO Word64
-ncols qr = pure (fromIntegral (V.length (qrColNames qr)))
+ncols qr = pure (fromIntegral (V.length (colNames qr)))
 
 nrows :: QueryResult -> IO Word64
-nrows qr = pure (fromIntegral (qrNRows qr))
+nrows qr = pure (fromIntegral (nRows qr))
 
 colName :: QueryResult -> Word64 -> IO Text
-colName qr i = pure (qrColNames qr V.! fromIntegral i)
+colName qr i = pure (colNames qr V.! fromIntegral i)
 
 -- | Adbc.colFmt — Lean returns the Arrow ArrowSchema.format string. DuckDB
 -- doesn't surface that directly, so we synthesize the first character per
@@ -133,7 +133,7 @@ colName qr i = pure (qrColNames qr V.! fromIntegral i)
 -- them to the '@' header indicator.
 colFmt :: QueryResult -> Word64 -> IO Text
 colFmt qr i =
-  let ty = qrColTypes qr V.! fromIntegral i
+  let ty = colTypes qr V.! fromIntegral i
   in pure $ T.singleton $ case ty of
        Tc.ColTypeInt       -> 'l'
        Tc.ColTypeFloat     -> 'g'
@@ -148,13 +148,13 @@ colFmt qr i =
 -- | Adbc.colType — returns the StrEnum name of the column type. Lean
 -- returns snake-case names like "int"/"float"/"utf8"; we use our ColType
 -- StrEnum toString to keep a single source of truth. NOTE: Lean's Arrow
--- path returns "utf8" for strings; we return "str". AdbcTable.ofQueryResult
+-- path returns "utf8" for strings; we return "str". AdbcTable.ofResult
 -- consumes this via `ColType.ofString`, which would have to know about
 -- "utf8". When we port that, we'll either normalize there or patch this to
 -- emit Arrow names — leaving this as-is for now so the ColType round-trip
 -- stays symmetric with Tv.Types.
 colType :: QueryResult -> Word64 -> IO Text
-colType qr i = pure (ctToString (qrColTypes qr V.! fromIntegral i))
+colType qr i = pure (ctToString (colTypes qr V.! fromIntegral i))
   where
     ctToString :: Tc.ColType -> Text
     ctToString Tc.ColTypeInt       = "int"
@@ -174,7 +174,7 @@ cellStr qr r c = do
     Nothing -> pure ""
     Just (ch, local) ->
       let cv = DB.chunkColumn ch c'
-      in pure (DB.readCellAny cv local)
+      in pure (DB.cellAny cv local)
 
 cellInt :: QueryResult -> Word64 -> Word64 -> IO Int64
 cellInt qr r c = do
@@ -183,7 +183,7 @@ cellInt qr r c = do
     Nothing -> pure 0
     Just (ch, local) ->
       let cv = DB.chunkColumn ch c'
-      in pure (maybe 0 id (DB.readCellInt cv local))
+      in pure (maybe 0 id (DB.cellInt cv local))
 
 cellFloat :: QueryResult -> Word64 -> Word64 -> IO Double
 cellFloat qr r c = do
@@ -192,17 +192,17 @@ cellFloat qr r c = do
     Nothing -> pure 0
     Just (ch, local) ->
       let cv = DB.chunkColumn ch c'
-      in pure (maybe 0 id (DB.readCellDouble cv local))
+      in pure (maybe 0 id (DB.cellDbl cv local))
 
 -- | Locate (chunk, local row index) for a global row index. Binary search
 -- over the prescanned chunk offsets.
 findChunk :: QueryResult -> Int -> Maybe (DB.DataChunk, Int)
 findChunk qr row
-  | row < 0 || row >= qrNRows qr = Nothing
-  | V.null (qrChunks qr) = Nothing
+  | row < 0 || row >= nRows qr = Nothing
+  | V.null (chunks qr) = Nothing
   | otherwise =
-      let offs = qrOffsets qr
-          chs  = qrChunks qr
+      let offs = offsets qr
+          chs  = chunks qr
           go lo hi
             | lo >= hi  = lo
             | otherwise =
@@ -233,27 +233,27 @@ formatCellDisplay qr row col prec_ typ =
     Just (ch, local) ->
       let cv = DB.chunkColumn ch (fromIntegral col)
       in case typ of
-        Tc.ColTypeInt -> pure $ case DB.readCellInt cv local of
+        Tc.ColTypeInt -> pure $ case DB.cellInt cv local of
           Nothing -> ""
           Just n  -> fmtIntComma n
-        Tc.ColTypeFloat -> pure $ case DB.readCellDouble cv local of
+        Tc.ColTypeFloat -> pure $ case DB.cellDbl cv local of
           Nothing -> ""
           Just f  -> if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
-        Tc.ColTypeDecimal -> pure $ case DB.readCellDouble cv local of
+        Tc.ColTypeDecimal -> pure $ case DB.cellDbl cv local of
           Nothing -> ""
           Just f  -> if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
-        Tc.ColTypeBool -> pure $ case DB.readCellInt cv local of
+        Tc.ColTypeBool -> pure $ case DB.cellInt cv local of
           Just 0  -> "false"
           Just _  -> "true"
           Nothing -> ""
-        _ -> pure (DB.readCellAny cv local)
+        _ -> pure (DB.cellAny cv local)
 
 -- | Materialize a rectangular cell region as display-formatted text.
 -- Column-major: outer Vector indexed by column, inner by local row.
 fetchRows :: QueryResult -> Int -> Int -> Int -> IO (V.Vector (V.Vector T.Text))
 fetchRows qr r0 r1 prec_ =
-  let nc = V.length (qrColNames qr)
-      types = qrColTypes qr
+  let nc = V.length (colNames qr)
+      types = colTypes qr
   in V.generateM nc $ \c ->
     V.generateM (max 0 (r1 - r0)) $ \ri ->
       formatCellDisplay qr (r0 + ri) c prec_
@@ -262,8 +262,8 @@ fetchRows qr r0 r1 prec_ =
 -- | Fetch raw doubles for heat mode. NaN for non-numeric or null cells.
 fetchHeatDoubles :: QueryResult -> Int -> Int -> IO (V.Vector (V.Vector Double))
 fetchHeatDoubles qr r0 r1 =
-  let nc = V.length (qrColNames qr)
-      types = qrColTypes qr
+  let nc = V.length (colNames qr)
+      types = colTypes qr
       nan = 0/0 :: Double
   in V.generateM nc $ \c ->
     let typ = if c < V.length types then types V.! c else Tc.ColTypeOther
@@ -274,13 +274,13 @@ fetchHeatDoubles qr r0 r1 =
         Just (ch, local) ->
           let cv = DB.chunkColumn ch (fromIntegral c)
           in case typ of
-            Tc.ColTypeInt -> pure $ case DB.readCellInt cv local of
+            Tc.ColTypeInt -> pure $ case DB.cellInt cv local of
               Nothing -> nan
               Just n  -> fromIntegral n
-            Tc.ColTypeFloat -> pure $ case DB.readCellDouble cv local of
+            Tc.ColTypeFloat -> pure $ case DB.cellDbl cv local of
               Nothing -> nan
               Just f  -> f
-            Tc.ColTypeDecimal -> pure $ case DB.readCellDouble cv local of
+            Tc.ColTypeDecimal -> pure $ case DB.cellDbl cv local of
               Nothing -> nan
               Just f  -> f
             _ -> pure nan

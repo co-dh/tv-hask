@@ -147,7 +147,7 @@ update v h rowPg =
     CmdSortAsc  -> sortEff True
     CmdSortDesc -> sortEff False
     CmdColExclude ->
-      let name = Nav.curColName n
+      let name = Nav.colName n
           hid  = n ^. #hidden
           cols =
             if V.null hid then V.singleton name
@@ -164,7 +164,7 @@ update v h rowPg =
   where
     n       = v ^. #nav
     names   = Nav.colNames n
-    curCol  = Nav.curColIdx n
+    curCol  = Nav.colIdx n
     sortEff asc =
       let selIdxs = V.mapMaybe (Nav.idxOf names) (n ^. #col % #sels)
           grpIdxs = V.mapMaybe (Nav.idxOf names) (n ^. #grp)

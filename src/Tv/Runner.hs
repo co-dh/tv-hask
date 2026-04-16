@@ -7,7 +7,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Runner
-  ( filterExprIO
+  ( filterIO
   , update
   ) where
 
@@ -21,7 +21,7 @@ import Tv.Types
   ( Cmd (..)
   , Effect (..)
   , ViewKind (..)
-  , textToPrql
+  , toPrql
   )
 import qualified Tv.Types as TblOps
 import qualified Tv.View as View
@@ -30,13 +30,13 @@ import Tv.Data.ADBC.Table (AdbcTable)
 import Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
 
 -- | Build filter expression from freq view row
-filterExprIO :: AdbcTable -> Vector Text -> Int -> IO Text
-filterExprIO tbl cols row = do
+filterIO :: AdbcTable -> Vector Text -> Int -> IO Text
+filterIO tbl cols row = do
   let names = TblOps.colNames tbl
       idxs  = V.mapMaybe (Nav.idxOf names) cols
   fetchedCols <- TblOps.getCols tbl idxs row (row + 1)
   let vals = V.zipWith (\txtCol colIdx ->
-        textToPrql (TblOps.colType tbl colIdx) (maybe "" id (txtCol V.!? 0))
+        toPrql (TblOps.colType tbl colIdx) (maybe "" id (txtCol V.!? 0))
         ) fetchedCols idxs
       exprs = V.zipWith (\c v -> c <> " == " <> v) cols vals
   pure (T.intercalate " && " (V.toList exprs))
@@ -45,7 +45,7 @@ filterExprIO tbl cols row = do
 update :: ViewStack AdbcTable -> Cmd -> Maybe (ViewStack AdbcTable, Effect)
 update s h =
   let n        = View.nav (View.cur s)
-      curName  = Nav.curColName n
+      curName  = Nav.colName n
       colNames_ = if V.elem curName (Nav.grp n)
                     then Nav.grp n
                     else V.snoc (Nav.grp n) curName

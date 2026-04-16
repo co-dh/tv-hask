@@ -7,16 +7,16 @@
 
   Literal port of Tc/Data/ADBC/Ops.lean. The Lean file has two typeclass
   instances followed by a block of top-level helpers (toText, queryMeta,
-  queryMetaIndices, queryMetaColNames, pathTable, columnComment,
-  enrichComments) with their private helpers (extractPath, parquetMetaPrql,
-  quoteId, colStatsSql). Each Lean def maps to a Haskell top-level def.
+  metaIdxs, metaNames, pathTable, columnComment,
+  enrichComments) with their private helpers (extractPath, metaPrql,
+  quoteId, statsSql). Each Lean def maps to a Haskell top-level def.
 -}
 module Tv.Data.ADBC.Ops
   ( -- re-export instance surface (instances auto-export)
     toText
   , queryMeta
-  , queryMetaIndices
-  , queryMetaColNames
+  , metaIdxs
+  , metaNames
   , quoteId
   , columnComment
   , enrichComments
@@ -43,7 +43,6 @@ import Tv.Types
   , RenderCtx(..)
   , TblOps(..)
   , ModifyTable(..)
-  , colsToText
   , escSql
   )
 import qualified Tv.Types as Types
@@ -96,7 +95,7 @@ toText t = do
   cols <- V.generateM nc $ \i ->
     V.generateM (Table.nRows t) $ \r ->
       Adbc.cellStr (Table.qr t) (fromIntegral r :: Word64) (fromIntegral i :: Word64)
-  pure (colsToText (Table.colNames t) cols (Table.nRows t))
+  pure (Types.colText (Table.colNames t) cols (Table.nRows t))
 
 -- ----------------------------------------------------------------------------
 -- ## Meta: column statistics from parquet metadata or SQL aggregation
@@ -112,8 +111,8 @@ extractPath base =
        else Nothing
 
 -- | PRQL: column stats from parquet file metadata (instant, no data scan)
-parquetMetaPrql :: Text -> Text
-parquetMetaPrql path_ =
+metaPrql :: Text -> Text
+metaPrql path_ =
   let p = escSql path_
   in "from s\"SELECT * FROM parquet_metadata('" <> p <> "')\" | pqmeta"
 
@@ -124,8 +123,8 @@ quoteId s = "\"" <> T.replace "\"" "\"\"" s <> "\""
 -- | SQL: per-column stats via UNION ALL (for non-parquet sources).
 -- Cannot use DuckDB SUMMARIZE: its null_percentage uses approximate counting
 -- which miscounts NULLs for some column types, giving wrong null_pct values.
-colStatsSql :: Text -> Vector Text -> Vector ColType -> Text
-colStatsSql baseSql names types =
+statsSql :: Text -> Vector Text -> Vector ColType -> Text
+statsSql baseSql names types =
   let one i =
         let nm = escSql (fromMaybe "" (names V.!? i))
             tp = escSql (T.pack (show (fromMaybe ColTypeOther (types V.!? i))))
@@ -152,25 +151,25 @@ queryMeta t = do
               Just p | T.isSuffixOf ".parquet" p -> Just p
               _ -> Nothing
       mMetaSql <- case parquetPath of
-        Just p -> Prql.compile (parquetMetaPrql p)
+        Just p -> Prql.compile (metaPrql p)
         Nothing -> do
           mBase <- Prql.compile (Prql.base (Table.query t))
           case mBase of
             Nothing -> pure Nothing
             Just baseSql ->
-              pure (Just (colStatsSql (T.stripEnd baseSql) names types))
+              pure (Just (statsSql (T.stripEnd baseSql) names types))
       case mMetaSql of
         Nothing -> pure Nothing
         Just metaSql -> do
-          tblName <- Table.nextTmpName "meta"
+          tblName <- Table.tmpName "meta"
           _ <- Adbc.query ("CREATE OR REPLACE TEMP TABLE " <> tblName
                           <> " AS (" <> metaSql <> ")")
           qr_ <- Adbc.query ("SELECT * FROM " <> tblName)
-          Just <$> Table.ofQueryResult qr_ (Prql.defaultQuery { Prql.base = "from " <> tblName }) 0
+          Just <$> Table.ofResult qr_ (Prql.defaultQuery { Prql.base = "from " <> tblName }) 0
 
 -- | Query row indices matching PRQL filter on meta table
-queryMetaIndices :: Text -> Text -> IO (Vector Int)
-queryMetaIndices tblName flt = do
+metaIdxs :: Text -> Text -> IO (Vector Int)
+metaIdxs tblName flt = do
   m <- Table.prqlQuery ("from " <> tblName <> " | rowidx | filter " <> flt <> " | select {idx}")
   case m of
     Nothing -> pure V.empty
@@ -182,8 +181,8 @@ queryMetaIndices tblName flt = do
         pure (fromIntegral v :: Int)
 
 -- | Query column names from meta table at given row indices
-queryMetaColNames :: Text -> Vector Int -> IO (Vector Text)
-queryMetaColNames tblName rows = do
+metaNames :: Text -> Vector Int -> IO (Vector Text)
+metaNames tblName rows = do
   if V.null rows
     then pure V.empty
     else do

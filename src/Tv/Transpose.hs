@@ -19,7 +19,7 @@ import Optics.Core ((&), (.~))
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import Tv.Data.ADBC.Ops (quoteId)
 import qualified Tv.Data.ADBC.Prql as Prql
-import Tv.Data.ADBC.Table (AdbcTable, stripSemi, nextTmpName, fromTmpTbl)
+import Tv.Data.ADBC.Table (AdbcTable, stripSemi, tmpName, fromTmp)
 import qualified Tv.Data.ADBC.Table as Table
 import Tv.Types (escSql)
 import Tv.View (View(..), ViewStack)
@@ -68,9 +68,9 @@ push s = do
         Nothing -> pure Nothing
         Just baseSql -> do
           let sql = transposeSql (stripSemi baseSql) (Table.colNames t) (Table.nRows t)
-          tblName <- nextTmpName "xpose"
+          tblName <- tmpName "xpose"
           _ <- Adbc.query ("CREATE OR REPLACE TEMP TABLE " <> tblName <> " AS (" <> sql <> ")")
-          mAdbc <- fromTmpTbl tblName
+          mAdbc <- fromTmp tblName
           case mAdbc of
             Nothing -> pure Nothing
             Just adbc ->

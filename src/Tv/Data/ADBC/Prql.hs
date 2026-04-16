@@ -8,7 +8,30 @@
   `compile`, which shells out to the `prqlc` CLI — matching Lean's layering
   where `compile` lives in `Tc/Data/ADBC/Prql.lean`, not the FFI module.
 -}
-module Tv.Data.ADBC.Prql where
+module Tv.Data.ADBC.Prql
+  ( -- * Query type
+    Query(..)
+  , defaultQuery
+    -- * Quoting / rendering
+  , quote
+  , renderSort
+  , aggName
+  , dqQuote
+  , opRender
+  , renderOps
+  , queryRender
+    -- * Query operations
+  , pipe
+  , queryFilter
+    -- * Common queries
+  , ducktabs
+  , ducktabsF
+    -- * PRQL prelude
+  , funcsBytes
+  , funcs
+    -- * Compilation
+  , compile
+  ) where
 
 import Control.Exception (SomeException, try)
 import Data.ByteString (ByteString)
@@ -87,8 +110,8 @@ opRender (OpGroup keys aggs) =
 opRender (OpTake n) = "take " <> T.pack (show n)
 
 -- | Render just the ops portion (no base/from clause)
-queryRenderOps :: Query -> Text
-queryRenderOps q =
+renderOps :: Query -> Text
+renderOps q =
   if V.null (ops q)
     then ""
     else joinWith (V.map opRender (ops q)) " | "
@@ -96,7 +119,7 @@ queryRenderOps q =
 -- | Render full query to PRQL string
 queryRender :: Query -> Text
 queryRender q =
-  let os = queryRenderOps q
+  let os = renderOps q
   in if T.null os then base q else base q <> " | " <> os
 
 -- | Pipe: append operation to query

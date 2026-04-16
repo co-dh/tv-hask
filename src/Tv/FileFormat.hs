@@ -11,10 +11,10 @@ module Tv.FileFormat
   ( Format(..)
   , formats
   , find
-  , isDataFile
-  , isTxtFile
+  , isData
+  , isTxt
   , viewFile
-  , tryReadCsv
+  , readCsv
   , openFile
   ) where
 
@@ -79,12 +79,12 @@ find path_ =
   in V.find (\fmt -> V.any (`T.isSuffixOf` p) (exts fmt)) formats
 
 -- | Is file a recognized data format?
-isDataFile :: Text -> Bool
-isDataFile p = case find p of { Just _ -> True; Nothing -> False }
+isData :: Text -> Bool
+isData p = case find p of { Just _ -> True; Nothing -> False }
 
 -- | Is file a .txt (or .txt.gz)?
-isTxtFile :: Text -> Bool
-isTxtFile p = T.isSuffixOf ".txt" (stripGz p)
+isTxt :: Text -> Bool
+isTxt p = T.isSuffixOf ".txt" (stripGz p)
 
 -- | Resolve absolute path via realpath
 absPath :: Text -> IO Text
@@ -106,7 +106,7 @@ viewFile :: Text -> IO ()
 viewFile path_ = do
   let gz = T.isSuffixOf ".gz" path_
       esc = T.replace "'" "'\\''" path_
-  tm <- Fzf.getTestMode
+  tm <- Fzf.getTest
   if tm
     then do
       (ec, out, _) <-
@@ -134,24 +134,24 @@ viewFile path_ = do
       void Term.init
 
 -- | Try to ingest as CSV via DuckDB read_csv (handles .gz). Nothing = not valid CSV.
-tryReadCsv :: Text -> IO (Maybe (View AdbcTable))
-tryReadCsv path_ = do
+readCsv :: Text -> IO (Maybe (View AdbcTable))
+readCsv path_ = do
   r <- try action :: IO (Either SomeException (Maybe (View AdbcTable)))
   case r of
     Right v -> pure v
     Left e  -> do
-      Log.write "tryReadCsv" (path_ <> ": " <> T.pack (show e))
+      Log.write "readCsv" (path_ <> ": " <> T.pack (show e))
       pure Nothing
   where
     action = do
       ap <- absPath path_
-      mt <- Table.fromFileWith ap "read_csv" ""
+      mt <- Table.fileWith ap "read_csv" ""
       pure (mt >>= \t -> View.fromTbl t path_ 0 V.empty 0)
 
 -- | ATTACH database file and list its tables as a folder view
 attachFile :: Text -> Format -> IO (Maybe (View AdbcTable))
 attachFile ap fmt = do
-  Table.loadDuckExt (duckdbExt fmt)
+  Table.loadExt (duckdbExt fmt)
   let typClause = if T.null (attachType fmt) then "" else "TYPE " <> attachType fmt <> ", "
   _ <- Adbc.query "DETACH DATABASE IF EXISTS extdb"
   _ <- Adbc.query ("ATTACH '" <> escSql ap <> "' AS extdb (" <> typClause <> "READ_ONLY)")
@@ -164,7 +164,7 @@ attachFile ap fmt = do
       if totalN == 0
         then pure Nothing
         else do
-          adbc <- Table.ofQueryResult qr (Prql.defaultQuery { Prql.base = Prql.ducktabs }) totalN
+          adbc <- Table.ofResult qr (Prql.defaultQuery { Prql.base = Prql.ducktabs }) totalN
           let disp_ = case reverse (T.splitOn "/" ap) of
                         (x:_) -> x
                         []    -> ap
@@ -181,7 +181,7 @@ openFile path_ = do
       if attach fmt
         then attachFile ap fmt
         else do
-          mt <- Table.fromFileWith ap (reader fmt) (duckdbExt fmt)
+          mt <- Table.fileWith ap (reader fmt) (duckdbExt fmt)
           pure (mt >>= \t -> View.fromTbl t path_ 0 V.empty 0)
     Nothing -> do
       mt <- Table.fromFile ap

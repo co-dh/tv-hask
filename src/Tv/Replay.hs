@@ -17,4 +17,4 @@ import qualified Tv.Nav as Nav
 -- | Extract PRQL pipeline ops from view's query, omitting the `from` clause.
 -- Returns empty string if no ops applied.
 opsStr :: View Tbl.AdbcTable -> Text
-opsStr v = Prql.queryRenderOps (Tbl.query (Nav.tbl (nav v)))
+opsStr v = Prql.renderOps (Tbl.query (Nav.tbl (nav v)))

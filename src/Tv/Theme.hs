@@ -18,7 +18,7 @@ module Tv.Theme
   , themes
   , themeName
   , load, loadIdx
-  , stateInit, stateApplyIdx
+  , stateInit, applyIdx
   , run
   ) where
 
@@ -236,8 +236,8 @@ stateInit = do
   let idx = fromMaybe 0 (V.findIndex (== ("default", variant)) themes)
   pure (State { styles = sty, themeIdx = idx })
 
-stateApplyIdx :: State -> Int -> IO State
-stateApplyIdx s idx = do
+applyIdx :: State -> Int -> IO State
+applyIdx s idx = do
   sty <- loadIdx idx
   writeIORef stylesRef sty
   pure (s & #styles .~ sty & #themeIdx .~ idx)
@@ -250,7 +250,7 @@ stateApplyIdx s idx = do
 run :: State -> (Vector Word32 -> IO ()) -> IO (Maybe State)
 run cur applyAndRender = do
   let curIdx = themeIdx cur
-  tm <- Fzf.getTestMode
+  tm <- Fzf.getTest
   if tm
     then do
       let idx = (curIdx + 1) `mod` V.length themes
@@ -285,7 +285,7 @@ run cur applyAndRender = do
       if T.null out
         then pure Nothing
         else case headMay (T.splitOn "\t" out) >>= (readMaybe . T.unpack) of
-               Just idx -> Just <$> stateApplyIdx cur idx
+               Just idx -> Just <$> applyIdx cur idx
                Nothing  -> pure Nothing
   where
     headD :: a -> [a] -> a

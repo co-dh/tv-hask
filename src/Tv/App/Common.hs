@@ -9,7 +9,52 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Tv.App.Common where
+module Tv.App.Common
+  ( -- * AppState
+    AppState(..)
+  , precL
+    -- * Action
+  , Action(..)
+    -- * Handler
+  , HandlerFn
+  , handlerMap
+    -- * State operations
+  , resetVS
+  , withStk
+  , errAction
+  , tryStk
+  , runViewEffect
+  , viewUp
+  , pureDispatch
+  , dispatch
+  , runMenu
+  , stackIO
+    -- * Handler combinators
+  , precSet
+  , precAdj
+  , domainH
+  , domainH'
+  , stkH
+  , plotH
+  , argH
+  , vuH
+    -- * Command table
+  , mkEntry
+  , navE
+  , hdl
+  , commands
+  , initHandlers
+    -- * Misc
+  , ctxStr
+  , dispatchHandler
+  , renderBase
+  , renderFrame
+  , loopProg
+  , delayMs
+  , prodInterp
+  , testInterp
+  , mainLoop
+  ) where
 
 import qualified Control.Concurrent
 import Control.Exception (SomeException, try)
@@ -41,7 +86,7 @@ import qualified Tv.Meta as Meta
 import qualified Tv.Nav as Nav
 import qualified Tv.Plot as Plot
 import qualified Tv.Render as Render
-import Tv.Render (ViewState, renderTabLine, errorPopup)
+import Tv.Render (ViewState, tabLine, errorPopup)
 import qualified Tv.Replay as Replay
 import qualified Tv.Runner as Freq
 import qualified Tv.Session as Session
@@ -55,9 +100,9 @@ import Tv.Types
   ( Cmd(..)
   , Effect(..)
   , ViewKind(..)
-  , cmdPlotKindQ
-  , effectIsNone
-  , viewKindCtxStr
+  , plotKind
+  , noEffect
+  , vkindStr
   )
 import qualified Tv.Types as TblOps
 import qualified Tv.UI.Info as UIInfo
@@ -87,8 +132,8 @@ makeFieldLabelsNoPrefix ''AppState
 
 -- | Shared by precSet / precAdj — the only lens composition in this module
 -- that's used in more than one place, so it earns a name.
-curPrecL :: Lens' AppState Int
-curPrecL = #stk % #hd % #prec
+precL :: Lens' AppState Int
+precL = #stk % #hd % #prec
 
 -- | Dispatch result: quit, unhandled, or new state
 data Action
@@ -110,13 +155,13 @@ handlerMap = unsafePerformIO (newIORef HashMap.empty)
 
 -- | Reset view state caches (after data changes)
 resetVS :: AppState -> AppState
-resetVS a = a & #vs .~ Render.viewStateDefault & #sparklines .~ V.empty
+resetVS a = a & #vs .~ Render.defVS & #sparklines .~ V.empty
 
 -- | Update stk, reset vs if ci.resetsVS
 withStk :: AppState -> CmdInfo -> ViewStack AdbcTable -> AppState
 withStk a ci s' =
   a & #stk .~ s'
-    & #vs .~ (if ciResetsVS ci then Render.viewStateDefault else a ^. #vs)
+    & #vs .~ (if ciResets ci then Render.defVS else a ^. #vs)
 
 -- | Log error, show popup, return unchanged state
 errAction :: AppState -> SomeException -> IO Action
@@ -182,7 +227,7 @@ runViewEffect a ci v' e = do
     EffectFreqFilter cols row -> tryStk a ci $ do
       case (View.vkind (View.cur s), View.pop s) of
         (VkFreqV _ _, Just s') -> do
-          expr <- Freq.filterExprIO (View.tbl s) cols row
+          expr <- Freq.filterIO (View.tbl s) cols row
           mf <- TblOps.filter_ (View.tbl s') expr
           case mf of
             Just tbl' ->
@@ -222,7 +267,7 @@ pureDispatch a ci
       -- Nav-only: try View.update, keep only .none effects
       case View.update (View.cur (stk a)) (ciCmd ci) 20 of
         Just (v', e)
-          | effectIsNone e -> Just (withStk a ci (View.setCur (stk a) v'))
+          | noEffect e -> Just (withStk a ci (View.setCur (stk a) v'))
         _ -> Nothing
 
 -- | Full dispatch: unified HashMap lookup with viewUp fallback.
@@ -270,8 +315,8 @@ runMenu a = do
     Nothing -> pure (ActOk a')
 
 -- | Run a stack-level IO action with shared error handling and state reset
-runStackIO :: AppState -> IO (ViewStack AdbcTable) -> IO Action
-runStackIO a f = do
+stackIO :: AppState -> IO (ViewStack AdbcTable) -> IO Action
+stackIO a f = do
   r <- try f :: IO (Either SomeException (ViewStack AdbcTable))
   case r of
     Right s' -> pure (ActOk (resetVS (a & #stk .~ s')))
@@ -282,12 +327,12 @@ runStackIO a f = do
 -- | Handler combinators — build HandlerFn from domain functions
 -- set prec to absolute value
 precSet :: Int -> HandlerFn
-precSet v = \a _ _ -> pure (ActOk (set curPrecL v a))
+precSet v = \a _ _ -> pure (ActOk (set precL v a))
 
 -- adjust prec by delta, clamped to [0,17]
 precAdj :: Int -> HandlerFn
 precAdj delta = \a _ _ ->
-  pure (ActOk (over curPrecL (\p -> min 17 (max 0 (p + delta))) a))
+  pure (ActOk (over precL (\p -> min 17 (max 0 (p + delta))) a))
 
 -- domain dispatch with tryStk + viewUp fallback
 domainH
@@ -318,7 +363,7 @@ stkH = \a ci _ ->
 -- plot: Cmd → PlotKind → run
 plotH :: HandlerFn
 plotH = \a ci _ ->
-  case cmdPlotKindQ (ciCmd ci) of
+  case plotKind (ciCmd ci) of
     Just k  -> tryStk a ci (Plot.run (stk a) k)
     Nothing -> pure ActUnhandled
 
@@ -328,7 +373,7 @@ argH
   -> (ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable))
   -> HandlerFn
 argH fzf direct = \a _ arg ->
-  runStackIO a (if T.null arg then fzf (stk a) else direct (stk a) arg)
+  stackIO a (if T.null arg then fzf (stk a) else direct (stk a) arg)
 
 -- | viewUp as HandlerFn (for freq/nav fallthrough)
 vuH :: HandlerFn
@@ -337,12 +382,12 @@ vuH = \a ci _ -> viewUp a ci
 -- | Entry constructor shorthand — empty defaults for optional fields.
 mkEntry :: Cmd -> Text -> Text -> Text -> Bool -> Text -> Entry
 mkEntry c ctx key label resets vctx = Entry
-  { entryCmd      = c
-  , entryCtx      = ctx
-  , entryKey      = key
-  , entryLabel    = label
-  , entryResetsVS = resets
-  , entryViewCtx  = vctx
+  { cmd      = c
+  , ctx      = ctx
+  , key      = key
+  , label    = label
+  , resets = resets
+  , viewCtx  = vctx
   }
 
 -- | Single source of truth: command metadata + handler function.
@@ -352,8 +397,8 @@ navE :: Entry -> (Entry, Maybe HandlerFn)
 navE e = (e, Nothing)
 
 -- handlers with explicit fn
-cmd :: Entry -> HandlerFn -> (Entry, Maybe HandlerFn)
-cmd e f = (e, Just f)
+hdl :: Entry -> HandlerFn -> (Entry, Maybe HandlerFn)
+hdl e f = (e, Just f)
 
 commands :: Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
@@ -368,10 +413,10 @@ commands = V.fromList
   , navE (mkEntry CmdRowBot   "r"  "<end>"    ""                                  False  "")
   , navE (mkEntry CmdRowSel   "r"  "T"        "Select/deselect current row"       False  "")
     -- row search/filter
-  , cmd (mkEntry CmdRowSearch "ca" "/"        "Search for value in current column" True  "")
+  , hdl (mkEntry CmdRowSearch "ca" "/"        "Search for value in current column" True  "")
         (\a _ arg -> do
           if not (T.null arg)
-            then runStackIO a (Filter.searchWith (stk a) arg)
+            then stackIO a (Filter.searchWith (stk a) arg)
             else do
               ref <- newIORef a
               let preview :: ViewStack AdbcTable -> IO ()
@@ -381,7 +426,7 @@ commands = V.fromList
                                    (vs a') (Theme.styles (theme a'))
                                    (heatMode a') (sparklines a')
                     writeIORef ref (a' { stk = View.setCur stk' v', vs = vs' })
-                    renderTabLine (View.tabNames stk') 0 (Replay.opsStr (View.cur stk'))
+                    tabLine (View.tabNames stk') 0 (Replay.opsStr (View.cur stk'))
                     when (info a') $ do
                       h <- Term.height; w <- Term.width
                       UIInfo.render (fromIntegral h) (fromIntegral w) (View.vkind (View.cur stk'))
@@ -389,11 +434,11 @@ commands = V.fromList
               stk' <- Filter.rowSearchLive (stk a) preview
               a' <- readIORef ref
               pure (ActOk (resetVS (a' { stk = stk' }))))
-  , cmd (mkEntry CmdRowFilter "a"  "\\"       "Filter rows by PRQL expression"    True  "")
+  , hdl (mkEntry CmdRowFilter "a"  "\\"       "Filter rows by PRQL expression"    True  "")
         (argH Filter.rowFilter Filter.filterWith)
-  , cmd (mkEntry CmdRowSearchNext "rc" "n"    "Jump to next search match"         False "")
+  , hdl (mkEntry CmdRowSearchNext "rc" "n"    "Jump to next search match"         False "")
         (domainH' Filter.dispatch)
-  , cmd (mkEntry CmdRowSearchPrev "rc" "N"    "Jump to previous search match"     False "")
+  , hdl (mkEntry CmdRowSearchPrev "rc" "N"    "Jump to previous search match"     False "")
         (domainH' Filter.dispatch)
     -- col navigation
   , navE (mkEntry CmdColInc     "c"  "l"         ""                                False "")
@@ -409,87 +454,87 @@ commands = V.fromList
   , navE (mkEntry CmdSortAsc    "c"  "["         "Sort ascending"                  True  "")
   , navE (mkEntry CmdSortDesc   "c"  "]"         "Sort descending"                 True  "")
     -- col arg commands
-  , cmd (mkEntry CmdColSplit   "ca" ":"         "Split column by delimiter"       False "")
+  , hdl (mkEntry CmdColSplit   "ca" ":"         "Split column by delimiter"       False "")
         (argH Split.run Split.runWith)
-  , cmd (mkEntry CmdColDerive  "a"  "="         "Derive new column (name = expr)" False "")
+  , hdl (mkEntry CmdColDerive  "a"  "="         "Derive new column (name = expr)" False "")
         (argH Derive.run Derive.runWith)
-  , cmd (mkEntry CmdColSearch  "a"  "g"         "Jump to column by name"          True  "")
-        (argH Filter.colSearch Filter.colJumpWith)
+  , hdl (mkEntry CmdColSearch  "a"  "g"         "Jump to column by name"          True  "")
+        (argH Filter.colSearch Filter.jumpCol)
     -- col plot
-  , cmd (mkEntry CmdPlotArea    "cg" ""  "Area (g=x numeric, c=y numeric)"         False "") plotH
-  , cmd (mkEntry CmdPlotLine    "cg" ""  "Line (g=x numeric, c=y numeric)"         False "") plotH
-  , cmd (mkEntry CmdPlotScatter "cg" ""  "Scatter (g=x numeric, c=y numeric)"      False "") plotH
-  , cmd (mkEntry CmdPlotBar     "cg" ""  "Bar (g=x categorical, c=y numeric)"      False "") plotH
-  , cmd (mkEntry CmdPlotBox     "cg" ""  "Boxplot (g=x categorical, c=y numeric)"  False "") plotH
-  , cmd (mkEntry CmdPlotStep    "cg" ""  "Step (g=x numeric, c=y numeric)"         False "") plotH
-  , cmd (mkEntry CmdPlotHist    "c"  ""  "Histogram (c=numeric column)"            False "") plotH
-  , cmd (mkEntry CmdPlotDensity "c"  ""  "Density (c=numeric column)"              False "") plotH
-  , cmd (mkEntry CmdPlotViolin  "cg" ""  "Violin (g=x categorical, c=y numeric)"   False "") plotH
+  , hdl (mkEntry CmdPlotArea    "cg" ""  "Area (g=x numeric, c=y numeric)"         False "") plotH
+  , hdl (mkEntry CmdPlotLine    "cg" ""  "Line (g=x numeric, c=y numeric)"         False "") plotH
+  , hdl (mkEntry CmdPlotScatter "cg" ""  "Scatter (g=x numeric, c=y numeric)"      False "") plotH
+  , hdl (mkEntry CmdPlotBar     "cg" ""  "Bar (g=x categorical, c=y numeric)"      False "") plotH
+  , hdl (mkEntry CmdPlotBox     "cg" ""  "Boxplot (g=x categorical, c=y numeric)"  False "") plotH
+  , hdl (mkEntry CmdPlotStep    "cg" ""  "Step (g=x numeric, c=y numeric)"         False "") plotH
+  , hdl (mkEntry CmdPlotHist    "c"  ""  "Histogram (c=numeric column)"            False "") plotH
+  , hdl (mkEntry CmdPlotDensity "c"  ""  "Density (c=numeric column)"              False "") plotH
+  , hdl (mkEntry CmdPlotViolin  "cg" ""  "Violin (g=x categorical, c=y numeric)"   False "") plotH
     -- stk: view stack operations
-  , cmd (mkEntry CmdTblMenu    ""   " "  "Open command menu"                       False "")
+  , hdl (mkEntry CmdTblMenu    ""   " "  "Open command menu"                       False "")
         (\a _ _ -> runMenu a)
-  , cmd (mkEntry CmdStkSwap    "S"  "S"  "Swap top two views"                      False "") stkH
-  , cmd (mkEntry CmdStkPop     ""   "q"  "Close current view"                      True  "") stkH
-  , cmd (mkEntry CmdStkDup     ""   ""   "Duplicate current view"                  False "") stkH
-  , cmd (mkEntry CmdTblQuit    ""   ""   ""                                        False "")
+  , hdl (mkEntry CmdStkSwap    "S"  "S"  "Swap top two views"                      False "") stkH
+  , hdl (mkEntry CmdStkPop     ""   "q"  "Close current view"                      True  "") stkH
+  , hdl (mkEntry CmdStkDup     ""   ""   "Duplicate current view"                  False "") stkH
+  , hdl (mkEntry CmdTblQuit    ""   ""   ""                                        False "")
         (\_ _ _ -> pure ActQuit)
-  , cmd (mkEntry CmdTblXpose   ""   "X"  "Transpose table (rows <-> columns)"      False "")
+  , hdl (mkEntry CmdTblXpose   ""   "X"  "Transpose table (rows <-> columns)"      False "")
         (\a ci _ -> tryStk a ci (Transpose.push (stk a)))
-  , cmd (mkEntry CmdTblDiff    "S"  "d"  "Diff top two views"                      False "")
+  , hdl (mkEntry CmdTblDiff    "S"  "d"  "Diff top two views"                      False "")
         (\a ci _ ->
           if V.null (View.sameHide (View.cur (stk a)))
             then tryStk a ci (Diff.run (stk a))
             else pure (ActOk (resetVS
                     (a & #stk .~ View.setCur (stk a) (Diff.showSame (View.cur (stk a)))))))
     -- info: precision, heatmap, scroll
-  , cmd (mkEntry CmdInfoTog    ""   "I"  "Toggle info overlay"                     False "")
+  , hdl (mkEntry CmdInfoTog    ""   "I"  "Toggle info overlay"                     False "")
         (\a ci _ -> pure (case UIInfo.update (info a) (ciCmd ci) of
                              Just i' -> ActOk (a & #info .~ i')
                              Nothing -> ActUnhandled))
-  , cmd (mkEntry CmdPrecDec    ""   ""   "Decrease decimal precision"              False "") (precAdj (-1))
-  , cmd (mkEntry CmdPrecInc    ""   ""   "Increase decimal precision"              False "") (precAdj 1)
-  , cmd (mkEntry CmdPrecZero   ""   ""   "Set precision to 0 decimals"             False "") (precSet 0)
-  , cmd (mkEntry CmdPrecMax    ""   ""   "Set precision to max (17)"               False "") (precSet 17)
-  , cmd (mkEntry CmdCellUp     ""   "{"  "Scroll cell preview up"                  False "")
+  , hdl (mkEntry CmdPrecDec    ""   ""   "Decrease decimal precision"              False "") (precAdj (-1))
+  , hdl (mkEntry CmdPrecInc    ""   ""   "Increase decimal precision"              False "") (precAdj 1)
+  , hdl (mkEntry CmdPrecZero   ""   ""   "Set precision to 0 decimals"             False "") (precSet 0)
+  , hdl (mkEntry CmdPrecMax    ""   ""   "Set precision to max (17)"               False "") (precSet 17)
+  , hdl (mkEntry CmdCellUp     ""   "{"  "Scroll cell preview up"                  False "")
         (\a _ _ -> pure (ActOk (a & #prevScroll %~ (\p -> p - min p 5))))
-  , cmd (mkEntry CmdCellDn     ""   "}"  "Scroll cell preview down"                False "")
+  , hdl (mkEntry CmdCellDn     ""   "}"  "Scroll cell preview down"                False "")
         (\a _ _ -> pure (ActOk (a & #prevScroll %~ (+ 5))))
-  , cmd (mkEntry CmdHeat0      ""   ""   "Heatmap: off"                            False "")
+  , hdl (mkEntry CmdHeat0      ""   ""   "Heatmap: off"                            False "")
         (\a _ _ -> pure (ActOk (a & #heatMode .~ 0)))
-  , cmd (mkEntry CmdHeat1      ""   ""   "Heatmap: numeric columns"                False "")
+  , hdl (mkEntry CmdHeat1      ""   ""   "Heatmap: numeric columns"                False "")
         (\a _ _ -> pure (ActOk (a & #heatMode .~ 1)))
-  , cmd (mkEntry CmdHeat2      ""   ""   "Heatmap: categorical columns"            False "")
+  , hdl (mkEntry CmdHeat2      ""   ""   "Heatmap: categorical columns"            False "")
         (\a _ _ -> pure (ActOk (a & #heatMode .~ 2)))
-  , cmd (mkEntry CmdHeat3      ""   ""   "Heatmap: all columns"                    False "")
+  , hdl (mkEntry CmdHeat3      ""   ""   "Heatmap: all columns"                    False "")
         (\a _ _ -> pure (ActOk (a & #heatMode .~ 3)))
     -- metaV: column metadata view
-  , cmd (mkEntry CmdMetaPush      ""  "M"     "Open column metadata view"            True  "")
+  , hdl (mkEntry CmdMetaPush      ""  "M"     "Open column metadata view"            True  "")
         (domainH Meta.dispatch)
-  , cmd (mkEntry CmdMetaSetKey    "s" "<ret>" "Set selected rows as key columns"     True  "colMeta")
+  , hdl (mkEntry CmdMetaSetKey    "s" "<ret>" "Set selected rows as key columns"     True  "colMeta")
         (domainH Meta.dispatch)
-  , cmd (mkEntry CmdMetaSelNull   ""  "0"     "Select columns with null values"      True  "")
+  , hdl (mkEntry CmdMetaSelNull   ""  "0"     "Select columns with null values"      True  "")
         (domainH Meta.dispatch)
-  , cmd (mkEntry CmdMetaSelSingle ""  "1"     "Select columns with single value"     True  "")
+  , hdl (mkEntry CmdMetaSelSingle ""  "1"     "Select columns with single value"     True  "")
         (domainH Meta.dispatch)
     -- freq: frequency table
-  , cmd (mkEntry CmdFreqOpen   "cg" "F"     "Open frequency view"                   True  "") vuH
-  , cmd (mkEntry CmdFreqFilter "r"  "<ret>" "Filter parent table by current row"    True  "freqV") vuH
+  , hdl (mkEntry CmdFreqOpen   "cg" "F"     "Open frequency view"                   True  "") vuH
+  , hdl (mkEntry CmdFreqFilter "r"  "<ret>" "Filter parent table by current row"    True  "freqV") vuH
     -- fld: folder/file browser
-  , cmd (mkEntry CmdFolderPush     "r" "D"     "Browse folder"                       True  "")
+  , hdl (mkEntry CmdFolderPush     "r" "D"     "Browse folder"                       True  "")
         (domainH Folder.dispatch)
-  , cmd (mkEntry CmdFolderEnter    "r" "<ret>" "Open file or enter directory"        True  "fld")
+  , hdl (mkEntry CmdFolderEnter    "r" "<ret>" "Open file or enter directory"        True  "fld")
         (domainH Folder.dispatch)
-  , cmd (mkEntry CmdFolderParent   ""  "<bs>"  "Go to parent directory"              True  "fld")
+  , hdl (mkEntry CmdFolderParent   ""  "<bs>"  "Go to parent directory"              True  "fld")
         (domainH Folder.dispatch)
-  , cmd (mkEntry CmdFolderDel      "r" ""      "Move to trash"                       True  "")
+  , hdl (mkEntry CmdFolderDel      "r" ""      "Move to trash"                       True  "")
         (domainH Folder.dispatch)
-  , cmd (mkEntry CmdFolderDepthDec ""  ""      "Decrease folder depth"               True  "")
+  , hdl (mkEntry CmdFolderDepthDec ""  ""      "Decrease folder depth"               True  "")
         (domainH Folder.dispatch)
-  , cmd (mkEntry CmdFolderDepthInc ""  ""      "Increase folder depth"               True  "")
+  , hdl (mkEntry CmdFolderDepthInc ""  ""      "Increase folder depth"               True  "")
         (domainH Folder.dispatch)
     -- arg-only commands
-  , cmd (mkEntry CmdTblExport "a"  "e"  "Export table (csv/parquet/json/ndjson)"    False "")
-        (\a _ arg -> runStackIO a
+  , hdl (mkEntry CmdTblExport "a"  "e"  "Export table (csv/parquet/json/ndjson)"    False "")
+        (\a _ arg -> stackIO a
           (if T.null arg
              then do
                mf <- Export.pickFmt
@@ -497,22 +542,22 @@ commands = V.fromList
                  Just f  -> Export.run (stk a) f
                  Nothing -> pure (stk a)
              else Export.runWith (stk a) arg))
-  , cmd (mkEntry CmdSessSave "a"  "W"  "Save session"                               False "")
-        (\a _ arg -> runStackIO a (do Session.saveWith (stk a) arg; pure (stk a)))
-  , cmd (mkEntry CmdSessLoad "a"  ""   "Load session"                               False "")
-        (\a _ arg -> runStackIO a (do
+  , hdl (mkEntry CmdSessSave "a"  "W"  "Save session"                               False "")
+        (\a _ arg -> stackIO a (do Session.saveWith (stk a) arg; pure (stk a)))
+  , hdl (mkEntry CmdSessLoad "a"  ""   "Load session"                               False "")
+        (\a _ arg -> stackIO a (do
           ms <- Session.loadWith arg
           case ms of
             Just stk' -> pure stk'
             Nothing   -> pure (stk a)))
-  , cmd (mkEntry CmdTblJoin  "Sa" "J"  "Join tables"                                False "")
-        (\a _ arg -> runStackIO a (do
+  , hdl (mkEntry CmdTblJoin  "Sa" "J"  "Join tables"                                False "")
+        (\a _ arg -> stackIO a (do
           ms <- Join.runWith (stk a) arg
           case ms of
             Just s' -> pure s'
             Nothing -> pure (stk a)))
     -- theme: fzf picker with live preview via socket
-  , cmd (mkEntry CmdThemeOpen ""  ""   "Pick color theme"                           False "")
+  , hdl (mkEntry CmdThemeOpen ""  ""   "Pick color theme"                           False "")
         (\a _ _ -> do
           ref <- newIORef a
           let render_ :: Vector Word32 -> IO ()
@@ -522,7 +567,7 @@ commands = V.fromList
                 (vs', v') <- View.doRender (View.cur (stk a')) (vs a') styles_
                                (heatMode a') (sparklines a')
                 writeIORef ref (a' { stk = View.setCur (stk a') v', vs = vs' })
-                renderTabLine (View.tabNames (stk a')) 0 (Replay.opsStr (View.cur (stk a')))
+                tabLine (View.tabNames (stk a')) 0 (Replay.opsStr (View.cur (stk a')))
                 when (info a') $ do
                   h <- Term.height; w <- Term.width
                   UIInfo.render (fromIntegral h) (fromIntegral w)
@@ -537,7 +582,7 @@ commands = V.fromList
               writeIORef Theme.stylesRef (Theme.styles (theme a))
               a' <- readIORef ref
               pure (ActOk (resetVS (a' { theme = theme a }))))
-  , cmd (mkEntry CmdThemePreview "" "" "" False "")
+  , hdl (mkEntry CmdThemePreview "" "" "" False "")
         (\a _ _ -> pure (ActOk a))
   ]
 
@@ -546,15 +591,15 @@ initHandlers = do
   CmdConfig.init (V.map fst commands)
   let m = V.foldl'
             (\acc (e, mfn) -> case mfn of
-                Just f  -> HashMap.insert (entryCmd e) f acc
+                Just f  -> HashMap.insert (cmd e) f acc
                 Nothing -> acc)
             HashMap.empty
             commands
   writeIORef handlerMap m
 
 -- | Alias for ViewKind.ctxStr (used in dispatch)
-viewCtxStr :: ViewKind -> Text
-viewCtxStr = viewKindCtxStr
+ctxStr :: ViewKind -> Text
+ctxStr = vkindStr
 
 -- | Dispatch a handler name string from socket (handler name, optionally with arg after space)
 dispatchHandler :: AppState -> Text -> IO AppState
@@ -586,9 +631,9 @@ renderBase a0 = do
   (vs', v') <- View.doRender (View.cur (stk a)) (vs a) (Theme.styles (theme a))
                  (heatMode a) (sparklines a)
   let a' = a & #stk .~ View.setCur (stk a) v' & #vs .~ vs'
-  renderTabLine (View.tabNames (stk a')) 0 (Replay.opsStr (View.cur (stk a')))
+  tabLine (View.tabNames (stk a')) 0 (Replay.opsStr (View.cur (stk a')))
   -- Column description on status line from DuckDB column comments (cached by path+col)
-  let colName = Nav.curColName (View.nav (View.cur (stk a')))
+  let colName = Nav.colName (View.nav (View.cur (stk a')))
       (cachedPath, cachedCol, _) = statusCache a'
   a'' <- if cachedPath == View.path (View.cur (stk a')) && cachedCol == colName
            then pure a'
@@ -611,7 +656,7 @@ renderBase a0 = do
       label
   agg' <- StatusAgg.update (aggCache a'') (View.tbl (stk a''))
             (View.path (View.cur (stk a'')))
-            (Nav.curColIdx (View.nav (View.cur (stk a''))))
+            (Nav.colIdx (View.nav (View.cur (stk a''))))
   let a''' = a'' { aggCache = agg' }
   when (info a''') $ do
     h <- Term.height; w <- Term.width
@@ -627,7 +672,7 @@ renderFrame showPreview a0 = do
     h <- Term.height
     w <- Term.width
     let nav_ = View.nav (View.cur (stk a))
-    cellText <- TblOps.cellStr (Nav.tbl nav_) (Nav.cur (Nav.row nav_)) (Nav.curColIdx nav_)
+    cellText <- TblOps.cellStr (Nav.tbl nav_) (Nav.cur (Nav.row nav_)) (Nav.colIdx nav_)
     let colW = min (maybe 10 id (View.widths (View.cur (stk a)) V.!? Nav.cur (Nav.col nav_))) 50
     when (T.length cellText + 2 > colW) $
       UIPreview.render (fromIntegral h) (fromIntegral w) cellText (prevScroll a)
@@ -653,11 +698,11 @@ loopProg a0 = do
       -- Only used by socket-dispatch tests that race an out-of-process sender
       -- against the -c keystroke stream; normal synchronous tests don't need it.
       if key == "<wait>"
-        then do liftIO_ (threadDelayMs 50); loopProg a'
+        then do liftIO_ (delayMs 50); loopProg a'
         else if T.null key
           then loopProg a'
           else do
-            let vkStr = viewCtxStr (View.vkind (View.cur (stk a')))
+            let vkStr = ctxStr (View.vkind (View.cur (stk a')))
             mci <- liftIO_ (CmdConfig.keyLookup key vkStr)
             case mci of
               Just ci -> do
@@ -683,8 +728,8 @@ loopProg a0 = do
     liftIO_ io = AppM.LiftIO io AppM.Pure
 
 -- | Sleep helper (avoids pulling Control.Concurrent at top of file)
-threadDelayMs :: Int -> IO ()
-threadDelayMs ms = do
+delayMs :: Int -> IO ()
+delayMs ms = do
   -- IO.sleep in Lean uses milliseconds; Haskell threadDelay takes microseconds
   Control.Concurrent.threadDelay (ms * 1000)
 
@@ -692,7 +737,7 @@ threadDelayMs ms = do
 prodInterp :: Interp AppState
 prodInterp = Interp
   { render  = renderFrame True
-  , nextKey = do e <- Term.pollEvent; pure (Just (Key.evToKey e))
+  , nextKey = do e <- Term.pollEvent; pure (Just (Key.toKey e))
   , readArg = pure ""
   }
 

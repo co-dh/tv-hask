@@ -7,7 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Derive
   ( samples
-  , colTypeStr
+  , typeStr
   , colHints
   , parseDerive
   , runWith
@@ -24,7 +24,7 @@ import Optics.Core ((&), (.~))
 
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
-import Tv.Types (ColType (..), Op (..), colTypeStr)
+import Tv.Types (ColType (..), Op (..), typeStr)
 import qualified Tv.Types as TblOps
 import qualified Tv.Util as Log
 import qualified Tv.View as View
@@ -68,7 +68,7 @@ colHints names types =
       line i n =
         let pad = T.replicate (maxLen - T.length n) " "
             ty  = fromMaybe ColTypeOther (types V.!? i)
-        in n <> pad <> " : " <> colTypeStr ty
+        in n <> pad <> " : " <> typeStr ty
   in T.intercalate "\n" (V.toList (V.imap line names))
 
 -- | Parse "name = expr" format. Returns Nothing if no "=" found.
@@ -104,8 +104,8 @@ run :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 run s = do
   let nav     = View.nav (View.cur s)
       names   = Nav.colNames nav
-      curName = Nav.curColName nav
-      typ     = Nav.curColType nav
+      curName = Nav.colName nav
+      typ     = Nav.colType nav
       header  = "name = expr\n" <> samples curName typ
       hint    = colHints names (Table.colTypes (View.tbl s))
   mRaw <- Fzf.fzf

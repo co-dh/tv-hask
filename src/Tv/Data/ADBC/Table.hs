@@ -21,22 +21,22 @@ module Tv.Data.ADBC.Table
   , stripSemi
     -- AdbcTable record + counters
   , AdbcTable (..)
-  , memTblCounter
-  , nextTmpName
+  , tblCounter
+  , tmpName
   , extLoaded
-  , loadDuckExt
+  , loadExt
     -- AdbcTable namespace: lifecycle + builders
   , init
   , shutdown
-  , ofQueryResult
+  , ofResult
   , queryCount
   , requery
-  , fromTmpTbl
-  , remoteTblName
+  , fromTmp
+  , remoteName
   , fromFile
-  , listDuckDBTables
-  , duckDBPrimaryKeys
-  , fromDuckDBTable
+  , listTables
+  , primaryKeys
+  , fromTable
   , sortBy
   , hideCols
   , excludeCols
@@ -44,7 +44,7 @@ module Tv.Data.ADBC.Table
   , plotExport
   , fromTsv
   , fromJson
-  , fromFileWith
+  , fileWith
     -- second AdbcTable block in Lean
   , freqTable
   , filter
@@ -75,7 +75,7 @@ import Tv.Data.ADBC.Prql (Query (..))
 import Tv.Types
   ( ColType (..)
   , Op (..)
-  , colTypeOfString
+  , ofString
   , escSql
   , keepCols
   )
@@ -125,14 +125,14 @@ data AdbcTable = AdbcTable
 makeFieldLabelsNoPrefix ''AdbcTable
 
 -- | Counter for unique temp table names (mirrors Lean `IO.Ref Nat`).
-{-# NOINLINE memTblCounter #-}
-memTblCounter :: IORef Int
-memTblCounter = unsafePerformIO (newIORef 0)
+{-# NOINLINE tblCounter #-}
+tblCounter :: IORef Int
+tblCounter = unsafePerformIO (newIORef 0)
 
 -- | Allocate a unique temp table name: tc_{label}_{n}
-nextTmpName :: Text -> IO Text
-nextTmpName label = do
-  n <- atomicModifyIORef' memTblCounter (\n -> (n + 1, n))
+tmpName :: Text -> IO Text
+tmpName label = do
+  n <- atomicModifyIORef' tblCounter (\n -> (n + 1, n))
   pure ("tc_" <> label <> "_" <> T.pack (show n))
 
 -- | Track loaded DuckDB extensions (idempotent install+load)
@@ -140,8 +140,8 @@ nextTmpName label = do
 extLoaded :: IORef (Vector Text)
 extLoaded = unsafePerformIO (newIORef V.empty)
 
-loadDuckExt :: Text -> IO ()
-loadDuckExt ext
+loadExt :: Text -> IO ()
+loadExt ext
   | T.null ext = pure ()
   | otherwise = do
       done <- readIORef extLoaded
@@ -175,8 +175,8 @@ shutdown :: IO ()
 shutdown = Adbc.shutdown
 
 -- | Build AdbcTable from QueryResult
-ofQueryResult :: Adbc.QueryResult -> Query -> Int -> IO AdbcTable
-ofQueryResult qr_ q total = do
+ofResult :: Adbc.QueryResult -> Query -> Int -> IO AdbcTable
+ofResult qr_ q total = do
   nc <- Adbc.ncols qr_
   nr <- Adbc.nrows qr_
   let ncI = fromIntegral nc :: Int
@@ -190,7 +190,7 @@ ofQueryResult qr_ q total = do
     fmt <- Adbc.colFmt qr_ iW
     MV.write fmtsMV i (if T.length fmt > 0 then T.head fmt else '?')
     typ <- Adbc.colType qr_ iW
-    MV.write typesMV i (colTypeOfString typ)
+    MV.write typesMV i (ofString typ)
   names <- V.freeze namesMV
   fmts  <- V.freeze fmtsMV
   types <- V.freeze typesMV
@@ -224,18 +224,18 @@ requery q total = do
   m <- prqlQuery (Prql.queryRender q <> " | take " <> T.pack (show prqlLimit))
   case m of
     Nothing  -> pure Nothing
-    Just qr_ -> Just <$> ofQueryResult qr_ q total
+    Just qr_ -> Just <$> ofResult qr_ q total
 
 -- | Build AdbcTable from an existing temp table name
-fromTmpTbl :: Text -> IO (Maybe AdbcTable)
-fromTmpTbl tblName = do
+fromTmp :: Text -> IO (Maybe AdbcTable)
+fromTmp tblName = do
   let q = Prql.defaultQuery { Prql.base = "from " <> tblName }
   total <- queryCount q
   requery q total
 
 -- | Sanitize path to valid SQL identifier (alphanumeric + underscore)
-remoteTblName :: Text -> Text
-remoteTblName path_ =
+remoteName :: Text -> Text
+remoteName path_ =
   let s = T.map (\c -> if isAlphaNum c then c else '_') path_
   in "tc_" <> s
   where
@@ -248,7 +248,7 @@ fromFile :: Text -> IO (Maybe AdbcTable)
 fromFile path_ = do
   q <- if T.isPrefixOf "hf://" path_
          then do
-           let tbl = remoteTblName path_
+           let tbl = remoteName path_
            _ <- Adbc.query
                   ( "CREATE OR REPLACE TEMP TABLE \"" <> tbl
                  <> "\" AS (SELECT * FROM '" <> escSql path_ <> "')" )
@@ -259,8 +259,8 @@ fromFile path_ = do
   requery q total
 
 -- | Attach a .duckdb file and list its tables as TSV (for folder-like view)
-listDuckDBTables :: Text -> IO (Maybe AdbcTable)
-listDuckDBTables path_ = do
+listTables :: Text -> IO (Maybe AdbcTable)
+listTables path_ = do
   _ <- Adbc.query ("ATTACH '" <> escSql path_ <> "' AS extdb (READ_ONLY)")
   m <- prqlQuery Prql.ducktabs
   case m of
@@ -269,11 +269,11 @@ listDuckDBTables path_ = do
       total <- Adbc.nrows qr_
       if fromIntegral total == (0 :: Int)
         then pure Nothing
-        else Just <$> ofQueryResult qr_ (Prql.defaultQuery { Prql.base = Prql.ducktabs }) (fromIntegral total)
+        else Just <$> ofResult qr_ (Prql.defaultQuery { Prql.base = Prql.ducktabs }) (fromIntegral total)
 
 -- | Get primary key columns for a table in the attached extdb
-duckDBPrimaryKeys :: Text -> IO (Vector Text)
-duckDBPrimaryKeys table = do
+primaryKeys :: Text -> IO (Vector Text)
+primaryKeys table = do
   r <- try action :: IO (Either SomeException (Vector Text))
   case r of
     Left _  -> pure V.empty
@@ -289,9 +289,9 @@ duckDBPrimaryKeys table = do
           V.generateM n $ \i -> Adbc.cellStr qr_ (fromIntegral i) 0
 
 -- | Open a table/view from an attached .duckdb file or schema-qualified name
-fromDuckDBTable :: Text -> IO (Maybe (AdbcTable, Vector Text))
-fromDuckDBTable table = do
-  keys <- duckDBPrimaryKeys table
+fromTable :: Text -> IO (Maybe (AdbcTable, Vector Text))
+fromTable table = do
+  keys <- primaryKeys table
   let qualName = if T.isInfixOf "." table then table else "extdb." <> table
       q = Prql.defaultQuery { Prql.base = "from " <> qualName }
   total <- queryCount q
@@ -334,7 +334,7 @@ fetchMore t
       m <- prqlQuery (Prql.queryRender (query t) <> " | take " <> T.pack (show limit_))
       case m of
         Nothing  -> pure Nothing
-        Just qr_ -> Just <$> ofQueryResult qr_ (query t) (totalRows t)
+        Just qr_ -> Just <$> ofResult qr_ (query t) (totalRows t)
 
 -- | Export plot data to tmpdir/plot.dat via DuckDB COPY (downsample in SQL).
 -- truncLen: SUBSTRING length for time truncation; _step: every-Nth-row for non-time.
@@ -400,7 +400,7 @@ fromIngest :: Text -> Text -> Text -> IO (Maybe AdbcTable)
 fromIngest content label reader
   | T.null content || T.strip content == "[]" = pure Nothing
   | otherwise = do
-      n <- atomicModifyIORef' memTblCounter (\x -> (x + 1, x))
+      n <- atomicModifyIORef' tblCounter (\x -> (x + 1, x))
       tmp <- Log.tmpPath (T.unpack label <> "-" <> show n <> "." <> T.unpack label)
       TIO.writeFile tmp content
       let tbl = "tc_" <> label <> "_" <> T.pack (show n)
@@ -410,11 +410,11 @@ fromIngest content label reader
            :: IO (Either SomeException Adbc.QueryResult)
       case r of
         Left e -> do
-          Log.tryRemoveFile tmp
+          Log.rmFile tmp
           Log.write label ("error: " <> T.pack (show e))
           pure Nothing
         Right _ -> do
-          Log.tryRemoveFile tmp
+          Log.rmFile tmp
           let q = Prql.defaultQuery { Prql.base = "from " <> tbl }
           total <- queryCount q
           requery q total
@@ -428,15 +428,15 @@ fromJson content = fromIngest content "json" "read_json_auto"
 -- | Create from file path with optional setup SQL and reader function.
 --   reader: DuckDB reader function (e.g. "read_arrow"). Empty = auto-detect via backtick.
 --   duckdbExt: extension to install+load first (may be empty).
-fromFileWith :: Text -> Text -> Text -> IO (Maybe AdbcTable)
-fromFileWith path_ reader duckdbExt = do
-  loadDuckExt duckdbExt
+fileWith :: Text -> Text -> Text -> IO (Maybe AdbcTable)
+fileWith path_ reader duckdbExt = do
+  loadExt duckdbExt
   if T.null reader
     then fromFile path_
     else do
       -- Materialize via reader function into temp table (PRQL can't parse
       -- function calls in `from`).
-      let tbl = remoteTblName path_
+      let tbl = remoteName path_
       _ <- Adbc.query
              ( "CREATE OR REPLACE TEMP TABLE \"" <> tbl
             <> "\" AS (SELECT * FROM " <> reader
@@ -465,7 +465,7 @@ freqTable t cNames
             v <- Adbc.cellStr qr_ 0 0
             pure (parseIntOr0 v)
       -- freq table: uses freq PRQL function which computes Cnt, Pct, Bar in SQL
-      tblName <- nextTmpName "freq"
+      tblName <- tmpName "freq"
       let prql = baseR <> " | freq {" <> cols <> "} | take 1000"
       Log.write "prql" prql
       mSql <- Prql.compile prql

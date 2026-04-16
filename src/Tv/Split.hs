@@ -74,8 +74,8 @@ splitBindings col ep qc n =
 runWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 runWith s pat = do
   let nav = View.nav (View.cur s)
-      curName = Nav.curColName nav
-      typ = Nav.curColType nav
+      curName = Nav.colName nav
+      typ = Nav.colType nav
   if typ /= ColTypeStr then pure s  -- only split string columns
   else if T.null pat then pure s
   else do
@@ -101,7 +101,7 @@ runWith s pat = do
 -- | Prompt for pattern via fzf, then split.
 run :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 run s = do
-  let curName = Nav.curColName (View.nav (View.cur s))
+  let curName = Nav.colName (View.nav (View.cur s))
       header = "Split '" <> curName <> "' by delimiter or regex"
   mRaw <- Fzf.fzf
     (V.fromList ["--print-query", "--prompt=split: ", "--header=" <> header])

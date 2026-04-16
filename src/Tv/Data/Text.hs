@@ -2,7 +2,15 @@
   Text parsing: space-separated input (ps aux, ls -l, etc.) -> TSV string
   DuckDB handles type detection via read_csv_auto.
 -}
-module Tv.Data.Text where
+module Tv.Data.Text
+  ( mode
+  , wordStarts
+  , splitN
+  , colStarts
+  , splitCols
+  , fromText
+  , fromStdin
+  ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -21,8 +29,8 @@ mode xs =
   in best
 
 -- | Count word starts (non-space after space, plus position 0 if non-space)
-countWordStarts :: Text -> Int
-countWordStarts s =
+wordStarts :: Text -> Int
+wordStarts s =
   let chars = V.fromList (T.unpack s)
       n = V.length chars
       getD i = if i >= 0 && i < n then chars V.! i else ' '
@@ -49,8 +57,8 @@ splitN s n
       in V.fromList (fields ++ [T.strip finalRest])
 
 -- | Find column start positions from header (2+ consecutive spaces = separator)
-findColStarts :: Text -> Vector Int
-findColStarts hdr =
+colStarts :: Text -> Vector Int
+colStarts hdr =
   let chars = V.fromList (T.unpack hdr)
       n = V.length chars
       getD i = if i >= 0 && i < n then chars V.! i else ' '
@@ -64,8 +72,8 @@ findColStarts hdr =
   in V.fromList result
 
 -- | Split line by column start positions (last col extends to end)
-splitByStarts :: Text -> Vector Int -> Vector Text
-splitByStarts s starts =
+splitCols :: Text -> Vector Int -> Vector Text
+splitCols s starts =
   let sz = V.length starts
       getD i = if i >= 0 && i < sz then starts V.! i else 0
       slen = T.length s
@@ -83,16 +91,16 @@ fromText content =
   in case lines_ of
        [] -> Left "empty input"
        (hdr : rest) ->
-         let starts = findColStarts hdr
+         let starts = colStarts hdr
              allLines = V.fromList (hdr : rest)
-             modeNc = mode (V.map countWordStarts allLines)
+             modeNc = mode (V.map wordStarts allLines)
          in
            -- use fixed-width only if it gives >= mode columns (handles mixed spacing)
            if V.length starts >= modeNc && V.length starts > 1
              then
-               let names = splitByStarts hdr starts
+               let names = splitCols hdr starts
                    header = T.intercalate "\t" (V.toList names)
-                   rows = map (\line -> T.intercalate "\t" (V.toList (splitByStarts line starts))) rest
+                   rows = map (\line -> T.intercalate "\t" (V.toList (splitCols line starts))) rest
                in Right (header <> "\n" <> T.intercalate "\n" rows)
              else
                -- else use mode of word counts (handles "total 836" outliers)

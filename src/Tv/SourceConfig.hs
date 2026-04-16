@@ -13,8 +13,8 @@ module Tv.SourceConfig
   ( Config (..)
   , defaultConfig
   , noSign
-  , setNoSign
-  , getNoSign
+  , setNS
+  , getNS
   , s3Extra
   , pathParts
   , expand
@@ -25,10 +25,10 @@ module Tv.SourceConfig
   , setupDone
   , runSetup
   , listCache
-  , configRunList
-  , configRunDownload
+  , runList
+  , runDl
   , configResolve
-  , configRunEnter
+  , runEnter
   ) where
 
 import Control.Exception (SomeException, try)
@@ -51,9 +51,9 @@ import qualified Tv.Data.ADBC.Adbc as Adbc
 import qualified Tv.Data.ADBC.Prql as Prql
 import Tv.Data.ADBC.Table
   ( AdbcTable
-  , fromTmpTbl
-  , loadDuckExt
-  , nextTmpName
+  , fromTmp
+  , loadExt
+  , tmpName
   , stripSemi
   )
 import qualified Tv.Ftp as Ftp
@@ -78,7 +78,7 @@ data Config = Config
   , grp            :: Text  -- default group column name. Empty = none.
   , enterUrl       :: Text  -- URL template for entering file rows. Empty = default.
   , script         :: Text  -- shell cmd template for enter: stdout = JSON rows. Empty = none.
-  , attach         :: Bool  -- true: enter uses fromDuckDBTable (for attached databases)
+  , attach         :: Bool  -- true: enter uses fromTable (for attached databases)
   , duckdbExt      :: Text  -- DuckDB extension to auto INSTALL/LOAD (e.g. "postgres"). Empty = none.
   , attachType     :: Text  -- ATTACH TYPE clause (e.g. "POSTGRES"). Empty = native DuckDB.
   , urlEncode      :: Bool  -- true: URL-encode path segments for curl commands (e.g. FTP)
@@ -115,16 +115,16 @@ defaultConfig = Config
 noSign :: IORef Bool
 noSign = unsafePerformIO (newIORef False)
 
-setNoSign :: Bool -> IO ()
-setNoSign b = writeIORef noSign b
+setNS :: Bool -> IO ()
+setNS b = writeIORef noSign b
 
-getNoSign :: IO Bool
-getNoSign = readIORef noSign
+getNS :: IO Bool
+getNS = readIORef noSign
 
 -- | Get S3 extra args string
 s3Extra :: IO Text
 s3Extra = do
-  b <- getNoSign
+  b <- getNS
   pure (if b then "--no-sign-request" else "")
 
 -- | Split path into components after stripping prefix
@@ -174,8 +174,8 @@ mkVars cfg path_ tmp name extra =
 
 -- | Reject shell metacharacters in user-supplied values before template expansion.
 -- Blocklist approach: reject only dangerous chars, allow everything else (unicode, #, etc.)
-hasShellMeta :: Text -> Bool
-hasShellMeta s = T.any bad s
+shellMeta :: Text -> Bool
+shellMeta s = T.any bad s
   where
     bad c =
       c == '$' || c == '`' || c == ';' || c == '&' || c == '|'
@@ -183,9 +183,9 @@ hasShellMeta s = T.any bad s
         || c == '<' || c == '>' || c == '\\' || c == '"' || c == '\''
         || c == '\n'
 
-validateShellSafe :: Text -> Text -> IO ()
-validateShellSafe s label =
-  when (hasShellMeta s) $ do
+checkShell :: Text -> Text -> IO ()
+checkShell s label =
+  when (shellMeta s) $ do
     Log.write "src" ("rejected unsafe " <> label <> ": " <> s)
     ioError (userError ("Path contains shell metacharacters: " <> T.unpack s))
 
@@ -297,7 +297,7 @@ setupDone = unsafePerformIO (newIORef V.empty)
 -- Tries setupSql first; if it fails (e.g. DB doesn't exist), runs setupCmd to create it.
 runSetup :: Config -> IO ()
 runSetup cfg = do
-  loadDuckExt (duckdbExt cfg)
+  loadExt (duckdbExt cfg)
   done <- readIORef setupDone
   if V.elem (pfx cfg) done
     then pure ()
@@ -350,36 +350,36 @@ cacheStore path_ tbl =
 
 -- | Build AdbcTable from a temp table name
 fromTbl :: Text -> IO (Maybe AdbcTable)
-fromTbl tbl = fromTmpTbl tbl
+fromTbl tbl = fromTmp tbl
 
 -- | Extract last path component as a filename
-nameFromPath :: Text -> Text
-nameFromPath path_ =
+fromPath :: Text -> Text
+fromPath path_ =
   let parts = filter (not . T.null) (T.splitOn "/" path_)
   in if null parts then "file" else last parts
 
 -- | Build template vars for a config + path (shared by runList/runDownload).
 -- Returns (vars, tmpDir) so callers don't need to search the array.
-configCmdVars :: Config -> Text -> IO (Vector (Text, Text), Text)
-configCmdVars cfg path_ = do
-  validateShellSafe path_ "path"
+cmdVars :: Config -> Text -> IO (Vector (Text, Text), Text)
+cmdVars cfg path_ = do
+  checkShell path_ "path"
   tmpDir <- Log.tmpPath "src"
   createDirectoryIfMissing True tmpDir
   _ <- Log.run "src" "mkdir" ["-p", tmpDir]
   extra <- if pfx cfg == "s3://" then s3Extra else pure ""
   -- URL-encode path segments for curl when configured (e.g. FTP)
-  let cmdPath = if urlEncode cfg then Ftp.urlEncodeUrl (pfx cfg) path_ else path_
+  let cmdPath = if urlEncode cfg then Ftp.encodeUrl (pfx cfg) path_ else path_
       tmpT = T.pack tmpDir
-  pure (mkVars cfg cmdPath tmpT (nameFromPath path_) extra, tmpT)
+  pure (mkVars cfg cmdPath tmpT (fromPath path_) extra, tmpT)
 
 -- | Cached compiled SQL for tbl_info_filtered (fixed query, compile once)
-{-# NOINLINE extdbFilteredSql #-}
-extdbFilteredSql :: IORef Text
-extdbFilteredSql = unsafePerformIO (newIORef "")
+{-# NOINLINE filteredSql #-}
+filteredSql :: IORef Text
+filteredSql = unsafePerformIO (newIORef "")
 
-getExtdbFilteredSql :: IO Text
-getExtdbFilteredSql = do
-  cached <- readIORef extdbFilteredSql
+getFiltSql :: IO Text
+getFiltSql = do
+  cached <- readIORef filteredSql
   if not (T.null cached)
     then pure cached
     else do
@@ -388,30 +388,30 @@ getExtdbFilteredSql = do
         Nothing -> ioError (userError ("Failed to compile PRQL: " <> T.unpack Prql.ducktabsF))
         Just sql -> do
           let sql' = stripSemi sql
-          writeIORef extdbFilteredSql sql'
+          writeIORef filteredSql sql'
           pure sql'
 
 -- | Generate attach SQL from config fields (DRY: DETACH/ATTACH/SELECT pattern)
 -- The SELECT portion is compiled from PRQL tbl_info_filtered function.
-configAttachSql :: Config -> Text -> IO Text
-configAttachSql cfg connStr = do
+attachSql :: Config -> Text -> IO Text
+attachSql cfg connStr = do
   let typClause = if T.null (attachType cfg) then "" else "TYPE " <> attachType cfg <> ", "
       ddl = "DETACH DATABASE IF EXISTS extdb;\nATTACH '" <> escSql connStr
               <> "' AS extdb (" <> typClause <> "READ_ONLY)"
-  sql <- getExtdbFilteredSql
+  sql <- getFiltSql
   pure (ddl <> ";\n" <> sql)
 
 -- | Direct SQL mode: auto-generate attach SQL or expand listSql, execute multi-statement
-configRunListSql :: Config -> Text -> Text -> IO (Maybe AdbcTable)
-configRunListSql cfg path_ tbl = do
+runListSql :: Config -> Text -> Text -> IO (Maybe AdbcTable)
+runListSql cfg path_ tbl = do
   sql <- if attach cfg && T.null (listSql cfg)
     then do
       let connStr =
             if T.null (pfx cfg) then path_
             else T.drop (T.length (pfx cfg)) path_
-      configAttachSql cfg connStr
+      attachSql cfg connStr
     else do
-      (vars, _) <- configCmdVars cfg path_
+      (vars, _) <- cmdVars cfg path_
       pure (expand (listSql cfg) vars)
   let stmts = filter (not . T.null)
                 (map T.strip (T.splitOn ";\n" sql))
@@ -427,10 +427,10 @@ configRunListSql cfg path_ tbl = do
       fromTbl tbl
 
 -- | CLI mode: run command, save JSON, transform via listSql, auto-unnest, add parent row
-configRunListCmd :: Config -> Text -> Text -> IO (Maybe AdbcTable)
-configRunListCmd cfg path_ tbl = do
+runListCmd :: Config -> Text -> Text -> IO (Maybe AdbcTable)
+runListCmd cfg path_ tbl = do
   let p = if T.isSuffixOf "/" path_ then path_ else path_ <> "/"
-  (vars, _) <- configCmdVars cfg p
+  (vars, _) <- cmdVars cfg p
   let cmd = expand (listCmd cfg) vars
   Log.write "src" ("list: " <> cmd)
   (ec, out, err) <- readProcessWithExitCode "sh" ["-c", T.unpack cmd] ""
@@ -449,7 +449,7 @@ configRunListCmd cfg path_ tbl = do
               let fbSql = expand (fallbackSql cfg)
                             (V.singleton ("src", T.pack tmpFile))
               _ <- Adbc.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> fbSql)
-              Log.tryRemoveFile tmpFile
+              Log.rmFile tmpFile
               Just <$> fromTbl tbl
             _ -> pure Nothing
         else pure Nothing
@@ -508,7 +508,7 @@ configRunListCmd cfg path_ tbl = do
               case rP of
                 _ -> pure ()
             Nothing -> pure ()
-          Log.tryRemoveFile tmpFile
+          Log.rmFile tmpFile
           fromTbl tbl
   where
     -- compile+run PRQL, returning the QueryResult (matches Lean `Prql.query`)
@@ -521,8 +521,8 @@ configRunListCmd cfg path_ tbl = do
 
 -- | Run listing: cache check -> setup -> dispatch to sql/cmd mode -> cache store.
 -- Results are cached in-memory when listing takes > 3 seconds (e.g. slow S3 buckets).
-configRunList :: Config -> Text -> IO (Maybe AdbcTable)
-configRunList cfg path_ = do
+runList :: Config -> Text -> IO (Maybe AdbcTable)
+runList cfg path_ = do
   mc <- cacheLookup path_
   case mc of
     Just cached -> do
@@ -535,10 +535,10 @@ configRunList cfg path_ = do
       Render.statusMsg ("Loading " <> path_ <> " ...")
       t0 <- getMonotonicTime
       runSetup cfg
-      tbl <- nextTmpName "src"
+      tbl <- tmpName "src"
       result <- if T.null (listCmd cfg)
-        then configRunListSql cfg path_ tbl
-        else configRunListCmd cfg path_ tbl
+        then runListSql cfg path_ tbl
+        else runListCmd cfg path_ tbl
       -- Cache slow listings (> 3s) so navigating back is instant
       case result of
         Just adbc -> do
@@ -553,27 +553,27 @@ configRunList cfg path_ = do
       pure result
 
 -- | Download a remote file to local temp path
-configRunDownload :: Config -> Text -> IO Text
-configRunDownload cfg path_ = do
+runDl :: Config -> Text -> IO Text
+runDl cfg path_ = do
   Render.statusMsg ("Downloading " <> path_ <> " ...")
-  (vars, tmpDir) <- configCmdVars cfg path_
+  (vars, tmpDir) <- cmdVars cfg path_
   let cmd = expand (downloadCmd cfg) vars
   Log.write "src" ("download: " <> cmd)
   _ <- readProcessWithExitCode "sh" ["-c", T.unpack cmd] ""
-  pure (tmpDir <> "/" <> nameFromPath path_)
+  pure (tmpDir <> "/" <> fromPath path_)
 
 -- | Resolve data file path: download if needed, or return URI for DuckDB
 configResolve :: Config -> Text -> IO Text
 configResolve cfg path_ =
-  if needsDownload cfg then configRunDownload cfg path_ else pure path_
+  if needsDownload cfg then runDl cfg path_ else pure path_
 
 -- | Run enter: script cmd -> JSON -> DuckDB temp table, apply types from stub view
-configRunEnter :: Config -> Text -> IO (Maybe AdbcTable)
-configRunEnter cfg name =
+runEnter :: Config -> Text -> IO (Maybe AdbcTable)
+runEnter cfg name =
   if T.null (script cfg)
     then pure Nothing
     else do
-      validateShellSafe name "name"
+      checkShell name "name"
       runSetup cfg
       let vars = mkVars cfg (pfx cfg <> name) "" name ""
           cmd  = expand (script cfg) vars
@@ -589,13 +589,13 @@ configRunEnter cfg name =
           if T.null trimmed || trimmed == "[]"
             then pure Nothing
             else do
-              tbl <- nextTmpName "src"
+              tbl <- tmpName "src"
               tmpFile <- Log.tmpPath ("src-enter-" <> T.unpack tbl <> ".json")
               TIO.writeFile tmpFile json
               _ <- Adbc.query ( "CREATE TEMP TABLE " <> tbl
                              <> " AS SELECT * FROM read_json_auto('"
                              <> T.pack tmpFile <> "')" )
-              Log.tryRemoveFile tmpFile
+              Log.rmFile tmpFile
               -- Apply types from DuckDB stub view (e.g. osq.groups has typed columns)
               let typeApply :: IO ()
                   typeApply = do

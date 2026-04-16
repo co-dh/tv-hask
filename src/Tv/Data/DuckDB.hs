@@ -32,13 +32,13 @@ module Tv.Data.DuckDB
   , chunks
   , chunkSize
   , chunkColumn
-  , readCellInt
-  , readCellDouble
-  , readCellText
-  , readCellAny
-  , readCellDate
-  , readCellTime
-  , readCellTimestamp
+  , cellInt
+  , cellDbl
+  , cellText
+  , cellAny
+  , cellDate
+  , cellTime
+  , cellTs
   ) where
 
 import Control.Exception (Exception, mask_, throwIO)
@@ -291,8 +291,8 @@ isValid vp row
       pure ((w `shiftR` r) .&. 1 == 1)
 
 -- | Read an integer cell. Handles all DuckDB integer widths + bool.
-readCellInt :: ColumnView -> Int -> Maybe Int64
-readCellInt cv row
+cellInt :: ColumnView -> Int -> Maybe Int64
+cellInt cv row
   | row < 0 || row >= cvSize cv = Nothing
   | otherwise = U.unsafePerformIO $ do
       ok <- isValid (cvValidity cv) row
@@ -323,11 +323,11 @@ readCellInt cv row
                   b <- peekElemOff (castPtr d :: Ptr Word8) row
                   pure (Just (if b /= 0 then 1 else 0))
               | otherwise -> pure Nothing
-{-# NOINLINE readCellInt #-}
+{-# NOINLINE cellInt #-}
 
 -- | Read a floating-point cell (FLOAT/DOUBLE).
-readCellDouble :: ColumnView -> Int -> Maybe Double
-readCellDouble cv row
+cellDbl :: ColumnView -> Int -> Maybe Double
+cellDbl cv row
   | row < 0 || row >= cvSize cv = Nothing
   | otherwise = U.unsafePerformIO $ do
       ok <- isValid (cvValidity cv) row
@@ -344,7 +344,7 @@ readCellDouble cv row
                       f <- peekElemOff (castPtr d :: Ptr Float) row
                       pure (Just (realToFrac f))
                     else pure Nothing
-{-# NOINLINE readCellDouble #-}
+{-# NOINLINE cellDbl #-}
 
 -- | Read a VARCHAR cell. Each element is a 16-byte @duckdb_string_t@:
 --
@@ -358,8 +358,8 @@ readCellDouble cv row
 --
 -- If @length <= 12@ the data is inlined at offset 4. Otherwise bytes 8..15
 -- hold a @char *@ into heap-managed string storage owned by the chunk.
-readCellText :: ColumnView -> Int -> Maybe Text
-readCellText cv row
+cellText :: ColumnView -> Int -> Maybe Text
+cellText cv row
   | row < 0 || row >= cvSize cv = Nothing
   | cvRawType cv /= DuckDBTypeVarchar = Nothing
   | otherwise = U.unsafePerformIO $ do
@@ -377,31 +377,31 @@ readCellText cv row
                 p <- peek (castPtr (base `plusPtr` 8) :: Ptr (Ptr Word8))
                 BS.packCStringLen (castPtr p, len)
           pure (Just (TE.decodeUtf8 bs))
-{-# NOINLINE readCellText #-}
+{-# NOINLINE cellText #-}
 
 -- ============================================================================
 -- Type mapping
 -- ============================================================================
 
 -- | Render any cell to text. NULLs become "".
-readCellAny :: ColumnView -> Int -> Text
-readCellAny cv row = case cvType cv of
-  ColTypeInt       -> maybe "" (T.pack . show) (readCellInt cv row)
-  ColTypeBool      -> case readCellInt cv row of
+cellAny :: ColumnView -> Int -> Text
+cellAny cv row = case cvType cv of
+  ColTypeInt       -> maybe "" (T.pack . show) (cellInt cv row)
+  ColTypeBool      -> case cellInt cv row of
                         Just 0 -> "false"; Just _ -> "true"; Nothing -> ""
   -- 3-decimal precision matches Lean adbc_core.c format_cell_view
   -- (`format_struct_cell` passes decimals=3). Used by status-bar aggregates
   -- and any generic cellStr consumer.
-  ColTypeFloat     -> maybe "" (T.pack . printf "%.3f") (readCellDouble cv row)
-  ColTypeStr       -> maybe "" id (readCellText cv row)
-  ColTypeDate      -> maybe "" id (readCellDate cv row)
-  ColTypeTime      -> maybe "" id (readCellTime cv row)
-  ColTypeTimestamp -> maybe "" id (readCellTimestamp cv row)
-  _                -> maybe "" id (readCellText cv row)
+  ColTypeFloat     -> maybe "" (T.pack . printf "%.3f") (cellDbl cv row)
+  ColTypeStr       -> maybe "" id (cellText cv row)
+  ColTypeDate      -> maybe "" id (cellDate cv row)
+  ColTypeTime      -> maybe "" id (cellTime cv row)
+  ColTypeTimestamp -> maybe "" id (cellTs cv row)
+  _                -> maybe "" id (cellText cv row)
 
 -- | DuckDB DATE: int32 days since 1970-01-01. Format YYYY-MM-DD.
-readCellDate :: ColumnView -> Int -> Maybe Text
-readCellDate cv row
+cellDate :: ColumnView -> Int -> Maybe Text
+cellDate cv row
   | row < 0 || row >= cvSize cv || cvRawType cv /= DuckDBTypeDate = Nothing
   | otherwise = U.unsafePerformIO $ do
       ok <- isValid (cvValidity cv) row
@@ -410,11 +410,11 @@ readCellDate cv row
         let day = addDays (fromIntegral d) (fromGregorian 1970 1 1)
             (y, m, dd) = toGregorian day
         pure (Just (T.pack (printf "%04d-%02d-%02d" y m dd)))
-{-# NOINLINE readCellDate #-}
+{-# NOINLINE cellDate #-}
 
 -- | DuckDB TIME: int64 microseconds since midnight. Format HH:MM:SS.
-readCellTime :: ColumnView -> Int -> Maybe Text
-readCellTime cv row
+cellTime :: ColumnView -> Int -> Maybe Text
+cellTime cv row
   | row < 0 || row >= cvSize cv || cvRawType cv /= DuckDBTypeTime = Nothing
   | otherwise = U.unsafePerformIO $ do
       ok <- isValid (cvValidity cv) row
@@ -424,12 +424,12 @@ readCellTime cv row
             (h, sm) = (s `div` 3600 `mod` 24, s `mod` 3600)
             (mi, se) = (sm `div` 60, sm `mod` 60)
         pure (Just (T.pack (printf "%02d:%02d:%02d" h mi se)))
-{-# NOINLINE readCellTime #-}
+{-# NOINLINE cellTime #-}
 
 -- | DuckDB TIMESTAMP / TIMESTAMP_TZ: int64 microseconds since 1970-01-01.
 -- Format YYYY-MM-DD HH:MM:SS.
-readCellTimestamp :: ColumnView -> Int -> Maybe Text
-readCellTimestamp cv row
+cellTs :: ColumnView -> Int -> Maybe Text
+cellTs cv row
   | row < 0 || row >= cvSize cv = Nothing
   | rt /= DuckDBTypeTimestamp && rt /= DuckDBTypeTimestampTz = Nothing
   | otherwise = U.unsafePerformIO $ do
@@ -444,7 +444,7 @@ readCellTimestamp cv row
             (mi, se) = (sm `div` 60, sm `mod` 60)
         pure (Just (T.pack (printf "%04d-%02d-%02d %02d:%02d:%02d" y m dd h mi se)))
   where rt = cvRawType cv
-{-# NOINLINE readCellTimestamp #-}
+{-# NOINLINE cellTs #-}
 
 duckTypeToCol :: DuckDBType -> ColType
 duckTypeToCol t

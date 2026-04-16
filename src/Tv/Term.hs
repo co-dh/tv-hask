@@ -24,8 +24,8 @@ module Tv.Term
     -- tty / lifecycle
   , isattyStdin, reopenTty, init, inited, shutdown
     -- screen
-  , width, height, clear, present, pollEvent, byteToEvent, bytesToEvent, bufferStr
-  , printPadC, renderTable, print
+  , width, height, clear, present, pollEvent, toEvent, toEvents, bufferStr
+  , padC, renderTable, print
   ) where
 
 import Prelude hiding (init, print)
@@ -58,7 +58,7 @@ import System.IO (stdin, stdout, hSetBuffering, hSetEcho, hFlush,
 import System.Posix.IO (stdInput)
 import qualified System.Posix.Terminal as PT
 import System.IO.Unsafe (unsafePerformIO)
-import Tv.Types (ColType(..), colTypeIsNumeric)
+import Tv.Types (ColType(..), isNumeric)
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Key codes (from termbox2.h)
@@ -122,12 +122,12 @@ underline = 0x02000000
 
 -- | Terminal event from poll
 data Event = Event
-  { eventType :: Word8
-  , eventMod  :: Word8
-  , eventKeyCode :: Word16
-  , eventCh   :: Word32
-  , eventW    :: Word32  -- resize width
-  , eventH    :: Word32  -- resize height
+  { typ :: Word8
+  , mods  :: Word8
+  , keyCode :: Word16
+  , ch   :: Word32
+  , w    :: Word32  -- resize width
+  , h    :: Word32  -- resize height
   } deriving (Eq, Show)
 makeFieldLabelsNoPrefix ''Event
 
@@ -234,7 +234,7 @@ init = do
           ta' = PT.withMinInput (PT.withTime ta 0) 1
       PT.setTerminalAttributes stdInput ta' PT.WhenFlushed
     (w, h) <- if isTty
-                then queryTermSize
+                then termSize
                 else pure (80, 24)
     buf <- VSM.replicate (w * h) emptyCell
     writeIORef screenBuf (w, h, buf)
@@ -257,8 +257,8 @@ init = do
 -- | Query terminal dimensions via ioctl(TIOCGWINSZ). Falls back to 80x24
 -- when the call fails (e.g. headless build host without a controlling tty).
 -- struct winsize is 8 bytes: uint16 ws_row, ws_col, ws_xpixel, ws_ypixel
-queryTermSize :: IO (Int, Int)
-queryTermSize =
+termSize :: IO (Int, Int)
+termSize =
   allocaBytes 8 $ \pWs -> do
     -- TIOCGWINSZ = 0x5413 on Linux
     rc <- c_ioctl 0 0x5413 pWs  -- STDIN_FILENO = 0
@@ -397,8 +397,8 @@ cursorAt y x = T.pack ("\x1b[" ++ show (y + 1) ++ ";" ++ show (x + 1) ++ "H")
 -- | Pure byte → Event translation (factored out of pollEvent for unit tests).
 -- ASCII control chars map to the termbox key constants so evToKey's keyNames
 -- lookup matches (0x0D → keyEnter → "<ret>", 0x7F → keyBackspace2 → "<bs>", …).
-byteToEvent :: Char -> Event
-byteToEvent c =
+toEvent :: Char -> Event
+toEvent c =
   let code = fromIntegral (fromEnum c) :: Word16
       (kCode, kCh) = case code of
         0x0D -> (keyEnter, 0)         -- CR → Enter
@@ -408,44 +408,44 @@ byteToEvent c =
         0x1B -> (keyEsc, 0)
         _    -> (0, fromIntegral code)
   in Event
-       { eventType = eventKey
-       , eventMod = 0
-       , eventKeyCode = kCode
-       , eventCh = kCh
-       , eventW = 0
-       , eventH = 0
+       { typ = eventKey
+       , mods = 0
+       , keyCode = kCode
+       , ch = kCh
+       , w = 0
+       , h = 0
        }
 
 -- | Pure multi-byte → Event translation. Handles CSI (`ESC [ …`) and SS3
 -- (`ESC O …`) sequences for arrows, home, end, pgup, pgdn. Any input the
--- dispatch tables don't cover degrades to the first-byte `byteToEvent`,
+-- dispatch tables don't cover degrades to the first-byte `toEvent`,
 -- which for ESC yields keyEsc.
-bytesToEvent :: String -> Event
-bytesToEvent s = case s of
+toEvents :: String -> Event
+toEvents s = case s of
   ['\x1B', '[', c]      -> csiLetter c
   ['\x1B', 'O', c]      -> csiLetter c
   ('\x1B' : '[' : rest)
     | (digits, "~") <- span isDigit rest -> csiTilde digits
-  [c] -> byteToEvent c
-  _   -> byteToEvent '\x1B'
+  [c] -> toEvent c
+  _   -> toEvent '\x1B'
   where
     isDigit ch = ch >= '0' && ch <= '9'
-    key k = Event { eventType = eventKey, eventMod = 0, eventKeyCode = k
-                  , eventCh = 0, eventW = 0, eventH = 0 }
+    key k = Event { typ = eventKey, mods = 0, keyCode = k
+                  , ch = 0, w = 0, h = 0 }
     csiLetter 'A' = key keyArrowUp
     csiLetter 'B' = key keyArrowDown
     csiLetter 'C' = key keyArrowRight
     csiLetter 'D' = key keyArrowLeft
     csiLetter 'H' = key keyHome
     csiLetter 'F' = key keyEnd
-    csiLetter _   = byteToEvent '\x1B'
+    csiLetter _   = toEvent '\x1B'
     csiTilde "1" = key keyHome
     csiTilde "4" = key keyEnd
     csiTilde "5" = key keyPageUp
     csiTilde "6" = key keyPageDown
     csiTilde "7" = key keyHome
     csiTilde "8" = key keyEnd
-    csiTilde _   = byteToEvent '\x1B'
+    csiTilde _   = toEvent '\x1B'
 
 -- | Poll a single key event. After ESC, `hWaitForInput` briefly for a CSI
 -- or SS3 sequence; if none arrives within 100 ms, treat it as a lone Esc.
@@ -453,17 +453,17 @@ pollEvent :: IO Event
 pollEvent = do
   c <- hGetChar stdin
   if c /= '\x1B'
-    then pure (byteToEvent c)
+    then pure (toEvent c)
     else do
       more <- hWaitForInput stdin 100
       if not more
-        then pure (byteToEvent '\x1B')
+        then pure (toEvent '\x1B')
         else do
           c2 <- hGetChar stdin
           case c2 of
             '[' -> readCsi
-            'O' -> do c3 <- hGetChar stdin; pure (bytesToEvent ['\x1B', 'O', c3])
-            _   -> pure (byteToEvent '\x1B')
+            'O' -> do c3 <- hGetChar stdin; pure (toEvents ['\x1B', 'O', c3])
+            _   -> pure (toEvent '\x1B')
   where
     -- A CSI tail is either a single letter final byte (arrows, home, end)
     -- or any run of digit parameters terminated by `~` (pgup, pgdn, …).
@@ -471,12 +471,12 @@ pollEvent = do
       c <- hGetChar stdin
       if c >= '0' && c <= '9'
         then readCsiTilde [c]
-        else pure (bytesToEvent ['\x1B', '[', c])
+        else pure (toEvents ['\x1B', '[', c])
     readCsiTilde acc = do
       c <- hGetChar stdin
       if c >= '0' && c <= '9'
         then readCsiTilde (c : acc)
-        else pure (bytesToEvent ('\x1B' : '[' : reverse acc ++ [c]))
+        else pure (toEvents ('\x1B' : '[' : reverse acc ++ [c]))
 
 -- | Read termbox internal cell buffer as string (rows separated by newlines).
 -- Trailing spaces on each row are trimmed to match Lean's lean_tb_buffer_str.
@@ -492,8 +492,8 @@ bufferStr = do
   pure (T.intercalate "\n" rows)
 
 -- | Write text + padding into the cell buffer at (x, y), padding to `len`.
-printPadC :: Word32 -> Word32 -> Word32 -> Word32 -> Word32 -> Text -> Word8 -> IO ()
-printPadC x y len fg bg s _attr = do
+padC :: Word32 -> Word32 -> Word32 -> Word32 -> Word32 -> Text -> Word8 -> IO ()
+padC x y len fg bg s _attr = do
   (w, h, buf) <- readIORef screenBuf
   let xi = fromIntegral x
       yi = fromIntegral y
@@ -512,7 +512,7 @@ printPadC x y len fg bg s _attr = do
 -- | Print string at position (for backwards compat)
 print :: Word32 -> Word32 -> Word32 -> Word32 -> Text -> IO ()
 print x y fg bg s =
-  printPadC x y (fromIntegral (T.length s)) fg bg s 0
+  padC x y (fromIntegral (T.length s)) fg bg s 0
 
 -- ============================================================================
 -- renderTable — pure Haskell (replaces cbits/tv_render.c)
@@ -863,7 +863,7 @@ renderTable
               textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
               -- Get heat doubles column for this origIdx
               hdCol = if origIdx < V.length heatDoubles then heatDoubles V.! origIdx else V.empty
-          in if colTypeIsNumeric typ
+          in if isNumeric typ
              then -- numeric heat: scan heatDoubles
                let (mn, mx) = V.foldl' (\(lo, hi) v ->
                       if isNaN v then (lo, hi)
@@ -937,7 +937,7 @@ renderTable
       -- get cell text
       let textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
           cellText = fromMaybe "" (textCol V.!? ri)
-          isNum = maybe False colTypeIsNumeric (colTypes V.!? origIdx)
+          isNum = maybe False isNumeric (colTypes V.!? origIdx)
 
       -- leading space
       setCell buf screenW screenH xPos y (fromIntegral (fromEnum ' ')) fg bg

@@ -11,13 +11,13 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Tv.Render
   ( ViewState(..)
-  , viewStateDefault
+  , defVS
   , reservedLines
-  , maxVisRows
-  , defaultRowPg
+  , visRows
+  , rowPg
   , renderCols
   , render
-  , renderTabLine
+  , tabLine
   , waitForQ
   , errorPopup
   , statusMsg
@@ -54,20 +54,20 @@ data ViewState = ViewState
 makeFieldLabelsNoPrefix ''ViewState
 
 -- Default ViewState
-viewStateDefault :: ViewState
-viewStateDefault = ViewState { rowOff = 0, lastCol = 0 }
+defVS :: ViewState
+defVS = ViewState { rowOff = 0, lastCol = 0 }
 
 -- Reserved lines: 1 header + 1 footer + 1 tab + 1 status (+ 1 sparkline when active)
 reservedLines :: Bool -> Int
 reservedLines sparkOn = if sparkOn then 5 else 4
 
 -- Max visible rows (no terminal should exceed this)
-maxVisRows :: Int
-maxVisRows = 200
+visRows :: Int
+visRows = 200
 
 -- Default row page size (fallback when terminal height unknown)
-defaultRowPg :: Int
-defaultRowPg = 20
+rowPg :: Int
+rowPg = 20
 
 -- Styles: loaded from Theme, or use default
 -- 9 states: cursor, selRow, selColCurRow, selCol, curRow, curCol, default, header, group
@@ -99,7 +99,7 @@ renderCols texts names fmts colTypes totalRows RenderCtx{..} r0_ nVisible heatDs
     (fromIntegral adjCur)
     (fromIntegral curCol)
     (fromIntegral moveDir :: Int64)
-    (V.map fromIntegral selColIdxs)
+    (V.map fromIntegral selIdxs)
     (V.map fromIntegral adjSel)
     (V.map fromIntegral hiddenIdxs)
     styles
@@ -123,9 +123,9 @@ render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ ex
   h <- Term.height
   w <- Term.width
   let sparkOn = V.any (not . T.null) sparklines_
-  let visRows = min maxVisRows (fromIntegral h - reservedLines sparkOn)
+  let visRows = min visRows (fromIntegral h - reservedLines sparkOn)
   let rowOff_ = adjOff (Nav.cur (Nav.row nav)) (rowOff view) visRows
-  let curColIdx_ = Nav.curColIdx nav
+  let curColIdx_ = Nav.colIdx nav
   let moveDir_ =
         if curColIdx_ > lastCol view then 1
         else if curColIdx_ < lastCol view then -1
@@ -141,7 +141,7 @@ render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ ex
         , curRow     = Nav.cur (Nav.row nav)
         , curCol     = curColIdx_
         , moveDir    = moveDir_
-        , selColIdxs = Nav.selColIdxs nav
+        , selIdxs = Nav.selIdxs nav
         , rowSels    = Nav.sels (Nav.row nav)
         , hiddenIdxs = Nav.hiddenIdxs nav V.++ extraHidden
         , styles     = styles_
@@ -157,7 +157,7 @@ render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ ex
   let total = case vkind of
         VkFreqV _ t -> t
         _           -> TblOps.totalRows (tbl nav)
-  let colName = Nav.curColName nav
+  let colName = Nav.colName nav
   let adj =
         (if prec_ /= 3 then " p" <> T.pack (show prec_) else "")
         <> (if widthAdj_ /= 0 then " w" <> T.pack (show widthAdj_) else "")
@@ -176,8 +176,8 @@ render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ ex
   pure (ViewState { rowOff = rowOff_, lastCol = curColIdx_ }, widths)
 
 -- | Render tab line: parent2 │ parent1 │ [current]  replay_ops (stack top on right)
-renderTabLine :: Vector Text -> Int -> Text -> IO ()
-renderTabLine tabs curIdx replay = do
+tabLine :: Vector Text -> Int -> Text -> IO ()
+tabLine tabs curIdx replay = do
   s <- Theme.getStyles
   let fg  = Theme.styleFg s Theme.sBar
       bg  = Theme.styleBg s Theme.sBar
@@ -207,8 +207,8 @@ renderTabLine tabs curIdx replay = do
 waitForQ :: IO ()
 waitForQ = do
   ev <- Term.pollEvent
-  if Term.eventType ev == Term.eventKey
-       && Term.eventCh ev == fromIntegral (fromEnum 'q')
+  if Term.typ ev == Term.eventKey
+       && Term.ch ev == fromIntegral (fromEnum 'q')
     then pure ()
     else waitForQ
 
