@@ -596,9 +596,7 @@ configRunEnter cfg name =
                              <> " AS SELECT * FROM read_json_auto('"
                              <> T.pack tmpFile <> "')" )
               Log.tryRemoveFile tmpFile
-              -- Apply types from DuckDB stub view (e.g. osq.groups has typed columns).
-              -- Two passes: first collect (colName, colType) pairs from the query
-              -- result; then issue ALTER TABLEs in a flat effectful forM_.
+              -- Apply types from DuckDB stub view (e.g. osq.groups has typed columns)
               let typeApply :: IO ()
                   typeApply = do
                     qr <- Adbc.queryParam

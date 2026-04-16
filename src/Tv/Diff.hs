@@ -12,6 +12,8 @@ module Tv.Diff
   , showSame
   ) where
 
+import Control.Monad (forM_)
+import Data.Either (partitionEithers)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -128,13 +130,9 @@ buildJoinTbl left right allKeys valCols common = do
   pure tblName
 
 -- | Detect same-value column pairs → sameHide; rename differing pairs with Δ prefix.
--- Split into two passes: first classify each column (requires COUNT query);
--- then execute ALTER TABLE renames. The classification pass only accumulates
--- data; the rename pass is a flat effectful V.forM_.
 renameDiffCols :: Text -> Vector Text -> IO (Vector Text)
 renameDiffCols tblName valCols = do
   let q = quoted
-  -- Pass 1: classify each column as same-valued (Left) or differing (Right).
   classified <- V.forM valCols $ \v -> do
     let leftCol  = v <> "_left"
         rightCol = v <> "_right"
@@ -144,13 +142,12 @@ renameDiffCols tblName valCols = do
               <> " IS NOT DISTINCT FROM " <> q rightCol <> ")")
     cnt <- Adbc.cellInt qr_ 0 0
     pure $ if cnt == 0
-      then Left (V.fromList [leftCol, rightCol])
-      else Right (V.fromList [(leftCol, "Δ" <> v <> "_L"), (rightCol, "Δ" <> v <> "_R")])
-  -- Pure accumulation of the two output lists.
-  let sameHide = V.concatMap (either id (const V.empty)) classified
-      renames  = V.concatMap (either (const V.empty) id) classified
-  -- Pass 2: execute renames.
-  V.forM_ renames $ \(oldN, renamed) ->
+      then Left [leftCol, rightCol]
+      else Right [(leftCol, "Δ" <> v <> "_L"), (rightCol, "Δ" <> v <> "_R")]
+  let (hides, rens) = partitionEithers (V.toList classified)
+      sameHide = V.fromList (concat hides)
+      renames  = concat rens
+  forM_ renames $ \(oldN, renamed) ->
     () <$ Adbc.query
             ("ALTER TABLE " <> tblName
              <> " RENAME COLUMN " <> q oldN <> " TO " <> q renamed)
