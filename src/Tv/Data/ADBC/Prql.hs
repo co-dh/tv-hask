@@ -35,22 +35,14 @@ module Tv.Data.ADBC.Prql
 
 import Control.Exception (SomeException, try)
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as BS
 import Data.FileEmbed (embedFile)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.Exit (ExitCode (..))
-import System.IO (hClose, hFlush)
-import System.Process
-  ( CreateProcess (..)
-  , StdStream (..)
-  , createProcess
-  , proc
-  , waitForProcess
+import System.Process (readProcessWithExitCode
   )
 import Tv.Types
   ( Agg (..)
@@ -148,27 +140,18 @@ funcs = TE.decodeUtf8 funcsBytes
 -- | Compile PRQL to SQL by shelling out to the @prqlc@ CLI. Returns
 -- @Nothing@ on compile failure (with stderr logged). The @funcs@ prelude
 -- is prepended so user queries can call ds_trunc, freq, etc.
+-- Uses readProcessWithExitCode which drains stdout/stderr concurrently,
+-- avoiding deadlock when pipe buffers fill.
 compile :: Text -> IO (Maybe Text)
 compile prql = do
-  let full = funcs <> "\n" <> prql
-      cp = (proc "prqlc"
-              [ "compile", "--hide-signature-comment", "-t", "sql.duckdb" ])
-             { std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe }
-  r <- try $ do
-    (Just hin, Just hout, Just herr, ph) <- createProcess cp
-    TIO.hPutStr hin full
-    hFlush hin
-    hClose hin
-    -- Read strict ByteStrings so handles drain before waitForProcess.
-    outBs <- BS.hGetContents hout
-    errBs <- BS.hGetContents herr
-    code <- waitForProcess ph
-    pure (code, TE.decodeUtf8 outBs, TE.decodeUtf8 errBs)
+  let full = T.unpack (funcs <> "\n" <> prql)
+  r <- try (readProcessWithExitCode "prqlc"
+              ["compile", "--hide-signature-comment", "-t", "sql.duckdb"] full)
   case r of
     Left (e :: SomeException) -> do
       Log.errorLog (T.pack ("prqlc spawn failed: " <> show e))
       pure Nothing
-    Right (ExitSuccess, out, _) -> pure (Just out)
+    Right (ExitSuccess, out, _) -> pure (Just (T.pack out))
     Right (_, _, err) -> do
-      Log.errorLog ("prqlc: " <> err)
+      Log.errorLog ("prqlc: " <> T.pack err)
       pure Nothing

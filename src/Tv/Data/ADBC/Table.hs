@@ -276,7 +276,9 @@ primaryKeys :: Text -> IO (Vector Text)
 primaryKeys table = do
   r <- try action :: IO (Either SomeException (Vector Text))
   case r of
-    Left _  -> pure V.empty
+    Left e  -> do
+      Log.write "table" ("primaryKeys " <> table <> ": " <> T.pack (show e))
+      pure V.empty
     Right v -> pure v
   where
     action = do
