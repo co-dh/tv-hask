@@ -1,5 +1,5 @@
 {-
-  Command config: Entry type + cached lookups.
+  Command config: Entry type + pure lookup cache.
   Entry constructors (mkEntry, navE, hdl) live here so feature modules
   can define their own commands without importing App.Types.
 -}
@@ -10,17 +10,13 @@ module Tv.CmdConfig
   ( -- * Types
     CmdInfo(..)
   , Entry(..)
+  , CmdCache
     -- * Entry constructors
   , mkEntry
   , navE
   , hdl
-    -- * Cached refs
-  , keyInfoMap
-  , cmdInfoMap
-  , argCmdSet
-  , menuCache
-    -- * Init / lookup
-  , Tv.CmdConfig.init
+    -- * Cache build + pure lookup
+  , buildCache
   , keyLookup
   , cmdLookup
   , handlerLookup
@@ -33,17 +29,14 @@ import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
 import Data.Hashable (Hashable(..))
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import System.IO.Unsafe (unsafePerformIO)
 
 import Tv.StrEnum (StrEnum(..))
 import qualified Tv.StrEnum as StrEnum
 import Tv.Types (Cmd)
-import qualified Tv.Util as Log
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- Orphan Hashable instance for Cmd; Types.hs doesn't derive Generic, so hash via
@@ -70,81 +63,57 @@ data Entry = Entry
   }
 makeFieldLabelsNoPrefix ''Entry
 
--- | Cached: (key, viewCtx) -> CmdInfo -- context-aware key lookup
-keyInfoMap :: IORef (HashMap (Text, Text) CmdInfo)
-keyInfoMap = unsafePerformIO (newIORef HashMap.empty)
-{-# NOINLINE keyInfoMap #-}
+-- | Immutable command lookup cache, built once at init from command entries.
+-- Replaces 4 global IORefs with a pure value stored in AppState.
+data CmdCache = CmdCache
+  { ccKeyInfo :: HashMap (Text, Text) CmdInfo
+  , ccCmdInfo :: HashMap Cmd CmdInfo
+  , ccArgCmds :: HashSet Cmd
+  , ccMenu    :: Vector Entry
+  }
 
--- | Cached: cmd -> CmdInfo (socket/programmatic dispatch)
-cmdInfoMap :: IORef (HashMap Cmd CmdInfo)
-cmdInfoMap = unsafePerformIO (newIORef HashMap.empty)
-{-# NOINLINE cmdInfoMap #-}
-
--- | Cached: handlers that take user input (ctx contains 'a')
-argCmdSet :: IORef (HashSet Cmd)
-argCmdSet = unsafePerformIO (newIORef HashSet.empty)
-{-# NOINLINE argCmdSet #-}
-
--- | Cached: menu items for fzf
-menuCache :: IORef (Vector Entry)
-menuCache = unsafePerformIO (newIORef V.empty)
-{-# NOINLINE menuCache #-}
-
--- | Build caches from command entries (called by App/Common.initHandlers).
-init :: Vector Entry -> IO ()
-init cmds = do
+-- | Build cache from command entries (pure, no IO).
+buildCache :: Vector Entry -> CmdCache
+buildCache cmds =
   let step (kI, cI, aS) e =
         let ci = CmdInfo { ciCmd = cmd e, ciResets = resets e }
-            kI' = if T.null (key e)
-                    then kI
-                    else HashMap.insert (key e, viewCtx e) ci kI
+            kI' = if T.null (key e) then kI
+                  else HashMap.insert (key e, viewCtx e) ci kI
             cI' = HashMap.insert (cmd e) ci cI
             aS' = if T.any (== 'a') (ctx e)
-                    then HashSet.insert (cmd e) aS
-                    else aS
+                    then HashSet.insert (cmd e) aS else aS
         in (kI', cI', aS')
       (keyInfo, cmdInfo, argSet) =
         V.foldl' step (HashMap.empty, HashMap.empty, HashSet.empty) cmds
-  writeIORef keyInfoMap keyInfo
-  writeIORef cmdInfoMap cmdInfo
-  writeIORef argCmdSet argSet
-  writeIORef menuCache cmds
-  Log.write "init" (T.pack ("commands: " ++ show (V.length cmds) ++ " entries"))
+  in CmdCache { ccKeyInfo = keyInfo, ccCmdInfo = cmdInfo
+              , ccArgCmds = argSet, ccMenu = cmds }
 
 -- | O(1) context-aware lookup: try (key, viewCtx) first, fall back to (key, "")
-keyLookup :: Text -> Text -> IO (Maybe CmdInfo)
-keyLookup key viewCtx = do
-  m <- readIORef keyInfoMap
-  case HashMap.lookup (key, viewCtx) m of
-    Just ci -> pure (Just ci)
-    Nothing -> pure (HashMap.lookup (key, "") m)
+keyLookup :: CmdCache -> Text -> Text -> Maybe CmdInfo
+keyLookup cc key_ viewCtx_ =
+  case HashMap.lookup (key_, viewCtx_) (ccKeyInfo cc) of
+    Just ci -> Just ci
+    Nothing -> HashMap.lookup (key_, "") (ccKeyInfo cc)
 
 -- | O(1) lookup by Cmd -> CmdInfo.
-cmdLookup :: Cmd -> IO CmdInfo
-cmdLookup c = do
-  m <- readIORef cmdInfoMap
-  pure (HashMap.lookupDefault (CmdInfo { ciCmd = c, ciResets = False }) c m)
+cmdLookup :: CmdCache -> Cmd -> CmdInfo
+cmdLookup cc c =
+  HashMap.lookupDefault (CmdInfo { ciCmd = c, ciResets = False }) c (ccCmdInfo cc)
 
 -- | Lookup by handler name string (socket/external boundary only)
-handlerLookup :: Text -> IO (Maybe CmdInfo)
-handlerLookup h =
+handlerLookup :: CmdCache -> Text -> Maybe CmdInfo
+handlerLookup cc h =
   case StrEnum.ofStringQ h :: Maybe Cmd of
-    Just c  -> Just <$> cmdLookup c
-    Nothing -> do
-      Log.write "cmd" (T.pack ("unknown command: " ++ T.unpack h))
-      pure Nothing
+    Just c  -> Just (cmdLookup cc c)
+    Nothing -> Nothing
 
 -- | O(1) check if command takes user input (ctx contains 'a').
-isArgCmd :: Cmd -> IO Bool
-isArgCmd c = do
-  s <- readIORef argCmdSet
-  pure (HashSet.member c s)
+isArgCmd :: CmdCache -> Cmd -> Bool
+isArgCmd cc c = HashSet.member c (ccArgCmds cc)
 
 -- | Menu items for fzf, filtered by view context. Returns (handler, ctx, key, label).
-menuItems :: Text -> IO (Vector (Text, Text, Text, Text))
-menuItems vctx = do
-  cmds <- readIORef menuCache
-  pure (V.mapMaybe go cmds)
+menuItems :: CmdCache -> Text -> Vector (Text, Text, Text, Text)
+menuItems cc vctx = V.mapMaybe go (ccMenu cc)
   where
     go e
       | T.null (label e) = Nothing

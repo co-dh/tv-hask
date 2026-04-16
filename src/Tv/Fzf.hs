@@ -7,9 +7,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Fzf
-  ( setTest
-  , getTest
-  , fzfCore
+  ( fzfCore
   , fzf
   , fzfIdx
   , parseSel
@@ -18,7 +16,7 @@ module Tv.Fzf
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Monad (unless, when)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (foldl')
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -27,37 +25,23 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.Environment (lookupEnv)
 import System.IO (hClose, hFlush)
-import System.IO.Unsafe (unsafePerformIO)
 import System.Process
   ( CreateProcess(..), StdStream(..), proc
   , createProcess, waitForProcess
   )
 import Text.Read (readMaybe)
 
+import Tv.CmdConfig (CmdCache)
 import qualified Tv.CmdConfig as CmdConfig
 import Tv.Types (ViewKind, vkindStr)
 import qualified Tv.Term as Term
 import qualified Tv.Util as Log
 
--- | Global testMode flag (set by App.main)
-testMode :: IORef Bool
-testMode = unsafePerformIO (newIORef False)
-{-# NOINLINE testMode #-}
-
--- | Set testMode
-setTest :: Bool -> IO ()
-setTest = writeIORef testMode
-
--- | Get testMode
-getTest :: IO Bool
-getTest = readIORef testMode
-
 -- | Core fzf: testMode returns first line, else spawn fzf
 -- Uses --tmux popup if in tmux (keeps table visible), otherwise compact at bottom
 -- poll: optional callback invoked in loop while fzf runs (tmux only, for live socket dispatch)
-fzfCore :: Vector Text -> Text -> IO () -> IO Text
-fzfCore opts input poll = do
-  tm <- getTest
+fzfCore :: Bool -> Vector Text -> Text -> IO () -> IO Text
+fzfCore tm opts input poll = do
   if tm
     then pure (Log.headD "" (filter (not . T.null) (T.splitOn "\n" input)))
     else do
@@ -110,21 +94,20 @@ fzfCore opts input poll = do
       pure (T.strip out)
 
 -- | Single select: returns none if empty/cancelled
-fzf :: Vector Text -> Text -> IO (Maybe Text)
-fzf opts input = do
-  out <- fzfCore opts input (pure ())
+fzf :: Bool -> Vector Text -> Text -> IO (Maybe Text)
+fzf tm opts input = do
+  out <- fzfCore tm opts input (pure ())
   pure (if T.null out then Nothing else Just out)
 
 -- | Index select: testMode returns 0
-fzfIdx :: Vector Text -> Vector Text -> IO (Maybe Int)
-fzfIdx opts items = do
-  tm <- getTest
+fzfIdx :: Bool -> Vector Text -> Vector Text -> IO (Maybe Int)
+fzfIdx tm opts items = do
   if tm
     then pure (if V.null items then Nothing else Just 0)
     else do
       let numbered = V.imap (\i s -> T.pack (show i) <> "\t" <> s) items
           input = T.intercalate "\n" (V.toList numbered)
-      out <- fzfCore (V.fromList ["--with-nth=2.."] V.++ opts) input (pure ())
+      out <- fzfCore tm (V.fromList ["--with-nth=2.."] V.++ opts) input (pure ())
       if T.null out
         then pure Nothing
         else case T.splitOn "\t" out of
@@ -132,18 +115,18 @@ fzfIdx opts items = do
           (h:_) -> pure (readMaybe (T.unpack h))
 
 -- | Build aligned menu items: "handler | ctx | key | label" with padding
-flatItems :: ViewKind -> IO (Vector Text)
-flatItems vk = do
-  items <- CmdConfig.menuItems (vkindStr vk)
-  let (maxH, maxX, maxK) = V.foldl
+flatItems :: CmdCache -> ViewKind -> Vector Text
+flatItems cc vk =
+  let items = CmdConfig.menuItems cc (vkindStr vk)
+      (maxH, maxX, maxK) = V.foldl
         (\(mh, mx, mk) (h, x, k, _) ->
            (max mh (T.length h), max mx (T.length x), max mk (T.length k)))
         (0, 0, 0) items
-  pure $ V.map (\(handler, ctx, key, label) ->
+  in V.map (\(handler, ctx_, key_, label_) ->
     let hp = handler <> T.replicate (maxH - T.length handler) " "
-        xp = ctx     <> T.replicate (maxX - T.length ctx) " "
-        kp = key     <> T.replicate (maxK - T.length key) " "
-    in hp <> " | " <> xp <> " | " <> kp <> " | " <> label) items
+        xp = ctx_   <> T.replicate (maxX - T.length ctx_) " "
+        kp = key_   <> T.replicate (maxK - T.length key_) " "
+    in hp <> " | " <> xp <> " | " <> kp <> " | " <> label_) items
 
 -- | Parse flat selection: extract handler name before first |
 parseSel :: Text -> Maybe Text
@@ -153,15 +136,15 @@ parseSel sel =
 
 -- | Command mode: space -> flat fzf menu -> return handler name
 -- poll: callback invoked while fzf popup is open (for external socket dispatch + re-render)
-cmdMode :: ViewKind -> IO () -> IO (Maybe Text)
-cmdMode vk poll = do
-  items <- flatItems vk
+cmdMode :: CmdCache -> ViewKind -> IO () -> IO (Maybe Text)
+cmdMode cc vk poll = do
+  let items = flatItems cc vk
   if V.null items
     then pure Nothing
     else do
       let input = T.intercalate "\n" (V.toList items)
           opts  = V.fromList ["--prompt=cmd "]
-      out <- fzfCore opts input poll
+      out <- fzfCore False opts input poll
       if T.null out
         then pure Nothing
         else pure (parseSel out)

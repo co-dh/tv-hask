@@ -33,7 +33,6 @@ import System.Process
   , createProcess, waitForProcess, readProcessWithExitCode
   )
 
-import qualified Tv.Fzf as Fzf
 import qualified Tv.Term as Term
 import qualified Tv.Util as Log
 import Tv.View (View)
@@ -102,11 +101,10 @@ spawn cmd args = do
   void (waitForProcess ph)
 
 -- | View file with bat (if available) or less. .gz files piped through zcat.
-viewFile :: Text -> IO ()
-viewFile path_ = do
+viewFile :: Bool -> Text -> IO ()
+viewFile tm path_ = do
   let gz = T.isSuffixOf ".gz" path_
       esc = T.replace "'" "'\\''" path_
-  tm <- Fzf.getTest
   if tm
     then do
       (ec, out, _) <-

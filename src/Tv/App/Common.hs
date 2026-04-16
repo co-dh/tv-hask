@@ -5,7 +5,6 @@
 module Tv.App.Common
   ( module Tv.App.Types
     -- * Dispatch
-  , handlerMap
   , dispatch
   , pureDispatch
   , runMenu
@@ -27,7 +26,6 @@ module Tv.App.Common
 
 import qualified Control.Concurrent
 import Control.Monad (when)
-import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
@@ -36,7 +34,6 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word32)
-import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Tv.AppF as AppM
 import Tv.AppF (AppM, Interp(..))
@@ -77,10 +74,6 @@ import qualified Tv.View as View
 
 -- Dispatch --
 
-handlerMap :: IORef (HashMap Cmd HandlerFn)
-handlerMap = unsafePerformIO (newIORef HashMap.empty)
-{-# NOINLINE handlerMap #-}
-
 pureDispatch :: AppState -> CmdInfo -> Maybe AppState
 pureDispatch a ci
   | ciCmd ci == CmdStkDup || ciCmd ci == CmdStkPop || ciCmd ci == CmdStkSwap =
@@ -94,9 +87,8 @@ pureDispatch a ci
         _ -> Nothing
 
 dispatch :: AppState -> CmdInfo -> Text -> IO Action
-dispatch a ci arg = do
-  m <- readIORef handlerMap
-  case HashMap.lookup (ciCmd ci) m of
+dispatch a ci arg =
+  case HashMap.lookup (ciCmd ci) (handlers a) of
     Just f  -> f a ci arg
     Nothing -> viewUp a ci
 
@@ -109,8 +101,7 @@ runMenu a = do
         case mcmd of
           Just cmdStr -> do
             Log.write "sock" ("poll cmd=" <> cmdStr)
-            mci <- CmdConfig.handlerLookup cmdStr
-            case mci of
+            case CmdConfig.handlerLookup (cmdCache a) cmdStr of
               Just ci -> do
                 a0 <- readIORef ref
                 case pureDispatch a0 ci of
@@ -123,13 +114,12 @@ runMenu a = do
                   Nothing -> pure ()
               Nothing -> pure ()
           Nothing -> pure ()
-  handler <- Fzf.cmdMode (View.vkind (View.cur (stk a))) poll
+  handler <- Fzf.cmdMode (cmdCache a) (View.vkind (View.cur (stk a))) poll
   a' <- readIORef ref
   _ <- Socket.pollCmd  -- drain stale command from fzf focus
   case handler of
     Just h -> do
-      mci <- CmdConfig.handlerLookup h
-      case mci of
+      case CmdConfig.handlerLookup (cmdCache a') h of
         Just ci -> dispatch a' ci ""
         Nothing -> pure (ActOk a')
     Nothing -> pure (ActOk a')
@@ -162,7 +152,7 @@ localCmds = V.fromList
                       h <- Term.height; w <- Term.width
                       UIInfo.render (fromIntegral h) (fromIntegral w) (View.vkind (View.cur stk'))
                     Term.present
-              stk' <- Filter.rowSearchLive (stk a) preview
+              stk' <- Filter.rowSearchLive (testMode a) (stk a) preview
               a' <- readIORef ref
               pure (ActOk (resetVS (a' { stk = stk' }))))
   , hdl (mkEntry CmdTblMenu   ""  " "  "Open command menu"                  False "") (\a _ _ -> runMenu a)
@@ -204,7 +194,7 @@ localCmds = V.fromList
                   UIInfo.render (fromIntegral h) (fromIntegral w)
                     (View.vkind (View.cur (stk a')))
                 Term.present
-          mt <- Theme.run (theme a) render_
+          mt <- Theme.run (testMode a) (theme a) render_
           case mt of
             Just t  -> do
               a' <- readIORef ref
@@ -216,16 +206,14 @@ localCmds = V.fromList
   , hdl (mkEntry CmdThemePreview "" "" "" False "") (\a _ _ -> pure (ActOk a))
   ]
 
-initHandlers :: IO ()
-initHandlers = do
-  CmdConfig.init (V.map fst commands)
-  let m = V.foldl'
-            (\acc (e, mfn) -> case mfn of
+initHandlers :: (CmdConfig.CmdCache, HashMap.HashMap Cmd HandlerFn)
+initHandlers =
+  let cc = CmdConfig.buildCache (V.map fst commands)
+      m  = V.foldl' (\acc (e, mfn) -> case mfn of
                 Just f  -> HashMap.insert (cmd e) f acc
                 Nothing -> acc)
-            HashMap.empty
-            commands
-  writeIORef handlerMap m
+            HashMap.empty commands
+  in (cc, m)
 
 -- Misc --
 
@@ -239,8 +227,7 @@ dispatchHandler a cmdStr = do
         [single]     -> (single, "")
         (x : rest) -> (x, T.intercalate " " rest)
         []           -> (cmdStr, "")
-  mci <- CmdConfig.handlerLookup h
-  case mci of
+  case CmdConfig.handlerLookup (cmdCache a) h of
     Nothing -> pure a
     Just ci -> do
       act <- dispatch a ci arg
@@ -325,10 +312,9 @@ loopProg a0 = do
           then loopProg a'
           else do
             let vkStr = ctxStr (View.vkind (View.cur (stk a')))
-            mci <- liftIO_ (CmdConfig.keyLookup key vkStr)
-            case mci of
+            case CmdConfig.keyLookup (cmdCache a') key vkStr of
               Just ci -> do
-                isArg <- liftIO_ (CmdConfig.isArgCmd (ciCmd ci))
+                let isArg = CmdConfig.isArgCmd (cmdCache a') (ciCmd ci)
                 arg <- if isArg then AppM.readArg' else pure ""
                 act <- liftIO_ (dispatch a' ci arg)
                 case act of

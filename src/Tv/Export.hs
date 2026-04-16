@@ -57,9 +57,9 @@ copyOpt ExportNdjson  = "(FORMAT JSON, ARRAY false)"
 -- ============================================================================
 
 -- | Prompt user for export format via fzf
-pickFmt :: IO (Maybe ExportFmt)
-pickFmt = do
-  m <- Fzf.fzf (V.fromList ["--prompt=export: "]) "csv\nparquet\njson\nndjson"
+pickFmt :: Bool -> IO (Maybe ExportFmt)
+pickFmt tm = do
+  m <- Fzf.fzf tm (V.fromList ["--prompt=export: "]) "csv\nparquet\njson\nndjson"
   case m of
     Just raw -> pure (StrEnum.ofStringQ (T.strip raw))
     Nothing  -> pure Nothing
@@ -102,7 +102,7 @@ exportH :: HandlerFn
 exportH = \a _ arg -> stackIO a
   (if T.null arg
      then do
-       mf <- pickFmt
+       mf <- pickFmt (testMode a)
        case mf of
          Just f  -> run (stk a) f
          Nothing -> pure (stk a)

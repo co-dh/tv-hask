@@ -251,8 +251,8 @@ objValD j k = fromMaybe Null (objVal j k)
 
 -- | Restore a single view from JSON, re-executing the query pipeline.
 --   Errors are caught per-view so partial restoration works.
-restoreView :: Value -> IO (Maybe (View AdbcTable))
-restoreView j = do
+restoreView :: Bool -> Value -> IO (Maybe (View AdbcTable))
+restoreView noSign_ j = do
   let path_ :: Text
       path_ = jd j "path" ""
   if T.null path_
@@ -281,7 +281,7 @@ restoreView j = do
           query_ = Query { base = base_, ops = ops_ }
       tblM <- tryIO $ case vkind_ of
         VkFld p depth -> do
-          mv <- Folder.mkView p depth
+          mv <- Folder.mkView noSign_ p depth
           pure (fmap (Nav.tbl . View.nav) mv)
         _ -> do
           total <- AdbcTable.queryCount query_
@@ -339,8 +339,8 @@ save stk name = do
     ("saved " <> T.pack (show (length views)) <> " view(s) to " <> T.pack p)
   Render.statusMsg ("session saved: " <> nm)
 
-load :: Text -> IO (Maybe (ViewStack AdbcTable))
-load name = do
+load :: Bool -> Text -> IO (Maybe (ViewStack AdbcTable))
+load noSign_ name = do
   p <- sessPath name
   rc <- try (TIO.readFile p) :: IO (Either SomeException Text)
   case rc of
@@ -350,7 +350,7 @@ load name = do
         Left _     -> pure Nothing
         Right json -> do
           let views = jd json "views" V.empty :: Vector Value
-          restored <- fmap (V.mapMaybe id) (V.mapM restoreView views)
+          restored <- fmap (V.mapMaybe id) (V.mapM (restoreView noSign_) views)
           if V.length restored > 0
             then pure (Just (ViewStack
                                { hd = restored V.! 0
@@ -373,11 +373,11 @@ list = do
     isSuffixOf s xs = length xs >= length s && drop (length xs - length s) xs == s
 
 -- | Prompt for session name; returns none on cancel or empty input
-saveName :: IO (Maybe Text)
-saveName = do
+saveName :: Bool -> IO (Maybe Text)
+saveName tm = do
   existing <- list
   let input = T.intercalate "\n" (V.toList existing)
-  m <- Fzf.fzf (V.fromList ["--prompt=session name: ", "--print-query"]) input
+  m <- Fzf.fzf tm (V.fromList ["--prompt=session name: ", "--print-query"]) input
   case m of
     Nothing -> pure Nothing
     Just s  -> do
@@ -390,13 +390,13 @@ saveName = do
           name = sanitize pick
       pure (if T.null name then Nothing else Just name)
 
-loadName :: IO (Maybe Text)
-loadName = do
+loadName :: Bool -> IO (Maybe Text)
+loadName tm = do
   existing <- list
   if V.null existing
     then Render.statusMsg "no saved sessions" >> pure Nothing
     else do
-      m <- Fzf.fzf (V.fromList ["--prompt=load session: "]) (T.intercalate "\n" (V.toList existing))
+      m <- Fzf.fzf tm (V.fromList ["--prompt=load session: "]) (T.intercalate "\n" (V.toList existing))
       pure (fmap T.strip m)
 
 -- | Save session with explicit name (no fzf). Called by socket/dispatch.
@@ -407,9 +407,9 @@ saveWith stk name =
     else save stk (sanitize name)
 
 -- | Load session by name directly (no fzf). Called by socket/dispatch.
-loadWith :: Text -> IO (Maybe (ViewStack AdbcTable))
-loadWith name =
-  if T.null name then pure Nothing else load name
+loadWith :: Bool -> Text -> IO (Maybe (ViewStack AdbcTable))
+loadWith noSign_ name =
+  if T.null name then pure Nothing else load noSign_ name
 
 -- Required FromJSON instances for `Op` and `ViewKind` so `jd` works.
 instance A.FromJSON Op where
@@ -424,7 +424,7 @@ commands = V.fromList
         (\a _ arg -> stackIO a (do saveWith (stk a) arg; pure (stk a)))
   , hdl (mkEntry CmdSessLoad "a" ""  "Load session"  False "")
         (\a _ arg -> stackIO a (do
-          ms <- loadWith arg
+          ms <- loadWith (noSign a) arg
           case ms of
             Just stk' -> pure stk'
             Nothing   -> pure (stk a)))

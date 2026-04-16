@@ -39,13 +39,12 @@ import System.Process (readProcessWithExitCode)
 
 import Optics.Core ((&), (.~))
 
-import Tv.App.Types (HandlerFn, domainH)
-import Tv.CmdConfig (Entry, mkEntry, hdl)
+import Tv.App.Types (AppState(..), HandlerFn, tryStk, viewUp)
+import Tv.CmdConfig (CmdInfo(..), Entry, mkEntry, hdl)
 import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Data.ADBC.Table as Table
 import qualified Tv.Data.ADBC.Ops as Ops
 import qualified Tv.FileFormat as FileFormat
-import qualified Tv.Fzf as Fzf
 import qualified Tv.SourceConfig as SourceConfig
 import Tv.SourceConfig (Config)
 import qualified Tv.Term as Term
@@ -163,12 +162,12 @@ fldView adbc path_ depth disp grp =
        (View.fromTbl adbc path_ 0 grp 0)
 
 -- | Create folder view — config-driven listing, local fallback
-mkView :: Text -> Int -> IO (Maybe (View AdbcTable))
-mkView path_ depth = do
+mkView :: Bool -> Text -> Int -> IO (Maybe (View AdbcTable))
+mkView noSign_ path_ depth = do
   msrc <- SourceConfig.findSource path_
   case msrc of
     Just cfg -> do
-      m <- SourceConfig.runList cfg path_
+      m <- SourceConfig.runList noSign_ cfg path_
       case m of
         Nothing -> pure Nothing
         Just adbc -> do
@@ -188,15 +187,15 @@ mkView path_ depth = do
         Just adbc -> pure (fldView adbc absPath depth disp V.empty)
 
 -- | Push new folder view onto stack
-push :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
-push s = do
+push :: Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
+push noSign_ s = do
   mp <- curPath (View.cur s)
   let path_ = case mp of
         Just p  -> p
         Nothing -> case View.vkind (View.cur s) of
           VkFld p _ -> p
           _         -> "."
-  m <- mkView path_ 1
+  m <- mkView noSign_ path_ 1
   case m of
     Just v  -> pure (Just (View.push s v))
     Nothing -> pure Nothing
@@ -208,9 +207,9 @@ joinPath parent_ entry =
   else Remote.joinRemote parent_ entry
 
 -- | Try to create a view; push or setCur, fallback to original stack
-tryView :: ViewStack AdbcTable -> Text -> Int -> Bool -> IO (Maybe (ViewStack AdbcTable))
-tryView s path_ depth push_ = do
-  m <- mkView path_ depth
+tryView :: Bool -> ViewStack AdbcTable -> Text -> Int -> Bool -> IO (Maybe (ViewStack AdbcTable))
+tryView noSign_ s path_ depth push_ = do
+  m <- mkView noSign_ path_ depth
   case m of
     Just v  -> pure (Just (if push_ then View.push s v else View.setCur s v))
     Nothing -> pure (Just s)
@@ -222,39 +221,39 @@ curDepth s = case View.vkind (View.cur s) of
   _         -> 1
 
 -- | Go to parent directory (backspace key) — works for all folder backends
-goParent :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
-goParent s = do
+goParent :: Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
+goParent noSign_ s = do
   let dir_ = View.curDir (View.cur s)
   msrc <- SourceConfig.findSource dir_
   case msrc of
     Just c -> case SourceConfig.configParent c dir_ of
-      Just par -> tryView s par 1 False
+      Just par -> tryView noSign_ s par 1 False
       Nothing  -> pure (Just s)
     Nothing -> case View.pop s of
       Just s' -> pure (Just s')
-      Nothing -> tryView s (dir_ <> "/..") (curDepth s) False
+      Nothing -> tryView noSign_ s (dir_ <> "/..") (curDepth s) False
 
 -- | Try to open a file as data, fall back to viewer
-openFile :: ViewStack AdbcTable -> Text -> Text -> Maybe Config
+openFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Config
          -> IO (Maybe (ViewStack AdbcTable))
-openFile s curDir_ p cfg = do
+openFile tm noSign_ s curDir_ p cfg = do
   let fullPath = joinPath curDir_ p
   if FileFormat.isData p
     then do
       openPath <- case cfg of
-        Just c  -> SourceConfig.configResolve c fullPath
+        Just c  -> SourceConfig.configResolve noSign_ c fullPath
         Nothing -> pure fullPath
       m <- FileFormat.openFile openPath
       case m of
         Just v  -> pure (Just (View.push s v))
         Nothing -> do
           case cfg of
-            Nothing -> FileFormat.viewFile fullPath
+            Nothing -> FileFormat.viewFile tm fullPath
             _       -> pure ()
           pure (Just s)
     else do
       viewPath <- case cfg of
-        Just c  -> SourceConfig.runDl c fullPath
+        Just c  -> SourceConfig.runDl noSign_ c fullPath
         Nothing -> pure fullPath
       done <-
         if T.isSuffixOf ".gz" p
@@ -267,12 +266,12 @@ openFile s curDir_ p cfg = do
       case done of
         Just s' -> pure (Just s')
         Nothing -> do
-          FileFormat.viewFile viewPath
+          FileFormat.viewFile tm viewPath
           pure (Just s)
 
 -- | Enter directory or view file based on current row
-enter :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
-enter s = do
+enter :: Bool -> Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
+enter tm noSign_ s = do
   let curDir_ = View.curDir (View.cur s)
   cfg <- SourceConfig.findSource curDir_
   -- Attach-based: FileFormat or config-driven (e.g. pg://)
@@ -298,13 +297,13 @@ enter s = do
       case (mTyp, mPth) of
         (Just 'd', Just p) ->
           if p == ".." || T.isSuffixOf "/.." p
-            then goParent s
+            then goParent noSign_ s
             else
               let fullPath = case cfg of
                     Just c  -> joinPath curDir_
                                  (if SourceConfig.dirSuffix c then p <> "/" else p)
                     Nothing -> joinPath curDir_ p
-              in tryView s fullPath (curDepth s) True
+              in tryView noSign_ s fullPath (curDepth s) True
         (Just 'f', Just p) -> do
           -- Config-driven enter: script cmd -> JSON, or enterUrl redirect
           case cfg of
@@ -319,8 +318,8 @@ enter s = do
             Just c | not (T.null (SourceConfig.enterUrl c)) -> do
               let url = SourceConfig.expand (SourceConfig.enterUrl c)
                           (V.singleton ("name", p))
-              tryView s url (curDepth s) True
-            _ -> openFile s curDir_ p cfg
+              tryView noSign_ s url (curDepth s) True
+            _ -> openFile tm noSign_ s curDir_ p cfg
         (Just 's', Just p) ->
           case cfg of
             Just _  -> pure (Just s)
@@ -328,8 +327,8 @@ enter s = do
               let fullPath = joinPath curDir_ p
               (ec, _, _) <- readProcessWithExitCode "test" ["-d", T.unpack fullPath] ""
               if ec == ExitSuccess
-                then tryView s fullPath (curDepth s) True
-                else openFile s curDir_ p Nothing
+                then tryView noSign_ s fullPath (curDepth s) True
+                else openFile tm noSign_ s curDir_ p Nothing
         _ -> pure Nothing
 
 -- | Get trash command (trash-put or gio trash)
@@ -415,9 +414,8 @@ waitYN = do
          else waitYN
 
 -- | Confirm deletion with popup dialog (auto-decline in test mode)
-confirmDel :: Vector Text -> IO Bool
-confirmDel paths = do
-  tm <- Fzf.getTest
+confirmDel :: Bool -> Vector Text -> IO Bool
+confirmDel tm paths = do
   if tm then pure False
   else do
     let title = "Delete " <> T.pack (show (V.length paths)) <> " file(s)?"
@@ -448,10 +446,10 @@ trashFiles paths = do
       V.foldM' step True paths
 
 -- | Refresh folder view at path/depth, preserving cursor row
-refreshView :: ViewStack AdbcTable -> Text -> Int
+refreshView :: Bool -> ViewStack AdbcTable -> Text -> Int
             -> IO (Maybe (ViewStack AdbcTable))
-refreshView s path_ depth = do
-  m <- mkView path_ depth
+refreshView noSign_ s path_ depth = do
+  m <- mkView noSign_ path_ depth
   case m of
     Nothing -> pure (Just s)
     Just v ->
@@ -465,8 +463,8 @@ refreshView s path_ depth = do
                  })
         mv'
 
-del :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
-del s = case View.vkind (View.cur s) of
+del :: Bool -> Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
+del tm noSign_ s = case View.vkind (View.cur s) of
   VkFld path_ depth -> do
     msrc <- SourceConfig.findSource path_
     case msrc of
@@ -476,16 +474,16 @@ del s = case View.vkind (View.cur s) of
         if V.null paths
           then pure Nothing
           else do
-            ok <- confirmDel paths
+            ok <- confirmDel tm paths
             if not ok
               then pure (Just s)
               else do
                 _ <- trashFiles paths
-                refreshView s path_ depth
+                refreshView noSign_ s path_ depth
   _ -> pure Nothing
 
-setDepth :: ViewStack AdbcTable -> Int -> IO (Maybe (ViewStack AdbcTable))
-setDepth s delta = case View.vkind (View.cur s) of
+setDepth :: Bool -> ViewStack AdbcTable -> Int -> IO (Maybe (ViewStack AdbcTable))
+setDepth noSign_ s delta = case View.vkind (View.cur s) of
   VkFld path_ depth -> do
     msrc <- SourceConfig.findSource path_
     case msrc of
@@ -494,31 +492,36 @@ setDepth s delta = case View.vkind (View.cur s) of
         let newDepth = max 1 (depth + delta)
         if newDepth == depth
           then pure (Just s)
-          else refreshView s path_ newDepth
+          else refreshView noSign_ s path_ newDepth
   _ -> pure Nothing
 
 -- | Dispatch folder handler to IO action. Returns Nothing if handler not recognized.
-dispatch :: ViewStack AdbcTable -> Cmd
+dispatch :: Bool -> Bool -> ViewStack AdbcTable -> Cmd
          -> Maybe (IO (Maybe (ViewStack AdbcTable)))
-dispatch s h =
-  let opt f = Just (f s)
-      isFld = case View.vkind (View.cur s) of { VkFld _ _ -> True; _ -> False }
+dispatch tm noSign_ s h =
+  let isFld = case View.vkind (View.cur s) of { VkFld _ _ -> True; _ -> False }
   in case h of
-    CmdFolderPush     -> opt push
-    CmdFolderDepthInc -> Just (setDepth s 1)
-    CmdFolderDepthDec -> Just (setDepth s (-1))
-    CmdFolderDel      -> if isFld then opt del else Nothing
-    CmdFolderParent   -> if isFld then opt goParent else Nothing
-    CmdFolderEnter    -> if isFld then opt enter else Nothing
+    CmdFolderPush     -> Just (push noSign_ s)
+    CmdFolderDepthInc -> Just (setDepth noSign_ s 1)
+    CmdFolderDepthDec -> Just (setDepth noSign_ s (-1))
+    CmdFolderDel      -> if isFld then Just (del tm noSign_ s) else Nothing
+    CmdFolderParent   -> if isFld then Just (goParent noSign_ s) else Nothing
+    CmdFolderEnter    -> if isFld then Just (enter tm noSign_ s) else Nothing
     _                 -> Nothing
+
+folderH :: HandlerFn
+folderH = \a ci _ ->
+  case dispatch (testMode a) (noSign a) (stk a) (ciCmd ci) of
+    Just f  -> tryStk a ci f
+    Nothing -> viewUp a ci
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
-  [ hdl (mkEntry CmdFolderPush     "r" "D"     "Browse folder"              True  "")    (domainH dispatch)
-  , hdl (mkEntry CmdFolderEnter    "r" "<ret>" "Open file or enter directory" True "fld") (domainH dispatch)
-  , hdl (mkEntry CmdFolderParent   ""  "<bs>"  "Go to parent directory"      True "fld") (domainH dispatch)
-  , hdl (mkEntry CmdFolderDel      "r" ""      "Move to trash"              True  "")    (domainH dispatch)
-  , hdl (mkEntry CmdFolderDepthDec ""  ""      "Decrease folder depth"      True  "")    (domainH dispatch)
-  , hdl (mkEntry CmdFolderDepthInc ""  ""      "Increase folder depth"      True  "")    (domainH dispatch)
+  [ hdl (mkEntry CmdFolderPush     "r" "D"     "Browse folder"              True  "")    folderH
+  , hdl (mkEntry CmdFolderEnter    "r" "<ret>" "Open file or enter directory" True "fld") folderH
+  , hdl (mkEntry CmdFolderParent   ""  "<bs>"  "Go to parent directory"      True "fld") folderH
+  , hdl (mkEntry CmdFolderDel      "r" ""      "Move to trash"              True  "")    folderH
+  , hdl (mkEntry CmdFolderDepthDec ""  ""      "Decrease folder depth"      True  "")    folderH
+  , hdl (mkEntry CmdFolderDepthInc ""  ""      "Increase folder depth"      True  "")    folderH
   ]
 
