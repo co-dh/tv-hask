@@ -58,6 +58,7 @@ import Data.Word (Word8, Word32)
 import Optics.TH (makeFieldLabelsNoPrefix)
 import Tv.StrEnum (StrEnum(..))
 import qualified Tv.StrEnum as StrEnum
+import qualified Tv.Util as Log
 
 -- | Join array elements with separator (avoids .toList |> sep.intercalate)
 joinWith :: Vector Text -> Text -> Text
@@ -255,14 +256,11 @@ modifyTableSort
   => a -> Int -> Vector Int -> Vector Int -> Bool -> IO a
 modifyTableSort tbl cursor selIdxs grpIdxs asc =
   let cols = V.fromList
-             . eraseDups
+             . Log.eraseDups
              . V.toList
              . V.filter (not . (`V.elem` grpIdxs))
              $ selIdxs V.++ V.singleton cursor
   in if V.null cols then pure tbl else sortBy cols asc tbl
-  where
-    eraseDups []     = []
-    eraseDups (x:xs) = x : eraseDups (filter (/= x) xs)
 
 -- | Keep columns not in hide set (shared by hideCols impls)
 keepCols :: Int -> Vector Int -> Vector Text -> Vector Text

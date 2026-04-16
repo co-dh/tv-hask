@@ -695,9 +695,10 @@ renderTable
       stBg si = fromMaybe 0 (styles V.!? (si * 2 + 1))
 
   -- build selection bitsets
-  let colBits = IS.fromList (map fromIntegral (V.toList selCols))
-      rowBits = IS.fromList (map fromIntegral (V.toList selRows))
-      hidBits = IS.fromList (map fromIntegral (V.toList hiddenCols))
+  let toIS v = V.foldl' (\acc x -> IS.insert (fromIntegral x) acc) IS.empty v
+      colBits = toIS selCols
+      rowBits = toIS selRows
+      hidBits = toIS hiddenCols
 
   -- Compute base / rendered widths for ALL columns
   let computeDataWidth :: Int -> Int

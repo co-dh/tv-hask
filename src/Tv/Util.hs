@@ -38,6 +38,10 @@ module Tv.Util
   , stripSlash
   , parent
   , dispName
+    -- * Safe list ops
+  , headD
+  , getD
+  , eraseDups
   ) where
 
 import Control.Concurrent (forkIO)
@@ -293,3 +297,18 @@ dispName :: Text -> Text
 dispName pth =
   let parts = filter (not . T.null) (T.splitOn "/" (stripSlash pth))
   in if length parts <= 1 then pth else last parts
+
+-- Safe list ops
+
+headD :: a -> [a] -> a
+headD d []    = d
+headD _ (x:_) = x
+
+getD :: [a] -> Int -> a -> a
+getD xs i d
+  | i < 0 || i >= length xs = d
+  | otherwise               = xs !! i
+
+eraseDups :: Eq a => [a] -> [a]
+eraseDups []     = []
+eraseDups (x:xs) = x : eraseDups (filter (/= x) xs)

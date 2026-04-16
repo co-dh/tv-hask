@@ -24,6 +24,7 @@ import Data.Word (Word64)
 
 import Optics.Core ((&), (.~))
 
+import qualified Tv.Util as Log
 import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk, resetVS)
 import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
 import qualified Tv.Data.ADBC.Adbc as Adbc
@@ -86,16 +87,13 @@ resolveKeys parentGrp curGrp common =
                   . V.map fst
                   . V.filter (\(_, typ) -> not (isNumeric typ))
                   $ common
-      allKeys     = V.fromList (eraseDups (V.toList (existingGrp V.++ autoKeys)))
+      allKeys     = V.fromList (Log.eraseDups (V.toList (existingGrp V.++ autoKeys)))
   in if V.null allKeys
        then Nothing
        else Just
               ( allKeys
               , V.filter (\n -> not (V.elem n allKeys)) (V.map fst common)
               )
-  where
-    eraseDups []     = []
-    eraseDups (x:xs) = x : eraseDups (filter (/= x) xs)
 
 -- | Build FULL OUTER JOIN SQL, execute it, return temp table name.
 buildJoinTbl

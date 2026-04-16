@@ -10,6 +10,7 @@ module Tv.Key
   ) where
 
 import Data.Bits ((.&.))
+import Data.Maybe (fromMaybe)
 import Data.Char (chr)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -70,13 +71,13 @@ toKey ev =
 tokenizeKeys :: Text -> Vector Text
 tokenizeKeys s = V.fromList (go 0)
   where
-    chars = T.unpack s
-    n = length chars
-    at i = chars !! i
+    chars = V.fromList (T.unpack s)
+    n = V.length chars
+    at i = fromMaybe '\0' (chars V.!? i)
     go i
       | i >= n = []
       | at i == '<' =
-          let tag = takeWhile (/= '>') (drop (i + 1) chars)
+          let tag = V.toList (V.takeWhile (/= '>') (V.drop (i + 1) chars))
           in if null tag
                then "<" : go (i + 1)
                else

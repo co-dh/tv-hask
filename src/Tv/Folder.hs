@@ -100,7 +100,7 @@ listDir path_ depth = do
       body = map mkRow (drop 1 lines_)
       mkRow line =
         let parts = T.splitOn "\t" line
-            getD i = fromMaybe "" (safeIdx parts i)
+            getD i = Log.getD parts i ""
             getLastD = case reverse parts of
                          (x:_) -> x
                          []    -> ""
@@ -114,11 +114,6 @@ listDir path_ depth = do
              else line
   pure (hdr <> "\n" <> parentEntry
          <> (if null body then "" else "\n" <> T.intercalate "\n" body))
-  where
-    safeIdx :: [a] -> Int -> Maybe a
-    safeIdx xs i
-      | i < 0 || i >= length xs = Nothing
-      | otherwise = Just (xs !! i)
 
 -- | Find path column index (tries "path", "name", "id" in order)
 pathIdx :: Vector Text -> Maybe Int

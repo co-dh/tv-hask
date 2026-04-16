@@ -24,7 +24,7 @@ module Tv.Theme
 
 import Control.Exception (SomeException, try)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -41,6 +41,7 @@ import Optics.TH (makeFieldLabelsNoPrefix)
 
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Term as Term
+import qualified Tv.Util as Log
 import qualified Tv.Util as Socket  -- Util hosts socket helpers (getPath/pollCmd) and tmpPath
 
 -- | Theme state
@@ -185,11 +186,11 @@ load :: Text -> Text -> IO (Vector Word32)
 load theme variant = do
   content <- loadCsv
   let lines_   = filter (not . T.null) (T.splitOn "\n" content)
-      header   = T.splitOn "," (headD "" lines_)
+      header   = T.splitOn "," (Log.headD "" lines_)
       colNames = drop 2 header  -- style names from header
       row      = findFirst (\line ->
                     let cols = T.splitOn "," line
-                    in getD cols 0 "" == theme && getD cols 1 "" == variant)
+                    in Log.getD cols 0 "" == theme && Log.getD cols 1 "" == variant)
                  (drop 1 lines_)
   case row of
     Nothing -> pure defaultDark
@@ -198,23 +199,16 @@ load theme variant = do
           go sty i
             | i >= length colNames = sty
             | otherwise =
-                case parseStyle (getD colNames i "") of
+                case parseStyle (Log.getD colNames i "") of
                   Nothing  -> go sty (i + 1)
                   Just idx ->
-                    let cell = T.splitOn " " (getD cols (i + 2) "")
-                        fg   = Term.parseColor (getD cell 0 "default")
-                        bg   = Term.parseColor (getD cell 1 "default")
+                    let cell = T.splitOn " " (Log.getD cols (i + 2) "")
+                        fg   = Term.parseColor (Log.getD cell 0 "default")
+                        bg   = Term.parseColor (Log.getD cell 1 "default")
                         sty' = sty V.// [(idx * 2, fg), (idx * 2 + 1, bg)]
                     in go sty' (i + 1)
       pure (go defaultDark 0)
   where
-    headD :: a -> [a] -> a
-    headD d []    = d
-    headD _ (x:_) = x
-    getD :: [a] -> Int -> a -> a
-    getD xs i d
-      | i < 0 || i >= length xs = d
-      | otherwise               = xs !! i
     findFirst :: (a -> Bool) -> [a] -> Maybe a
     findFirst _ []     = Nothing
     findFirst p (x:xs) = if p x then Just x else findFirst p xs
@@ -269,8 +263,8 @@ run cur applyAndRender = do
             case mcmd of
               Just cmdStr -> do
                 let parts = T.splitOn " " cmdStr
-                if headD "" parts == "theme.preview"
-                  then case readMaybe (T.unpack (getD parts 1 "")) of
+                if Log.headD "" parts == "theme.preview"
+                  then case readMaybe (T.unpack (Log.getD parts 1 "")) of
                          Just idx -> do
                            sty <- loadIdx idx
                            applyAndRender sty
@@ -284,17 +278,6 @@ run cur applyAndRender = do
       out <- Fzf.fzfCore opts (T.intercalate "\n" (V.toList items)) poll
       if T.null out
         then pure Nothing
-        else case headMay (T.splitOn "\t" out) >>= (readMaybe . T.unpack) of
+        else case listToMaybe (T.splitOn "\t" out) >>= (readMaybe . T.unpack) of
                Just idx -> Just <$> applyIdx cur idx
                Nothing  -> pure Nothing
-  where
-    headD :: a -> [a] -> a
-    headD d []    = d
-    headD _ (x:_) = x
-    headMay :: [a] -> Maybe a
-    headMay []    = Nothing
-    headMay (x:_) = Just x
-    getD :: [a] -> Int -> a -> a
-    getD xs i d
-      | i < 0 || i >= length xs = d
-      | otherwise               = xs !! i
