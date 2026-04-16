@@ -401,7 +401,7 @@ run s kind = do
                           cols <- TblOps.getCols (Nav.tbl n) (V.singleton xIdx) 0 1
                           let v = T.strip (maybe "" id (cols V.!? 0 >>= (V.!? 0)))
                               cs = T.unpack v
-                              at_ i = if i < length cs then cs !! i else ' '
+                              at_ i = Log.getD cs i ' '
                           if length cs >= 19 && at_ 4 == '-' && at_ 10 == ' '
                             then pure ColTypeTimestamp
                           else if length cs >= 10 && at_ 4 == '-' && at_ 7 == '-'

@@ -36,6 +36,7 @@ import Text.Read (readMaybe)
 import qualified Tv.CmdConfig as CmdConfig
 import Tv.Types (ViewKind, vkindStr)
 import qualified Tv.Term as Term
+import qualified Tv.Util as Log
 
 -- | Global testMode flag (set by App.main)
 testMode :: IORef Bool
@@ -57,7 +58,7 @@ fzfCore :: Vector Text -> Text -> IO () -> IO Text
 fzfCore opts input poll = do
   tm <- getTest
   if tm
-    then pure (headD "" (filter (not . T.null) (T.splitOn "\n" input)))
+    then pure (Log.headD "" (filter (not . T.null) (T.splitOn "\n" input)))
     else do
       inTmux <- fmap (maybe False (const True)) (lookupEnv "TMUX")
       let lines_ = filter (not . T.null) (T.splitOn "\n" input)
@@ -106,9 +107,6 @@ fzfCore opts input poll = do
         Term.clear
         Term.present
       pure (T.strip out)
-  where
-    headD d []    = d
-    headD _ (x:_) = x
 
 -- | Single select: returns none if empty/cancelled
 fzf :: Vector Text -> Text -> IO (Maybe Text)
@@ -149,11 +147,8 @@ flatItems vk = do
 -- | Parse flat selection: extract handler name before first |
 parseSel :: Text -> Maybe Text
 parseSel sel =
-  let h = T.stripEnd (headD "" (T.splitOn " | " sel))
+  let h = T.stripEnd (Log.headD "" (T.splitOn " | " sel))
   in if T.null h then Nothing else Just h
-  where
-    headD d []    = d
-    headD _ (x:_) = x
 
 -- | Command mode: space -> flat fzf menu -> return handler name
 -- poll: callback invoked while fzf popup is open (for external socket dispatch + re-render)

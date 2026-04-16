@@ -138,9 +138,7 @@ searchPoll tbl_ curCol vals sRef preview = do
           Nothing -> pure ()
           Just cmdStr -> do
             let parts = T.splitOn " " cmdStr
-                headD d []    = d
-                headD _ (x:_) = x
-            if headD "" parts /= "search.preview"
+            if Util.headD "" parts /= "search.preview"
               then pure ()
               else do
                 let p1 = case drop 1 parts of { (x:_) -> x; _ -> "" }

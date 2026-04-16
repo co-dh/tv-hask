@@ -52,6 +52,8 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Optics.Core (Lens', (%), (&), (.~), (^.), over)
 import Optics.TH (makeFieldLabelsNoPrefix)
+import Data.List (sortBy)
+import Data.Ord (comparing)
 import Tv.CmdConfig (Entry, mkEntry, navE)
 import Tv.Types
   ( Cmd(..)
@@ -110,16 +112,8 @@ dispOrder group names =
       grpSorted =
         let filtered = V.filter isGrp (V.enumFromN 0 n)
             key i = maybe 0 id (idxOf group (getD i))
-        in V.fromList (sortByKey key (V.toList filtered))
+        in V.fromList (sortBy (comparing key) (V.toList filtered))
   in grpSorted V.++ V.filter (not . isGrp) (V.enumFromN 0 n)
-  where
-    sortByKey :: (Int -> Int) -> [Int] -> [Int]
-    sortByKey _ [] = []
-    sortByKey k (x:xs) =
-      let kx = k x
-          lt = [y | y <- xs, k y <  kx]
-          ge = [y | y <- xs, k y >= kx]
-      in sortByKey k lt ++ [x] ++ sortByKey k ge
 
 -- Get column index at display position
 idxAt :: Vector Text -> Vector Text -> Int -> Int

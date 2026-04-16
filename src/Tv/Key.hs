@@ -10,6 +10,7 @@ module Tv.Key
   ) where
 
 import Data.Bits ((.&.))
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Char (chr)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -72,7 +73,7 @@ tokenizeKeys s = V.fromList (go 0)
   where
     chars = T.unpack s
     n = length chars
-    at i = chars !! i
+    at i = fromMaybe '\0' (listToMaybe (drop i chars))
     go i
       | i >= n = []
       | at i == '<' =

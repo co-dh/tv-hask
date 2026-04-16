@@ -12,6 +12,7 @@ module Tv.Join
   , commands
   ) where
 
+import Data.Maybe (listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
@@ -80,7 +81,7 @@ prepareView tbl suffix = do
 -- | Execute join with resolved op. Shared by run (fzf) and runWith (socket).
 execJoin :: ViewStack AdbcTable -> JoinOp -> Vector Text -> IO (Maybe (ViewStack AdbcTable))
 execJoin s op leftGrp = do
-  case headMay (View.tl s) of
+  case listToMaybe (View.tl s) of
     Nothing -> pure Nothing
     Just parent -> do
       (lName, lSql) <- prepareView (Nav.tbl (View.nav parent)) "l"
@@ -114,7 +115,7 @@ execJoin s op leftGrp = do
 -- | Resolve available ops from stack state
 resolveOps :: ViewStack AdbcTable -> Maybe (Vector JoinOp, Vector Text)
 resolveOps s = do
-  parent <- headMay (View.tl s)
+  parent <- listToMaybe (View.tl s)
   let leftGrp = Nav.grp (View.nav parent)
       joinOk  = V.length leftGrp > 0 && leftGrp == Nav.grp (View.nav (View.cur s))
   pure (if joinOk then allOps else V.fromList [JoinUnion, JoinDiff], leftGrp)
@@ -123,7 +124,7 @@ resolveOps s = do
 run :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 run s = case resolveOps s of
   Nothing -> pure Nothing
-  Just (ops, leftGrp) -> case headMay (View.tl s) of
+  Just (ops, leftGrp) -> case listToMaybe (View.tl s) of
     Nothing -> pure Nothing
     Just parent -> do
       (lName, _) <- prepareView (Nav.tbl (View.nav parent)) "l"
@@ -148,10 +149,6 @@ runWith s idxStr = case resolveOps s of
         let op = maybe JoinInner id (ops V.!? idx)
         in execJoin s op leftGrp
 
--- local helper (Lean: Array.head?/List.head?)
-headMay :: [a] -> Maybe a
-headMay []    = Nothing
-headMay (x:_) = Just x
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList

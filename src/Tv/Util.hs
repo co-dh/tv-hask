@@ -1,7 +1,8 @@
 {-
   Util: small utility modules consolidated into one file.
   Contents: Log (error/debug logging), TmpDir (per-process temp dir),
-  Socket (unix socket IPC), Remote (URI path ops).
+  Socket (unix socket IPC), Remote (URI path ops),
+  Safe list ops (headD, getD).
 -}
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Util
@@ -38,6 +39,9 @@ module Tv.Util
   , stripSlash
   , parent
   , dispName
+    -- * Safe list ops
+  , headD
+  , getD
   ) where
 
 import Control.Concurrent (forkIO)
@@ -45,6 +49,7 @@ import Control.Exception (SomeException, try, bracket_)
 import Control.Monad (forever, void)
 import qualified Data.ByteString as BS
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef')
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -293,3 +298,12 @@ dispName :: Text -> Text
 dispName pth =
   let parts = filter (not . T.null) (T.splitOn "/" (stripSlash pth))
   in if length parts <= 1 then pth else last parts
+
+-- Safe list ops
+
+headD :: a -> [a] -> a
+headD d []    = d
+headD _ (x:_) = x
+
+getD :: [a] -> Int -> a -> a
+getD xs i d = fromMaybe d (listToMaybe (drop i xs))

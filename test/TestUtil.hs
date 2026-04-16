@@ -32,15 +32,24 @@ import qualified System.IO as IO
 import System.Process (readProcessWithExitCode, readCreateProcessWithExitCode, proc, CreateProcess(..))
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
+import System.IO.Unsafe (unsafePerformIO)
 
--- | Path to the tv binary the tests shell out to. In the Lean reference this
---   was `.lake/build/bin/tv`; in the Haskell port it's the cabal-built binary.
+-- | Path to the tv binary, resolved once via `cabal list-bin`.
 bin :: FilePath
-bin = "dist-newstyle/build/x86_64-linux/ghc-9.6.6/tv-hask-0.1.0.0/x/tv/build/tv/tv"
+bin = unsafePerformIO resolveBin
+{-# NOINLINE bin #-}
 
--- | Alias kept for call sites that explicitly spawn the Haskell binary.
 tvHaskBin :: FilePath
 tvHaskBin = bin
+
+resolveBin :: IO FilePath
+resolveBin = do
+  (code, out, _) <- readProcessWithExitCode "cabal" ["-v0", "list-bin", "tv"] ""
+  case code of
+    ExitSuccess -> let p = filter (/= '\n') out
+                   in if null p then pure fallback else pure p
+    _           -> pure fallback
+  where fallback = "dist-newstyle/build/x86_64-linux/ghc-9.6.6/tv-hask-0.1.0.0/x/tv/build/tv/tv"
 
 log :: Text -> IO ()
 log msg = withFile "test.log" AppendMode $ \h -> do

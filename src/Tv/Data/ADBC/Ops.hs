@@ -104,11 +104,9 @@ toText t = do
 -- | Extract file path from PRQL base: "from `path`" -> Just "path"
 extractPath :: Text -> Maybe Text
 extractPath base =
-  let parts = T.splitOn "`" base
-  in if length parts >= 3
-       then let p = parts !! 1
-            in if T.null p then Nothing else Just p
-       else Nothing
+  case T.splitOn "`" base of
+    _ : p : _ | not (T.null p) -> Just p
+    _                          -> Nothing
 
 -- | PRQL: column stats from parquet file metadata (instant, no data scan)
 metaPrql :: Text -> Text
