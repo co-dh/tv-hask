@@ -144,7 +144,7 @@ test_info = do
   log "info"
   out <- runHask "I" "data/basic.csv" []
   assertBool "Info overlay shown after I toggle"
-    (contains out "derive" || contains out "export")
+    (contains out "group by" || contains out "command menu")
 
 -- === Cursor tracking ===
 -- Pure: nav_grp_col (l! groups c1, cursor tracks)
