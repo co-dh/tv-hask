@@ -40,14 +40,12 @@ import Tv.AppF (AppM, Interp(..))
 import Tv.App.Types
 import qualified Tv.CmdConfig as CmdConfig
 import Tv.CmdConfig (Entry(..), CmdInfo(..), mkEntry, hdl)
-import qualified Tv.Derive as Derive
 import qualified Tv.Diff as Diff
 import qualified Tv.Export as Export
 import qualified Tv.Filter as Filter
 import qualified Tv.Folder as Folder
 import qualified Tv.Freq as Freq
 import qualified Tv.Fzf as Fzf
-import qualified Tv.Join as Join
 import qualified Tv.Key as Key
 import Optics.Core ((&), (.~), (%~))
 import qualified Tv.Meta as Meta
@@ -57,7 +55,7 @@ import qualified Tv.Render as Render
 import Tv.Render (tabLine)
 import qualified Tv.Session as Session
 import qualified Tv.Sparkline as Sparkline
-import qualified Tv.Split as Split
+import qualified Tv.Ops as Ops
 import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
@@ -125,9 +123,9 @@ runMenu a = do
 -- Command table: feature-module commands + local wiring --
 
 commands :: Vector (Entry, Maybe HandlerFn)
-commands = Nav.commands <> Filter.commands <> Split.commands <> Derive.commands
+commands = Nav.commands <> Filter.commands <> Ops.commands
   <> Plot.commands <> Meta.commands <> Folder.commands
-  <> Export.commands <> Session.commands <> Join.commands
+  <> Export.commands <> Session.commands
   <> Transpose.commands <> Diff.commands <> localCmds
 
 freqH :: HandlerFn

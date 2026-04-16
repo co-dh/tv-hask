@@ -41,7 +41,6 @@ library
     Tv.Data.DuckDB.Table
     Tv.Data.DuckDB
     Tv.Data.Text
-    Tv.Derive
     Tv.Diff
     Tv.Export
     Tv.FileFormat
@@ -49,7 +48,6 @@ library
     Tv.Folder
     Tv.Ftp
     Tv.Fzf
-    Tv.Join
     Tv.Key
     Tv.Meta
     Tv.Nav
@@ -59,7 +57,7 @@ library
     Tv.Session
     Tv.SourceConfig
     Tv.Sparkline
-    Tv.Split
+    Tv.Ops
     Tv.StatusAgg
 
     Tv.Term
