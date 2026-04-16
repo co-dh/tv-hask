@@ -10,8 +10,6 @@ module Tv.Sparkline
   ) where
 
 import Control.Exception (SomeException, try)
-import Control.Monad (forM_, when)
-import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -24,7 +22,7 @@ import qualified Tv.Data.ADBC.Prql as Prql
 import Tv.Data.ADBC.Ops (quoteId)
 import qualified Tv.Data.ADBC.Table as Table
 import Tv.Data.ADBC.Table (AdbcTable)
-import Tv.Types (ColType (..), colTypeIsNumeric, joinWith)
+import Tv.Types (colTypeIsNumeric, joinWith)
 import qualified Tv.Util as Log
 
 -- 9 levels: space + 8 Unicode block elements
@@ -42,25 +40,21 @@ compute t nBars = do
   if V.null names || Table.nRows t == 0
     then pure empty
     else do
-      partsRef   <- newIORef (V.empty :: Vector Text)
-      numIdxsRef <- newIORef (V.empty :: Vector Int)
-      forM_ [0 .. V.length names - 1] $ \i -> do
-        let tp = fromMaybe ColTypeOther (types V.!? i)
-        when (colTypeIsNumeric tp) $ do
-          let q = quoteId (fromMaybe "" (names V.!? i))
-              -- LEAST clamps bucket to [0, nBars-1]; CASE handles constant columns
-              sql = "SELECT CASE WHEN mx = mn THEN " <> T.pack (show (nBars `div` 2)) <> " "
-                 <> "ELSE LEAST(CAST(FLOOR((" <> q <> "::DOUBLE - mn) / (mx - mn + 1e-30) * "
-                 <> T.pack (show nBars) <> ") AS INTEGER), " <> T.pack (show (nBars - 1)) <> ") "
-                 <> "END AS bucket, COUNT(*) AS cnt "
-                 <> "FROM __src, (SELECT MIN(" <> q <> "::DOUBLE) AS mn, MAX("
-                 <> q <> "::DOUBLE) AS mx FROM __src) "
-                 <> "WHERE " <> q <> " IS NOT NULL GROUP BY bucket ORDER BY bucket"
-          modifyIORef' partsRef (`V.snoc`
-            ("SELECT " <> T.pack (show i) <> " AS col_idx, bucket, cnt FROM (" <> sql <> ")"))
-          modifyIORef' numIdxsRef (`V.snoc` i)
-      parts   <- readIORef partsRef
-      numIdxs <- readIORef numIdxsRef
+      let stepQuery (ps, is) i name = case types V.!? i of
+            Just tp | colTypeIsNumeric tp ->
+              let q = quoteId name
+                  -- LEAST clamps bucket to [0, nBars-1]; CASE handles constant columns
+                  sql = "SELECT CASE WHEN mx = mn THEN " <> T.pack (show (nBars `div` 2)) <> " "
+                     <> "ELSE LEAST(CAST(FLOOR((" <> q <> "::DOUBLE - mn) / (mx - mn + 1e-30) * "
+                     <> T.pack (show nBars) <> ") AS INTEGER), " <> T.pack (show (nBars - 1)) <> ") "
+                     <> "END AS bucket, COUNT(*) AS cnt "
+                     <> "FROM __src, (SELECT MIN(" <> q <> "::DOUBLE) AS mn, MAX("
+                     <> q <> "::DOUBLE) AS mx FROM __src) "
+                     <> "WHERE " <> q <> " IS NOT NULL GROUP BY bucket ORDER BY bucket"
+              in ( V.snoc ps ("SELECT " <> T.pack (show i) <> " AS col_idx, bucket, cnt FROM (" <> sql <> ")")
+                 , V.snoc is i )
+            _ -> (ps, is)
+          (parts, numIdxs) = V.ifoldl' stepQuery (V.empty :: Vector Text, V.empty :: Vector Int) names
       if V.null parts
         then pure empty
         else do
@@ -85,36 +79,37 @@ compute t nBars = do
                 Right qr_ -> do
                   nr <- Adbc.nrows qr_
                   let nrI = fromIntegral nr :: Int
+                      emptyBuckets = V.map (const (V.empty :: Vector (Int, Int))) numIdxs
+                      stepRow cb r_ = do
+                        let rW = fromIntegral r_ :: Word64
+                        colIdx <- Adbc.cellInt qr_ rW 0
+                        bucket <- Adbc.cellInt qr_ rW 1
+                        cnt    <- Adbc.cellInt qr_ rW 2
+                        pure $ case V.findIndex (== fromIntegral colIdx) numIdxs of
+                          Just j ->
+                            let cur = fromMaybe V.empty (cb V.!? j)
+                            in cb V.// [(j, V.snoc cur (fromIntegral bucket, fromIntegral cnt))]
+                          Nothing -> cb
                   -- Parse results into bucket->count arrays per column
-                  colBucketsRef <- newIORef (V.map (const (V.empty :: Vector (Int, Int))) numIdxs)
-                  forM_ [0 .. nrI - 1] $ \r_ -> do
-                    let rW = fromIntegral r_ :: Word64
-                    colIdx <- Adbc.cellInt qr_ rW 0
-                    bucket <- Adbc.cellInt qr_ rW 1
-                    cnt    <- Adbc.cellInt qr_ rW 2
-                    forM_ [0 .. V.length numIdxs - 1] $ \j ->
-                      when (fromMaybe 0 (numIdxs V.!? j) == fromIntegral colIdx) $
-                        modifyIORef' colBucketsRef $ \cb ->
-                          let cur = fromMaybe V.empty (cb V.!? j)
-                          in cb V.// [(j, V.snoc cur (fromIntegral bucket, fromIntegral cnt))]
-                  colBuckets <- readIORef colBucketsRef
+                  colBuckets <- V.foldM' stepRow emptyBuckets (V.enumFromN (0 :: Int) nrI)
                   -- Build sparkline string per column
-                  resultRef <- newIORef empty
-                  forM_ [0 .. V.length numIdxs - 1] $ \j -> do
-                    let buckets = fromMaybe V.empty (colBuckets V.!? j)
-                    when (not (V.null buckets)) $ do
-                      let counts0 = V.replicate nBars (0 :: Int)
-                          counts = V.foldl'
-                            (\acc (b, c) -> if b < nBars then acc V.// [(b, c)] else acc)
-                            counts0 buckets
-                          maxCnt = V.foldl' max 0 counts
-                          spark = if maxCnt == 0
-                                    then T.replicate nBars " "
-                                    else T.pack $ V.toList $ V.map
-                                      (\c ->
-                                        let level = (c * 8 + maxCnt - 1) `div` maxCnt  -- ceil: 0->0, >0->1..8
-                                        in fromMaybe ' ' (blocks V.!? level))
-                                      counts
-                      modifyIORef' resultRef $ \res ->
-                        res V.// [(fromMaybe 0 (numIdxs V.!? j), spark)]
-                  readIORef resultRef
+                  let sparkFor buckets =
+                        if V.null buckets
+                          then Nothing
+                          else
+                            let counts0 = V.replicate nBars (0 :: Int)
+                                counts = V.foldl'
+                                  (\acc (b, c) -> if b < nBars then acc V.// [(b, c)] else acc)
+                                  counts0 buckets
+                                maxCnt = V.foldl' max 0 counts
+                            in Just $ if maxCnt == 0
+                                 then T.replicate nBars " "
+                                 else T.pack $ V.toList $ V.map
+                                   (\c ->
+                                     let level = (c * 8 + maxCnt - 1) `div` maxCnt  -- ceil: 0->0, >0->1..8
+                                     in fromMaybe ' ' (blocks V.!? level))
+                                   counts
+                      updates = V.toList $ V.mapMaybe id $ V.zipWith
+                        (\i buckets -> (,) i <$> sparkFor buckets)
+                        numIdxs colBuckets
+                  pure (empty V.// updates)
