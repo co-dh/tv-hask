@@ -33,33 +33,27 @@ data ColType
   | ColTypeOther
   deriving (Eq, Show)
 
-instance StrEnum ColType where
-  toString ColTypeInt       = "int"
-  toString ColTypeFloat     = "float"
-  toString ColTypeDecimal   = "decimal"
-  toString ColTypeStr       = "str"
-  toString ColTypeDate      = "date"
-  toString ColTypeTime      = "time"
-  toString ColTypeTimestamp = "timestamp"
-  toString ColTypeBool      = "bool"
-  toString ColTypeOther     = "other"
-  all = V.fromList
-    [ ColTypeInt, ColTypeFloat, ColTypeDecimal, ColTypeStr
-    , ColTypeDate, ColTypeTime, ColTypeTimestamp, ColTypeBool, ColTypeOther ]
-  ofStringQ "int"       = Just ColTypeInt
-  ofStringQ "float"     = Just ColTypeFloat
-  ofStringQ "decimal"   = Just ColTypeDecimal
-  ofStringQ "str"       = Just ColTypeStr
-  ofStringQ "date"      = Just ColTypeDate
-  ofStringQ "time"      = Just ColTypeTime
-  ofStringQ "timestamp" = Just ColTypeTimestamp
-  ofStringQ "bool"      = Just ColTypeBool
-  ofStringQ "other"     = Just ColTypeOther
-  ofStringQ _           = Nothing
+colTypeStr :: ColType -> Text
+colTypeStr ColTypeInt       = "int"
+colTypeStr ColTypeFloat     = "float"
+colTypeStr ColTypeDecimal   = "decimal"
+colTypeStr ColTypeStr       = "str"
+colTypeStr ColTypeDate      = "date"
+colTypeStr ColTypeTime      = "time"
+colTypeStr ColTypeTimestamp = "timestamp"
+colTypeStr ColTypeBool      = "bool"
+colTypeStr ColTypeOther     = "other"
 
--- ofString with fallback (FFI boundary returns unknown types)
 colTypeOfString :: Text -> ColType
-colTypeOfString s = maybe ColTypeOther id (StrEnum.ofStringQ s)
+colTypeOfString "int"       = ColTypeInt
+colTypeOfString "float"     = ColTypeFloat
+colTypeOfString "decimal"   = ColTypeDecimal
+colTypeOfString "str"       = ColTypeStr
+colTypeOfString "date"      = ColTypeDate
+colTypeOfString "time"      = ColTypeTime
+colTypeOfString "timestamp" = ColTypeTimestamp
+colTypeOfString "bool"      = ColTypeBool
+colTypeOfString _           = ColTypeOther
 
 colTypeIsNumeric :: ColType -> Bool
 colTypeIsNumeric ColTypeInt     = True

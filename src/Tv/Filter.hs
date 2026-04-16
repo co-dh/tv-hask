@@ -35,11 +35,10 @@ import Text.Read (readMaybe)
 import Optics.Core ((%), (&), (.~), (^.), over)
 import Tv.Nav (NavState, rowCurL, colCurL, finClamp)
 import qualified Tv.Nav as Nav
-import Tv.Types (Cmd(..), TblOps, ColType, colTypeIsNumeric)
+import Tv.Types (Cmd(..), TblOps, ColType, colTypeIsNumeric, colTypeStr)
 import qualified Tv.Types as TblOps
 import Tv.View (View(..), ViewStack, cur, setCur, push, tbl)
 import qualified Tv.View as View
-import qualified Tv.StrEnum as StrEnum
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Util as Util
 import Tv.Data.ADBC.Table (AdbcTable)
@@ -228,7 +227,7 @@ searchDir s fwd = do
 rowFilter :: TblOps t => ViewStack t -> IO (ViewStack t)
 rowFilter s = withDistinct s $ \_curCol curName vals -> do
   let typ    = TblOps.colType (tbl s) _curCol
-      typStr = StrEnum.toString typ
+      typStr = colTypeStr typ
       header = TblOps.filterPrompt (tbl s) curName typStr
   mr <- Fzf.fzf
           (V.fromList ["--print-query", "--header=" <> header, "--prompt=filter > "])

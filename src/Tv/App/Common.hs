@@ -76,7 +76,7 @@ data AppState = AppState
   { stk         :: ViewStack AdbcTable
   , vs          :: ViewState
   , theme       :: Theme.State
-  , info        :: UIInfo.State
+  , info        :: Bool                     -- info overlay visible
   , prevScroll  :: Int
   , heatMode    :: Word8                    -- 0=off, 1=numeric, 2=categorical, 3=both
   , sparklines  :: Vector Text              -- per-column sparkline cache (empty = recompute)
@@ -382,7 +382,7 @@ commands = V.fromList
                                    (heatMode a') (sparklines a')
                     writeIORef ref (a' { stk = View.setCur stk' v', vs = vs' })
                     renderTabLine (View.tabNames stk') 0 (Replay.opsStr (View.cur stk'))
-                    when (UIInfo.vis (info a')) $ do
+                    when (info a') $ do
                       h <- Term.height; w <- Term.width
                       UIInfo.render (fromIntegral h) (fromIntegral w) (View.vkind (View.cur stk'))
                     Term.present
@@ -523,7 +523,7 @@ commands = V.fromList
                                (heatMode a') (sparklines a')
                 writeIORef ref (a' { stk = View.setCur (stk a') v', vs = vs' })
                 renderTabLine (View.tabNames (stk a')) 0 (Replay.opsStr (View.cur (stk a')))
-                when (UIInfo.vis (info a')) $ do
+                when (info a') $ do
                   h <- Term.height; w <- Term.width
                   UIInfo.render (fromIntegral h) (fromIntegral w)
                     (View.vkind (View.cur (stk a')))
@@ -613,7 +613,7 @@ renderBase a0 = do
             (View.path (View.cur (stk a'')))
             (Nav.curColIdx (View.nav (View.cur (stk a''))))
   let a''' = a'' { aggCache = agg' }
-  when (UIInfo.vis (info a''')) $ do
+  when (info a''') $ do
     h <- Term.height; w <- Term.width
     UIInfo.render (fromIntegral h) (fromIntegral w) (View.vkind (View.cur (stk a''')))
   pure a'''

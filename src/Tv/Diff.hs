@@ -174,7 +174,7 @@ run s = case tl s of
         Just (allKeys, valCols) -> do
           tblName <- buildJoinTbl left right allKeys valCols common
           sameHide_ <- renameDiffCols tblName valCols
-          let query_ = Prql.defaultQuery & #base .~ ("from " <> tblName)
+          let query_ = Prql.defaultQuery { Prql.base = "from " <> tblName }
           total <- Table.queryCount query_
           mAdbc <- Table.requery query_ total
           case mAdbc of

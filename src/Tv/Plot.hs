@@ -44,6 +44,7 @@ import Tv.Types
   , Column(..)
   , PlotKind(..)
   , TblOps
+  , colTypeStr
   , colTypeIsNumeric
   , colTypeIsTime
   )
@@ -390,7 +391,7 @@ run s kind = do
                   let yType = Nav.curColType n
                   if not (colTypeIsNumeric yType)
                     then err s ("y-axis '" <> yName <> "' must be numeric (got "
-                                 <> StrEnum.toString yType <> ")")
+                                 <> colTypeStr yType <> ")")
                     else do
                       let nr = TblOps.totalRows (Nav.tbl n)
                           xType0 = TblOps.colType (Nav.tbl n) xIdx
@@ -412,8 +413,8 @@ run s kind = do
                             then pure ColTypeTime
                           else pure xType0
                       Log.write "plot"
-                        ("xType=" <> StrEnum.toString xType
-                          <> " (raw=" <> StrEnum.toString xType0 <> ")"
+                        ("xType=" <> colTypeStr xType
+                          <> " (raw=" <> colTypeStr xType0 <> ")"
                           <> " xIdx=" <> T.pack (show xIdx)
                           <> " xName=" <> xName)
                       let xIsTime = colTypeIsTime xType

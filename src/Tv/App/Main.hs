@@ -99,7 +99,7 @@ initState stk_ th = AppState
   { stk         = stk_
   , vs          = Render.viewStateDefault
   , theme       = th
-  , info        = UIInfo.State { UIInfo.vis = False }
+  , info        = False
   , prevScroll  = 0
   , heatMode    = 0
   , sparklines  = V.empty
