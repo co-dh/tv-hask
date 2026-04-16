@@ -38,14 +38,15 @@ import Tv.App.Types (AppState(..), HandlerFn, onStk, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (NavState, rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
-import Tv.Types (Cmd(..), ColType, isNumeric, typeStr, filterPrql, filterPrompt)
+import Tv.Types (Cmd(..), ColType, isNumeric, typeStr, filterPrql, filterPrompt, headD)
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.View (View(..), ViewStack, cur, setCur, push, tbl)
 import qualified Tv.View as View
 import qualified Tv.Fzf as Fzf
-import qualified Tv.Util as Util
+import qualified Tv.Socket as Socket
+import qualified Tv.Tmp as Tmp
 
 -- | Move row cursor to target index (pure helper)
 moveRowTo
@@ -129,12 +130,12 @@ searchPoll tbl_ curCol vals sRef preview = do
   cache   <- newIORef (HM.empty :: HashMap Int (Maybe Int))
   let poll :: IO ()
       poll = do
-        mc <- Util.pollCmd
+        mc <- Socket.pollCmd
         case mc of
           Nothing -> pure ()
           Just cmdStr -> do
             let parts = T.splitOn " " cmdStr
-            if Util.headD "" parts /= "search.preview"
+            if headD "" parts /= "search.preview"
               then pure ()
               else do
                 let p1 = case drop 1 parts of { (x:_) -> x; _ -> "" }
@@ -174,8 +175,8 @@ rowSearchLive tm s preview = withDistinct s $ \curCol curName vals -> do
             Just rowIdx -> pure (moveRowTo s rowIdx (Just (curCol, result)))
     else do
       -- setup: socat script for fzf execute-silent, indexed items for shell-safe args
-      sockPath <- Util.getPath
-      script   <- Util.tmpPath "search-preview.sh"
+      sockPath <- Socket.getPath
+      script   <- Tmp.tmpPath "search-preview.sh"
       TIO.writeFile script
         (T.pack ("#!/bin/sh\necho \"search.preview $1\" | socat - UNIX-CONNECT:" ++ sockPath))
       let items = V.imap (\i v -> T.pack (show i) <> "\t" <> v) vals

@@ -33,9 +33,8 @@ import Text.Read (readMaybe)
 
 import Tv.CmdConfig (CmdCache)
 import qualified Tv.CmdConfig as CmdConfig
-import Tv.Types (ViewKind, vkindStr)
+import Tv.Types (ViewKind, vkindStr, headD)
 import qualified Tv.Term as Term
-import qualified Tv.Util as Log
 
 -- | Core fzf: testMode returns first line, else spawn fzf
 -- Uses --tmux popup if in tmux (keeps table visible), otherwise compact at bottom
@@ -43,7 +42,7 @@ import qualified Tv.Util as Log
 fzfCore :: Bool -> Vector Text -> Text -> IO () -> IO Text
 fzfCore tm opts input poll = do
   if tm
-    then pure (Log.headD "" (filter (not . T.null) (T.splitOn "\n" input)))
+    then pure (headD "" (filter (not . T.null) (T.splitOn "\n" input)))
     else do
       inTmux <- fmap (maybe False (const True)) (lookupEnv "TMUX")
       let lines_ = filter (not . T.null) (T.splitOn "\n" input)
@@ -131,7 +130,7 @@ flatItems cc vk =
 -- | Parse flat selection: extract handler name before first |
 parseSel :: Text -> Maybe Text
 parseSel sel =
-  let h = T.stripEnd (Log.headD "" (T.splitOn " | " sel))
+  let h = T.stripEnd (headD "" (T.splitOn " | " sel))
   in if T.null h then Nothing else Just h
 
 -- | Command mode: space -> flat fzf menu -> return handler name

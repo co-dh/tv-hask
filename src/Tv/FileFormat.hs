@@ -34,7 +34,7 @@ import System.Process
   )
 
 import qualified Tv.Term as Term
-import qualified Tv.Util as Log
+import qualified Tv.Log as Log
 import Tv.View (View)
 import qualified Tv.View as View
 import Tv.Types (escSql)

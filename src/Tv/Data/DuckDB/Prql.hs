@@ -49,7 +49,7 @@ import Tv.Types
   , Op (..)
   , joinWith
   )
-import qualified Tv.Util as Log
+import qualified Tv.Log as Log
 
 -- | PRQL query: base table + operations (PRQL-specific base format)
 data Query = Query

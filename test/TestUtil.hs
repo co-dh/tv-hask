@@ -25,7 +25,7 @@ import Control.Exception (catch, SomeException)
 import Data.IORef (IORef, readIORef, writeIORef)
 import Data.Char (isAlpha, isDigit)
 import Data.Text (Text)
-import Tv.Util (getD)
+import Tv.Types (getD)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.IO (hFlush, stderr, withFile, IOMode (..), Handle)

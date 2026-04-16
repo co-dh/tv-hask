@@ -13,7 +13,7 @@ module TestLargeData (tests) where
 import Prelude hiding (log)
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Tv.Util as Util
+import Tv.Types (headD, getD)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertBool, Assertion)
 import TestUtil
@@ -78,7 +78,7 @@ test_page_down_scrolls = withFixture "data/sample.parquet" $ do
 test_last_col_visible :: Assertion
 test_last_col_visible = withFixture "data/sample.parquet" $ do
   log "last_col_visible"
-  first <- Util.headD "" . dataLines <$> run "llllllllllllllllllll" "data/sample.parquet" []
+  first <- headD "" . dataLines <$> run "llllllllllllllllllll" "data/sample.parquet" []
   let nonWs = T.length (T.filter (not . isWs) first)
   assertBool "Last col shows data" (nonWs > 0)
   where
@@ -90,14 +90,14 @@ test_last_col_visible = withFixture "data/sample.parquet" $ do
 test_parquet_sort_asc :: Assertion
 test_parquet_sort_asc = withFixture "data/sample.parquet" $ do
   log "parquet_sort_asc"
-  first <- Util.headD "" . dataLines <$> run "l[" "data/sample.parquet" []
+  first <- headD "" . dataLines <$> run "l[" "data/sample.parquet" []
   assertBool "[ on age sorts asc, age=18" (contains first " 18 ")
 
 -- Sort desc on age column gives age=80 first
 test_parquet_sort_desc :: Assertion
 test_parquet_sort_desc = withFixture "data/sample.parquet" $ do
   log "parquet_sort_desc"
-  first <- Util.headD "" . dataLines <$> run "l]" "data/sample.parquet" []
+  first <- headD "" . dataLines <$> run "l]" "data/sample.parquet" []
   assertBool "] on age sorts desc, age=80" (contains first " 80 ")
 
 -- === Meta tests (sample.parquet) ===
@@ -133,7 +133,7 @@ test_freq_enter_parquet = withFixture "data/sample.parquet" $ do
 test_freq_parquet_key_values :: Assertion
 test_freq_parquet_key_values = withFixture "data/nyse10k.parquet" $ do
   log "freq_parquet_key_values"
-  first <- Util.headD "" . dataLines <$> run "lF" "data/nyse10k.parquet" []
+  first <- headD "" . dataLines <$> run "lF" "data/nyse10k.parquet" []
   assertBool
     "Freq key column shows names, not counts"
     (not (T.isPrefixOf " 5180" first) && not (T.isPrefixOf " 2592" first))
@@ -158,7 +158,7 @@ test_freq_sort_preserves_total = withFixture "data/nyse/1.parquet" $ do
 test_freq_sort_asc_parquet :: Assertion
 test_freq_sort_asc_parquet = withFixture "data/nyse/1.parquet" $ do
   log "freq_sort_asc"
-  first <- Util.headD "" . dataLines <$> run "llFll[" "data/nyse/1.parquet" []
+  first <- headD "" . dataLines <$> run "llFll[" "data/nyse/1.parquet" []
   assertBool "Freq sort asc shows data" (contains first "\x2502")
 
 -- === Meta selection tests (nyse) ===
@@ -186,8 +186,8 @@ test_scroll_fetches_more = withFixture "data/nyse10k.parquet" $ do
   log "scroll_fetches_more"
   let keys = T.concat (replicate 105 "<C-d>")
   (_, status) <- footer <$> run keys "data/nyse10k.parquet" []
-  let rpart = T.takeWhile (/= ' ') (Util.getD (T.splitOn " r" status) 1 "")
-      cursor = readNat (Util.headD "" (T.splitOn "/" rpart))
+  let rpart = T.takeWhile (/= ' ') (getD (T.splitOn " r" status) 1 "")
+      cursor = readNat (headD "" (T.splitOn "/" rpart))
   assertBool
     ("Scroll fetches more: cursor=" <> show cursor <> ", expected > 999")
     (cursor > 999)
@@ -204,7 +204,7 @@ test_scroll_fetches_more = withFixture "data/nyse10k.parquet" $ do
 test_numeric_right_align :: Assertion
 test_numeric_right_align = withFixture "data/sample.parquet" $ do
   log "numeric_align"
-  first <- Util.headD "" . dataLines <$> run "" "data/sample.parquet" []
+  first <- headD "" . dataLines <$> run "" "data/sample.parquet" []
   assertBool "Numeric columns right-aligned" (contains first "  ")
 
 -- Enter on parquet should not quit

@@ -10,6 +10,10 @@ module Tv.Types
     -- * Utility
   , joinWith
   , toggle
+  , headD
+  , getD
+    -- * ColCache
+  , ColCache(..)
     -- * Column types
   , ColType(..)
   , typeStr
@@ -58,7 +62,7 @@ import Data.Word (Word8, Word32)
 import Optics.TH (makeFieldLabelsNoPrefix)
 import Data.List (nub)
 import Data.Hashable (Hashable(..))
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 -- | StrEnum: simple enums with string round-trip.
 class StrEnum a where
   toString  :: a -> Text
@@ -120,6 +124,24 @@ isTime _                = False
 toggle :: Eq a => Vector a -> a -> Vector a
 toggle arr x =
   if V.elem x arr then V.filter (/= x) arr else V.snoc arr x
+
+-- | Safe head with default
+headD :: a -> [a] -> a
+headD d []    = d
+headD _ (x:_) = x
+
+-- | Safe list index with default
+getD :: [a] -> Int -> a -> a
+getD xs i d = fromMaybe d (listToMaybe (drop i xs))
+
+-- | Path + per-column cache. Key kind @k@ varies (Text column name vs Int
+--   column index) depending on caller; value @v@ is whatever was computed
+--   against that (path, column) pair.
+data ColCache k v = ColCache
+  { cachedPath :: !Text
+  , cachedCol  :: !k
+  , cachedVal  :: !v
+  } deriving (Eq, Show)
 
 -- | Format raw text as PRQL literal based on column type.
 -- Raw text means: ints as "1234567" (no commas), floats as "1.234", strings as-is.

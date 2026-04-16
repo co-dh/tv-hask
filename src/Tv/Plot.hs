@@ -53,8 +53,10 @@ import Tv.Types
   , typeStr
   , isNumeric
   , isTime
+  , getD
   )
-import qualified Tv.Util as Log
+import qualified Tv.Log as Log
+import qualified Tv.Tmp as Tmp
 import Tv.View (ViewStack)
 import qualified Tv.View as View
 import Optics.TH (makeFieldLabelsNoPrefix)
@@ -280,7 +282,7 @@ rScript dataPath pngPath kind xName yName hasCat catName hasFacet facetName xTyp
 renderR :: Text -> IO (Maybe Text)
 renderR script = do
   Log.write "plot-R" script
-  rPath <- Log.tmpPath "plot.R"
+  rPath <- Tmp.tmpPath "plot.R"
   TIO.writeFile rPath script
   (ec, _, se) <- readProcessWithExitCode "Rscript" [rPath] ""
   case ec of
@@ -299,7 +301,7 @@ exportWithHeaders t xName yName catName_ xIsTime step truncLen_ = do
   case mCats of
     Nothing -> pure Nothing
     Just cats -> do
-      datPath <- Log.tmpPath "plot.dat"
+      datPath <- Tmp.tmpPath "plot.dat"
       content <- TIO.readFile datPath
       let header = case catName_ of
             Just cn -> xName <> "\t" <> yName <> "\t" <> cn
@@ -342,8 +344,8 @@ run s kind = do
         else do
           Term.shutdown
           altEnter
-          datPath <- Log.tmpPath "plot.dat"
-          pngPath <- Log.tmpPath "plot.png"
+          datPath <- Tmp.tmpPath "plot.dat"
+          pngPath <- Tmp.tmpPath "plot.png"
           let nr = min (Table.nRows (Nav.tbl n)) maxPoints
           cols <- Ops.getCols (Nav.tbl n) (V.singleton yIdx) 0 nr
           let vals = fromMaybe V.empty (cols V.!? 0)
@@ -401,7 +403,7 @@ run s kind = do
                           cols <- Ops.getCols (Nav.tbl n) (V.singleton xIdx) 0 1
                           let v = T.strip (fromMaybe "" (cols V.!? 0 >>= (V.!? 0)))
                               cs = T.unpack v
-                              at_ i = Log.getD cs i ' '
+                              at_ i = getD cs i ' '
                           if length cs >= 19 && at_ 4 == '-' && at_ 10 == ' '
                             then pure ColTypeTimestamp
                           else if length cs >= 10 && at_ 4 == '-' && at_ 7 == '-'
@@ -426,8 +428,8 @@ run s kind = do
                       Term.shutdown
                       altEnter
                       setRaw
-                      datPath <- Log.tmpPath "plot.dat"
-                      pngPath <- Log.tmpPath "plot.png"
+                      datPath <- Tmp.tmpPath "plot.dat"
+                      pngPath <- Tmp.tmpPath "plot.png"
                       let script = rScript (T.pack datPath) (T.pack pngPath) kind
                                      xName yName hasCat catName hasFacet facetName
                                      xType

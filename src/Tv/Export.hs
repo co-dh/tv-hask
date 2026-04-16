@@ -32,7 +32,7 @@ import Tv.Data.DuckDB.Table (AdbcTable, stripSemi)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Render as Render
 import Tv.Types (Cmd(..), ExportFmt(..), StrEnum(toString, ofStringQ), escSql)
-import qualified Tv.Util as Log
+import qualified Tv.Log as Log
 import Tv.View (ViewStack)
 import qualified Tv.View as View
 

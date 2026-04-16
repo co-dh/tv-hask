@@ -25,7 +25,8 @@ import System.Environment (getArgs, lookupEnv)
 import System.IO (hPutStrLn, stderr)
 
 import qualified Tv.App.Common as Common
-import Tv.App.Common (AppState(..))
+import Tv.App.Types (AppState(..))
+import Tv.Types (ColCache(..))
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Table as AdbcTable
 import Tv.Data.DuckDB.Table (AdbcTable)
@@ -42,8 +43,9 @@ import qualified Tv.Theme as Theme
 import qualified Tv.UI.Info as UIInfo
 import Tv.View (View, ViewStack(..))
 import qualified Tv.View as View
-import qualified Tv.Util as Log
-import qualified Tv.Util as Socket
+import qualified Tv.Log as Log
+import qualified Tv.Socket as Socket
+import qualified Tv.Tmp as Tmp
 import Optics.Core ((&), (.~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
@@ -105,7 +107,7 @@ initState stk_ th tm ns =
   , prevScroll  = 0
   , heatMode    = 0
   , sparklines  = V.empty
-  , statusCache = ("", "", "")
+  , statusCache = ColCache "" "" ""
   , aggCache    = StatusAgg.cacheEmpty
   , cmdCache    = cc
   , handlers    = m
@@ -140,7 +142,7 @@ runTsv r nm pipe test_ ns th ks = case r of
 -- output table as plain text
 outputTable :: AppState -> IO ()
 outputTable a = do
-  txt <- Ops.toText (View.tbl (Common.stk a))
+  txt <- Ops.toText (View.tbl (stk a))
   TIO.putStrLn txt
 
 -- main entry point: init backend, parse args, run app
@@ -153,7 +155,7 @@ appMain args = do
   theme <- Theme.stateInit
   logPath <- Log.path
   Log.setLog (T.pack logPath)
-  td <- Log.tmpDir `seq` pure ""
+  td <- Tmp.tmpDir `seq` pure ""
   _  <- td `seq` pure ()
   tdStr <- Log.dir
   Log.write "init" ("tmpdir=" <> T.pack tdStr)
@@ -238,7 +240,7 @@ appMain args = do
     finallyCleanup act = do
       r <- try act :: IO (Either SomeException ())
       AdbcTable.shutdown
-      Log.cleanupTmp
+      Tmp.cleanupTmp
       case r of
         Right _ -> pure ()
         Left e  -> TIO.hPutStrLn stderr ("Error: " <> T.pack (show e))

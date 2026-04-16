@@ -16,7 +16,7 @@ intentional and acceptable for a TUI command dispatcher.
 
 **Fixed:**
 - `!!` without bounds check in Key.hs, Ftp.hs, Folder.hs, Ops.hs, Theme.hs, Plot.hs — replaced with safe indexing
-- `headMay`/`headD`/`getD`/`eraseDups` defined independently in 6+ modules — consolidated to `Tv.Util`
+- `headMay`/`headD`/`getD`/`eraseDups` defined independently in 6+ modules — consolidated to `Tv.Types`
 - Hand-rolled quicksort in Nav.hs — replaced with `Data.List.sortBy`
 
 ## Performance: B+
