@@ -19,6 +19,8 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
+import Optics.Core ((&), (.~))
+
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import qualified Tv.Data.ADBC.Prql as Prql
 import qualified Tv.Data.ADBC.Table as Table
@@ -94,7 +96,7 @@ runWith s pat = do
               oldView = View.cur s
           in case View.rebuild oldView tbl' firstSplitCol (Nav.grp (View.nav oldView)) 0 of
                Nothing -> pure s
-               Just v  -> pure (View.push s (v { View.disp = ":" <> curName }))
+               Just v  -> pure (View.push s (v & #disp .~ ":" <> curName))
 
 -- | Prompt for pattern via fzf, then split.
 run :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)

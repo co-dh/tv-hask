@@ -137,7 +137,7 @@ rebuild old tbl_ col_ grp_ row_ =
        then
          let nav0 = Nav.newAt tbl_ col_ grp_ row_
              nav1 = nav0 & #hidden .~ (old ^. #nav % #hidden)
-         in Just old { nRows = nRows_, nCols = nCols_, nav = nav1, widths = V.empty }
+         in Just (old & #nRows .~ nRows_ & #nCols .~ nCols_ & #nav .~ nav1 & #widths .~ V.empty)
        else Nothing
 
 -- | Pure update by command

@@ -44,6 +44,7 @@ import qualified Tv.Data.ADBC.Prql as Prql
 import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Data.ADBC.Table as Table
 import Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
+import Optics.Core ((&), (.~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | How DuckDB should handle a file extension
@@ -163,12 +164,12 @@ attachFile ap fmt = do
       if totalN == 0
         then pure Nothing
         else do
-          adbc <- Table.ofQueryResult qr (Prql.defaultQuery { Prql.base = Prql.ducktabs }) totalN
+          adbc <- Table.ofQueryResult qr (Prql.defaultQuery & #base .~ Prql.ducktabs) totalN
           let disp_ = case reverse (T.splitOn "/" ap) of
                         (x:_) -> x
                         []    -> ap
           pure $ fmap
-            (\v -> v { View.vkind = Types.VkFld ap 1, View.disp = disp_ })
+            (\v -> v & #vkind .~ Types.VkFld ap 1 & #disp .~ disp_)
             (View.fromTbl adbc ap 0 (V.singleton "name") 0)
 
 -- | Open any supported data file as a View (attach for DB, reader for data files)

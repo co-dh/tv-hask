@@ -21,6 +21,8 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word64)
 
+import Optics.Core ((&), (.~))
+
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
 import qualified Tv.Data.ADBC.Prql as Prql
@@ -172,7 +174,7 @@ run s = case tl s of
         Just (allKeys, valCols) -> do
           tblName <- buildJoinTbl left right allKeys valCols common
           sameHide_ <- renameDiffCols tblName valCols
-          let query_ = Prql.defaultQuery { base = "from " <> tblName }
+          let query_ = Prql.defaultQuery & #base .~ "from " <> tblName
           total <- Table.queryCount query_
           mAdbc <- Table.requery query_ total
           case mAdbc of
@@ -181,9 +183,9 @@ run s = case tl s of
               Nothing -> pure Nothing
               Just s' ->
                 pure $ fmap
-                  (\v -> View.setCur s' v { disp = "diff", sameHide = sameHide_ })
+                  (\v -> View.setCur s' (v & #disp .~ "diff" & #sameHide .~ sameHide_))
                   (View.fromTbl adbc (View.path (View.cur s')) 0 allKeys 0)
 
 -- | Clear sameHide to reveal identical-value columns (toggle)
 showSame :: View AdbcTable -> View AdbcTable
-showSame v = v { sameHide = V.empty }
+showSame v = v & #sameHide .~ V.empty

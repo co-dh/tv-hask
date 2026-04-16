@@ -36,6 +36,8 @@ import Data.Word (Word32)
 import System.Exit (ExitCode(..))
 import System.Process (readProcessWithExitCode)
 
+import Optics.Core ((&), (.~))
+
 import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Data.ADBC.Table as Table
 import Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
@@ -162,7 +164,7 @@ curType v = case View.vkind v of
 -- | Build folder view from AdbcTable
 mkFldView :: AdbcTable -> Text -> Int -> Text -> Vector Text -> Maybe (View AdbcTable)
 mkFldView adbc path_ depth disp grp =
-  fmap (\v -> v { View.vkind = VkFld path_ depth, View.disp = disp })
+  fmap (\v -> v & #vkind .~ VkFld path_ depth & #disp .~ disp)
        (View.fromTbl adbc path_ 0 grp 0)
 
 -- | Create folder view — config-driven listing, local fallback
