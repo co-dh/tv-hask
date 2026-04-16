@@ -5,7 +5,6 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 module Tv.CmdConfig
   ( -- * Types
     CmdInfo(..)
@@ -28,7 +27,6 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
-import Data.Hashable (Hashable(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
@@ -38,11 +36,6 @@ import Tv.StrEnum (StrEnum(..))
 import qualified Tv.StrEnum as StrEnum
 import Tv.Types (Cmd)
 import Optics.TH (makeFieldLabelsNoPrefix)
-
--- Orphan Hashable instance for Cmd; Types.hs doesn't derive Generic, so hash via
--- the canonical string form from StrEnum.
-instance Hashable Cmd where
-  hashWithSalt s c = hashWithSalt s (StrEnum.toString c :: Text)
 
 -- | Lookup result for dispatch
 data CmdInfo = CmdInfo
