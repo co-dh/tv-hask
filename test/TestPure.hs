@@ -129,6 +129,35 @@ keyMapTests = testGroup "evToKey"
       Key.evToKey (Term.byteToEvent 'j') @?= "j"
   , testCase "byteToEvent ' ' -> ' '" $
       Key.evToKey (Term.byteToEvent ' ') @?= " "
+  -- CSI (`ESC [ X`) and SS3 (`ESC O X`) — both framings for arrow/home/end.
+  , testCase "bytesToEvent CSI up -> k" $
+      Key.evToKey (Term.bytesToEvent "\x1B[A") @?= "k"
+  , testCase "bytesToEvent CSI down -> j" $
+      Key.evToKey (Term.bytesToEvent "\x1B[B") @?= "j"
+  , testCase "bytesToEvent CSI right -> l" $
+      Key.evToKey (Term.bytesToEvent "\x1B[C") @?= "l"
+  , testCase "bytesToEvent CSI left -> h" $
+      Key.evToKey (Term.bytesToEvent "\x1B[D") @?= "h"
+  , testCase "bytesToEvent SS3 up -> k" $
+      Key.evToKey (Term.bytesToEvent "\x1BOA") @?= "k"
+  , testCase "bytesToEvent SS3 down -> j" $
+      Key.evToKey (Term.bytesToEvent "\x1BOB") @?= "j"
+  , testCase "bytesToEvent SS3 right -> l" $
+      Key.evToKey (Term.bytesToEvent "\x1BOC") @?= "l"
+  , testCase "bytesToEvent SS3 left -> h" $
+      Key.evToKey (Term.bytesToEvent "\x1BOD") @?= "h"
+  , testCase "bytesToEvent CSI home -> <home>" $
+      Key.evToKey (Term.bytesToEvent "\x1B[H") @?= "<home>"
+  , testCase "bytesToEvent CSI end -> <end>" $
+      Key.evToKey (Term.bytesToEvent "\x1B[F") @?= "<end>"
+  , testCase "bytesToEvent CSI pgup -> <pgup>" $
+      Key.evToKey (Term.bytesToEvent "\x1B[5~") @?= "<pgup>"
+  , testCase "bytesToEvent CSI pgdn -> <pgdn>" $
+      Key.evToKey (Term.bytesToEvent "\x1B[6~") @?= "<pgdn>"
+  , testCase "bytesToEvent lone ESC -> <esc>" $
+      Key.evToKey (Term.bytesToEvent "\x1B") @?= "<esc>"
+  , testCase "bytesToEvent 'j' -> j" $
+      Key.evToKey (Term.bytesToEvent "j") @?= "j"
   -- optics-core + optics-th sanity: the generated labels on NavAxis/NavState
   -- must round-trip view/set. A regression here means makeFieldLabelsNoPrefix
   -- silently failed to emit a LabelOptic instance and no other code will work.

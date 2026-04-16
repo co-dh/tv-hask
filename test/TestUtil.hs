@@ -8,6 +8,7 @@ module TestUtil
   , log
   , run
   , runHask
+  , runPty
   , isContent
   , contains
   , footer
@@ -28,7 +29,8 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.IO (hFlush, stderr, withFile, IOMode (..), Handle)
 import qualified System.IO as IO
-import System.Process (readProcessWithExitCode)
+import System.Process (readProcessWithExitCode, readCreateProcessWithExitCode, proc, CreateProcess(..))
+import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 
 -- | Path to the tv binary the tests shell out to. In the Lean reference this
@@ -51,6 +53,27 @@ run = runWith bin
 -- | Same as 'run' but spawns the Haskell-built `tv` binary.
 runHask :: Text -> FilePath -> [String] -> IO Text
 runHask = runWith tvHaskBin
+
+-- | Drive `tv` through a real pty via test/pty_run.py. `keys` is passed
+-- verbatim to pty_run.py, which expands only \\r/\\n/\\t/\\b/\\e — so send
+-- a CSI Up as "\\e[A", not "\\x1B[A".
+runPty :: String -> FilePath -> IO Text
+runPty keys file = do
+  log (T.pack "  runPty: " <> T.pack file <> T.pack " keys=" <> T.pack (show keys))
+  -- pty_run.py's TV env var: point it at the binary in *this* build tree,
+  -- not the hard-coded main-repo fallback (matters in worktrees).
+  parentEnv <- getEnvironment
+  let envOverride = ("TV", tvHaskBin) : filter ((/= "TV") . fst) parentEnv
+      cp = (proc "test/pty_run.py" [file, keys]) { env = Just envOverride }
+  (code, out, err) <- readCreateProcessWithExitCode cp ""
+  case err of
+    "" -> pure ()
+    _  -> log (T.pack "  stderr: " <> T.strip (T.pack err))
+  case code of
+    ExitSuccess   -> pure ()
+    ExitFailure n -> log (T.pack "  exit: " <> T.pack (show n))
+  log (T.pack "  done")
+  pure (T.pack out)
 
 runWith :: FilePath -> Text -> FilePath -> [String] -> IO Text
 runWith exe keys file extraArgs = do

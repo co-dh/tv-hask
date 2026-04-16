@@ -16,6 +16,7 @@ import TestUtil
   ( tvHaskBin
   , log
   , runHask
+  , runPty
   , contains
   , footer
   , header
@@ -49,6 +50,21 @@ test_nav_left = do
   log "nav_left"
   out <- runHask "lh" "data/basic.csv" []
   assertBool "lh returns to col 0" (contains (snd (footer out)) "c0/")
+
+-- PTY-driven arrow-key tests. The `-c` flag's tokenizer bypasses
+-- Term.pollEvent entirely, so these are the only tests that exercise the
+-- real cbreak-mode tty input + escape-sequence decoding path.
+test_arrow_down_pty :: IO ()
+test_arrow_down_pty = do
+  log "arrow_down_pty"
+  out <- runPty "\\e[B" "data/basic.csv"
+  assertBool "CSI down moves to row 1" (contains (snd (footer out)) "r1/")
+
+test_arrow_right_pty :: IO ()
+test_arrow_right_pty = do
+  log "arrow_right_pty"
+  out <- runPty "\\e[C" "data/basic.csv"
+  assertBool "CSI right moves to col 1" (contains (snd (footer out)) "c1/")
 
 -- === Key columns ===
 -- Pure: key_bang (! → grp.ent)
@@ -156,6 +172,8 @@ tests = testGroup "TestScreen"
   , testCase "nav_right"    test_nav_right
   , testCase "nav_up"       test_nav_up
   , testCase "nav_left"     test_nav_left
+  , testCase "arrow_down_pty"  test_arrow_down_pty
+  , testCase "arrow_right_pty" test_arrow_right_pty
   , testCase "key_toggle"   test_key_toggle
   , testCase "key_remove"   test_key_remove
   , testCase "key_reorder"  test_key_reorder
