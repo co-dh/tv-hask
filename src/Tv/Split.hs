@@ -96,7 +96,7 @@ runWith s pat = do
               oldView = View.cur s
           in case View.rebuild oldView tbl' firstSplitCol (Nav.grp (View.nav oldView)) 0 of
                Nothing -> pure s
-               Just v  -> pure (View.push s (v & #disp .~ ":" <> curName))
+               Just v  -> pure (View.push s (v & #disp .~ (":" <> curName)))
 
 -- | Prompt for pattern via fzf, then split.
 run :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)

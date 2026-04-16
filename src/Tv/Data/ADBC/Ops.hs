@@ -161,7 +161,7 @@ queryMeta t = do
           _ <- Adbc.query ("CREATE OR REPLACE TEMP TABLE " <> tblName
                           <> " AS (" <> metaSql <> ")")
           qr_ <- Adbc.query ("SELECT * FROM " <> tblName)
-          Just <$> Table.ofQueryResult qr_ (Prql.defaultQuery & #base .~ "from " <> tblName) 0
+          Just <$> Table.ofQueryResult qr_ (Prql.defaultQuery & #base .~ ("from " <> tblName)) 0
 
 -- | Query row indices matching PRQL filter on meta table
 queryMetaIndices :: Text -> Text -> IO (Vector Int)

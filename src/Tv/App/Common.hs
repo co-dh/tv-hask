@@ -36,7 +36,7 @@ import qualified Tv.Folder as Folder
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Join as Join
 import qualified Tv.Key as Key
-import Optics.Core (Lens', (%), (&), (.~), (^.), over, set)
+import Optics.Core (Lens', (%), (&), (.~), (%~), (^.), over, set)
 import qualified Tv.Meta as Meta
 import qualified Tv.Nav as Nav
 import qualified Tv.Plot as Plot
@@ -451,9 +451,9 @@ commands = V.fromList
   , cmd (mkEntry CmdPrecZero   ""   ""   "Set precision to 0 decimals"             False "") (precSet 0)
   , cmd (mkEntry CmdPrecMax    ""   ""   "Set precision to max (17)"               False "") (precSet 17)
   , cmd (mkEntry CmdCellUp     ""   "{"  "Scroll cell preview up"                  False "")
-        (\a _ _ -> pure (ActOk (a & #prevScroll .~ (a ^. #prevScroll - min (a ^. #prevScroll) 5))))
+        (\a _ _ -> pure (ActOk (a & #prevScroll %~ (\p -> p - min p 5))))
   , cmd (mkEntry CmdCellDn     ""   "}"  "Scroll cell preview down"                False "")
-        (\a _ _ -> pure (ActOk (a & #prevScroll .~ (a ^. #prevScroll + 5))))
+        (\a _ _ -> pure (ActOk (a & #prevScroll %~ (+ 5))))
   , cmd (mkEntry CmdHeat0      ""   ""   "Heatmap: off"                            False "")
         (\a _ _ -> pure (ActOk (a & #heatMode .~ 0)))
   , cmd (mkEntry CmdHeat1      ""   ""   "Heatmap: numeric columns"                False "")

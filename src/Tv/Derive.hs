@@ -101,7 +101,7 @@ runWith s input = case parseDerive input of
             grp_  = Nav.grp (View.nav curV)
         in case View.rebuild curV tbl' (nCols - 1) grp_ 0 of
              Nothing -> pure s
-             Just v  -> pure (View.push s (v & #disp .~ "=" <> name))
+             Just v  -> pure (View.push s (v & #disp .~ ("=" <> name)))
 
 -- | Prompt for name = expr via fzf, then derive.
 run :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
