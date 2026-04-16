@@ -28,7 +28,6 @@ import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd(..), ColType (..), Op (..), typeStr)
-import qualified Tv.Types as TblOps
 import qualified Tv.Util as Log
 import qualified Tv.View as View
 import Tv.View (ViewStack)
@@ -36,7 +35,6 @@ import Tv.View (ViewStack)
 import qualified Tv.Data.ADBC.Prql as Prql
 import qualified Tv.Data.ADBC.Table as Table
 import Tv.Data.ADBC.Table (AdbcTable)
-import qualified Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
 
 -- | Sample PRQL expressions by column type, showing name = expr format
 samples :: Text -> ColType -> Text
@@ -95,7 +93,7 @@ runWith s input = case parseDerive input of
     case mTbl of
       Nothing -> pure s
       Just tbl' ->
-        let nCols = V.length (TblOps.colNames tbl')
+        let nCols = V.length (Table.colNames tbl')
             curV  = View.cur s
             grp_  = Nav.grp (View.nav curV)
         in case View.rebuild curV tbl' (nCols - 1) grp_ 0 of

@@ -29,7 +29,6 @@ import qualified Tv.Util as Log
 import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk, resetVS)
 import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
 import qualified Tv.Data.ADBC.Adbc as Adbc
-import Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
 import qualified Tv.Data.ADBC.Prql as Prql
 import Tv.Data.ADBC.Prql (Query (..))
 import Tv.Data.ADBC.Table (AdbcTable)

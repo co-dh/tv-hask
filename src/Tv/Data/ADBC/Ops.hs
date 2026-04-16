@@ -1,19 +1,20 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-
-  TblOps/ModifyTable instances for AdbcTable.
-  Includes meta (column statistics) functionality.
+  AdbcTable operations: render, getCols, cellStr, modify, and meta queries.
 
-  Literal port of Tc/Data/ADBC/Ops.lean. The Lean file has two typeclass
-  instances followed by a block of top-level helpers (toText, queryMeta,
-  metaIdxs, metaNames, pathTable, columnComment,
-  enrichComments) with their private helpers (extractPath, metaPrql,
-  quoteId, statsSql). Each Lean def maps to a Haskell top-level def.
+  Literal port of Tc/Data/ADBC/Ops.lean. Each Lean def maps to a Haskell
+  top-level def.
 -}
 module Tv.Data.ADBC.Ops
-  ( -- re-export instance surface (instances auto-export)
-    toText
+  ( -- * Table operations (were typeclass methods, now plain functions)
+    getCols
+  , colType
+  , cellStr
+  , modifyTableHide
+  , modifyTableSort
+    -- * Meta / helpers
+  , toText
   , queryMeta
   , metaIdxs
   , metaNames
@@ -37,53 +38,42 @@ import qualified Tv.Data.ADBC.Prql as Prql
 import Tv.Data.ADBC.Prql (Query(..))
 import qualified Tv.Data.ADBC.Table as Table
 import Tv.Data.ADBC.Table (AdbcTable(..))
-import qualified Tv.Render as Render
-import Tv.Types
-  ( ColType(..)
-  , RenderCtx(..)
-  , TblOps(..)
-  , ModifyTable(..)
-  , escSql
-  )
-import qualified Tv.Types as Types
+import Data.List (nub)
+import Tv.Types (ColType(..), colText, escSql, keepCols)
 
 -- ----------------------------------------------------------------------------
--- instance : TblOps AdbcTable
+-- Table operations (were typeclass methods, now plain functions)
 -- ----------------------------------------------------------------------------
 
-instance TblOps AdbcTable where
-  nRows     = Table.nRows
-  colNames  = Table.colNames
-  totalRows = Table.totalRows
-  filter_   = Table.filter
-  distinct  = Table.distinct
-  findRow   = Table.findRow
-  getCols t idxs r0_ r1_ =
-    V.mapM (\i -> V.generateM (r1_ - r0_) $ \ri ->
-      Adbc.cellStr (Table.qr t) (fromIntegral (r0_ + ri) :: Word64) (fromIntegral i :: Word64)
-    ) idxs
-  colType t col =
-    fromMaybe ColTypeOther (Table.colTypes t V.!? col)
-  cellStr t row col =
-    Adbc.cellStr (Table.qr t) (fromIntegral row :: Word64) (fromIntegral col :: Word64)
-  plotExport = Table.plotExport
-  fetchMore  = Table.fetchMore
-  fromFile   = Table.fromFile
-  render t ctx = do
-    texts <- Adbc.fetchRows (Table.qr t) (r0 ctx) (r1 ctx) (prec ctx)
-    heatDs <- if heatMode ctx == 0
-      then pure V.empty
-      else Adbc.fetchHeatDoubles (Table.qr t) (r0 ctx) (r1 ctx)
-    Render.renderCols texts (Table.colNames t) (Table.colFmts t) (Table.colTypes t)
-      (Table.nRows t) ctx (r0 ctx) (r1 ctx - r0 ctx) heatDs
+getCols :: AdbcTable -> Vector Int -> Int -> Int -> IO (Vector (Vector Text))
+getCols t idxs r0_ r1_ =
+  V.mapM (\i -> V.generateM (r1_ - r0_) $ \ri ->
+    Adbc.cellStr (Table.qr t) (fromIntegral (r0_ + ri) :: Word64) (fromIntegral i :: Word64)
+  ) idxs
 
--- ----------------------------------------------------------------------------
--- instance : ModifyTable AdbcTable
--- ----------------------------------------------------------------------------
+colType :: AdbcTable -> Int -> ColType
+colType t col = fromMaybe ColTypeOther (Table.colTypes t V.!? col)
 
-instance ModifyTable AdbcTable where
-  hideCols hideIdxs t = Table.hideCols t hideIdxs
-  sortBy   idxs asc t = Table.sortBy t idxs asc
+cellStr :: AdbcTable -> Int -> Int -> IO Text
+cellStr t row col =
+  Adbc.cellStr (Table.qr t) (fromIntegral row :: Word64) (fromIntegral col :: Word64)
+
+-- | Hide columns at cursor + selections, return new table and filtered group
+modifyTableHide :: AdbcTable -> Int -> Vector Int -> Vector Text -> IO (AdbcTable, Vector Text)
+modifyTableHide tbl_ cursor sels grp = do
+  let idxs = if V.elem cursor sels then sels else V.snoc sels cursor
+      names = Table.colNames tbl_
+      hideNames = V.map (\i -> fromMaybe "" (names V.!? i)) idxs
+  newTbl <- Table.hideCols tbl_ idxs
+  pure (newTbl, V.filter (not . (`V.elem` hideNames)) grp)
+
+-- | Sort table by selected columns + cursor column, excluding group (key) columns
+modifyTableSort :: AdbcTable -> Int -> Vector Int -> Vector Int -> Bool -> IO AdbcTable
+modifyTableSort tbl_ cursor selIdxs grpIdxs asc =
+  let cols = V.fromList . nub . V.toList
+             . V.filter (not . (`V.elem` grpIdxs))
+             $ selIdxs V.++ V.singleton cursor
+  in if V.null cols then pure tbl_ else Table.sortBy tbl_ cols asc
 
 -- ----------------------------------------------------------------------------
 -- | Format table as plain text
@@ -95,7 +85,7 @@ toText t = do
   cols <- V.generateM nc $ \i ->
     V.generateM (Table.nRows t) $ \r ->
       Adbc.cellStr (Table.qr t) (fromIntegral r :: Word64) (fromIntegral i :: Word64)
-  pure (Types.colText (Table.colNames t) cols (Table.nRows t))
+  pure (colText (Table.colNames t) cols (Table.nRows t))
 
 -- ----------------------------------------------------------------------------
 -- ## Meta: column statistics from parquet metadata or SQL aggregation

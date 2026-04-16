@@ -66,7 +66,6 @@ import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import qualified Tv.Transpose as Transpose
 import Tv.Types (Cmd(..), ViewKind(..), vkindStr, noEffect)
-import qualified Tv.Types as TblOps
 import qualified Tv.UI.Info as UIInfo
 import qualified Tv.UI.Preview as UIPreview
 import qualified Tv.Util as Log
@@ -299,7 +298,7 @@ renderFrame showPreview a0 = do
     h <- Term.height
     w <- Term.width
     let nav_ = View.nav (View.cur (stk a))
-    cellText <- TblOps.cellStr (Nav.tbl nav_) (Nav.cur (Nav.row nav_)) (Nav.colIdx nav_)
+    cellText <- Ops.cellStr (Nav.tbl nav_) (Nav.cur (Nav.row nav_)) (Nav.colIdx nav_)
     let colW = min (fromMaybe 10 (View.widths (View.cur (stk a)) V.!? Nav.cur (Nav.col nav_))) 50
     when (T.length cellText + 2 > colW) $
       UIPreview.render (fromIntegral h) (fromIntegral w) cellText (prevScroll a)

@@ -45,13 +45,14 @@ import Tv.Render (ViewState, errorPopup)
 import qualified Tv.Runner as Freq
 import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Theme as Theme
+import qualified Tv.Data.ADBC.Ops as Ops
 import Tv.Types
   ( Cmd(..)
   , Effect(..)
   , ViewKind(..)
+  , joinWith
   , noEffect
   )
-import qualified Tv.Types as TblOps
 import qualified Tv.Util as Log
 import Tv.View (View(..), ViewStack(..))
 import qualified Tv.View as View
@@ -116,7 +117,7 @@ runViewEffect a ci v' e = do
     EffectNone -> pure (ActOk a')
     EffectQuit -> pure ActQuit
     EffectFetchMore -> do
-      r <- try (TblOps.fetchMore (View.tbl s))
+      r <- try (AdbcTable.fetchMore (View.tbl s))
              :: IO (Either SomeException (Maybe AdbcTable))
       case r of
         Right (Just tbl') ->
@@ -126,7 +127,7 @@ runViewEffect a ci v' e = do
         Right Nothing  -> pure (ActOk a')
         Left  err      -> errAction a' err
     EffectSort colIdx sels grp asc -> tryStk a ci $ do
-      tbl' <- TblOps.modifyTableSort (View.tbl s) colIdx sels grp asc
+      tbl' <- Ops.modifyTableSort (View.tbl s) colIdx sels grp asc
       let mrv = View.rebuild v' tbl' colIdx V.empty (Nav.cur (Nav.row (View.nav v')))
       pure (fmap (View.setCur s) mrv)
     EffectExclude cols -> tryStk a ci $ do
@@ -144,14 +145,14 @@ runViewEffect a ci v' e = do
             Just fv ->
               pure (Just (View.push s (fv
                 { View.vkind = VkFreqV colNames totalGroups
-                , View.disp  = "freq " <> TblOps.joinWith colNames ","
+                , View.disp  = "freq " <> joinWith colNames ","
                 })))
             Nothing -> pure Nothing
     EffectFreqFilter cols row -> tryStk a ci $ do
       case (View.vkind (View.cur s), View.pop s) of
         (VkFreqV _ _, Just s') -> do
           expr <- Freq.filterIO (View.tbl s) cols row
-          mf <- TblOps.filter_ (View.tbl s') expr
+          mf <- AdbcTable.filter (View.tbl s') expr
           case mf of
             Just tbl' ->
               case View.rebuild (View.cur s') tbl' 0 V.empty 0 of

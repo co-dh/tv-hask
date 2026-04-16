@@ -2,8 +2,6 @@
 --   Pure core tests — literal port of Tc/test/TestPure.lean.
 --   Theorems and #guard checks both become HUnit testCases here.
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FlexibleInstances #-}
 module TestPure (tests) where
 
 import Data.Text (Text)
@@ -27,7 +25,6 @@ import Tv.Types
   , ColType(..)
   , Effect(..)
   , PlotKind(..)
-  , TblOps(..)
   , ViewKind(..)
   )
 import qualified Tv.View as View
@@ -37,25 +34,23 @@ import Tv.View (View(..), ViewStack(..))
 --
 -- Lean: `structure MockTable (nRows nCols : Nat) where names : Array String`
 -- Ported literally: Haskell has no dependent Nat params, so we store the sizes
--- as ordinary fields and the TblOps instance returns them directly.
+-- as ordinary fields. Nav.new takes them explicitly.
 data MockTable = MockTable
   { mockRows  :: Int
   , mockNames :: Vector Text
   }
 
-instance TblOps MockTable where
-  nRows     t     = mockRows t
-  colNames  t     = mockNames t
-  filter_   _ _   = pure Nothing
-  distinct  _ _   = pure V.empty
-  findRow   _ _ _ _ _ = pure Nothing
-  render    _ _   = pure V.empty
+mockNames53 :: Vector Text
+mockNames53 = V.fromList ["c0", "c1", "c2"]
+
+mockTypes53 :: Vector ColType
+mockTypes53 = V.fromList [ColTypeStr, ColTypeStr, ColTypeStr]
 
 mock53 :: MockTable
-mock53 = MockTable { mockRows = 5, mockNames = V.fromList ["c0", "c1", "c2"] }
+mock53 = MockTable { mockRows = 5, mockNames = mockNames53 }
 
 testNav :: Nav.NavState MockTable
-testNav = Nav.new mock53
+testNav = Nav.new 5 5 mockNames53 mockTypes53 mock53
 
 testView :: View MockTable
 testView = View.new testNav "data/test.csv"
@@ -166,7 +161,7 @@ keyMapTests = testGroup "toKey"
       (a0 ^. #cur) @?= 5
       ((a0 & #cur .~ 42) ^. #cur) @?= 42
   , testCase "NavState #row % #cur composed optic" $ do
-      let n0 = Nav.new mock53
+      let n0 = Nav.new 5 5 mockNames53 mockTypes53 mock53
           n1 = n0 & #row % #cur .~ 3
       (n1 ^. #row % #cur) @?= 3
   ]

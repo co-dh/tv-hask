@@ -38,17 +38,13 @@ import Data.Word (Word8, Word32)
 
 import Optics.Core ((%), (&), (.~), (^.))
 import Optics.TH (makeFieldLabelsNoPrefix)
+import qualified Tv.Data.ADBC.Table as Table
+import Tv.Data.ADBC.Table (AdbcTable)
 import Tv.Nav (NavState)
 import qualified Tv.Nav as Nav
 import Tv.Render (ViewState)
 import qualified Tv.Render as Render
-import Tv.Types
-  ( Cmd(..)
-  , Effect(..)
-  , TblOps
-  , ViewKind(..)
-  )
-import qualified Tv.Types as TblOps
+import Tv.Types (Cmd(..), Effect(..), ViewKind(..))
 
 -- | View: wraps NavState for table type t
 data View t = View
@@ -67,10 +63,10 @@ data View t = View
 makeFieldLabelsNoPrefix ''View
 
 -- | Create from NavState + path
-new :: TblOps t => NavState t -> Text -> View t
+new :: NavState t -> Text -> View t
 new nav_ path_ = View
-  { nRows    = TblOps.nRows (nav_ ^. #tbl)
-  , nCols    = V.length (TblOps.colNames (nav_ ^. #tbl))
+  { nRows    = nav_ ^. #tblRows
+  , nCols    = V.length (nav_ ^. #tblNames)
   , nav      = nav_
   , path     = path_
   , vkind    = VkTbl
@@ -102,46 +98,50 @@ tabName v = case v ^. #vkind of
 
 -- | Render the view, returns (ViewState, updated View with new widths)
 doRender
-  :: TblOps t
-  => View t -> ViewState -> Vector Word32
+  :: View AdbcTable -> ViewState -> Vector Word32
   -> Word8 -> Vector Text
-  -> IO (ViewState, View t)
+  -> IO (ViewState, View AdbcTable)
 doRender v vs styles heatMode sparklines = do
-  let names = TblOps.colNames (v ^. #nav % #tbl)
+  let names = v ^. #nav % #tblNames
   let extraHidden = V.mapMaybe (Nav.idxOf names) (v ^. #sameHide)
   (vs', widths_) <-
     Render.render (v ^. #nav) vs (v ^. #widths) styles (v ^. #prec) (v ^. #widthAdj)
       (v ^. #vkind) heatMode sparklines extraHidden
   pure (vs', v & #widths .~ widths_)
 
--- | Create View from table + path (returns Nothing if empty)
+-- | Create View from AdbcTable + path (returns Nothing if empty).
+-- Extracts nRows/totalRows/colNames/colTypes from the table.
 fromTbl
-  :: TblOps t
-  => t -> Text -> Int -> Vector Text -> Int -> Maybe (View t)
+  :: AdbcTable -> Text -> Int -> Vector Text -> Int -> Maybe (View AdbcTable)
 fromTbl tbl_ path_ col_ grp_ row_ =
-  let nCols_ = V.length (TblOps.colNames tbl_)
-      nRows_ = TblOps.nRows tbl_
+  let names  = Table.colNames tbl_
+      types  = Table.colTypes tbl_
+      nRows_ = Table.nRows tbl_
+      total  = Table.totalRows tbl_
+      nCols_ = V.length names
   in if nCols_ > 0 && nRows_ > 0
-       then Just (new (Nav.newAt tbl_ col_ grp_ row_) path_)
+       then Just (new (Nav.newAt nRows_ total names types tbl_ col_ grp_ row_) path_)
        else Nothing
 
 -- | Rebuild view with new table, preserving all attributes from old view.
 -- Only nRows/nCols/nav change; everything else (vkind, disp, prec, etc.) is kept.
 rebuild
-  :: TblOps t
-  => View t -> t -> Int -> Vector Text -> Int -> Maybe (View t)
+  :: View AdbcTable -> AdbcTable -> Int -> Vector Text -> Int -> Maybe (View AdbcTable)
 rebuild old tbl_ col_ grp_ row_ =
-  let nCols_ = V.length (TblOps.colNames tbl_)
-      nRows_ = TblOps.nRows tbl_
+  let names  = Table.colNames tbl_
+      types  = Table.colTypes tbl_
+      nRows_ = Table.nRows tbl_
+      total  = Table.totalRows tbl_
+      nCols_ = V.length names
   in if nCols_ > 0 && nRows_ > 0
        then
-         let nav0 = Nav.newAt tbl_ col_ grp_ row_
+         let nav0 = Nav.newAt nRows_ total names types tbl_ col_ grp_ row_
              nav1 = nav0 & #hidden .~ (old ^. #nav % #hidden)
          in Just (old & #nRows .~ nRows_ & #nCols .~ nCols_ & #nav .~ nav1 & #widths .~ V.empty)
        else Nothing
 
 -- | Pure update by command
-update :: TblOps t => View t -> Cmd -> Int -> Maybe (View t, Effect)
+update :: View t -> Cmd -> Int -> Maybe (View t, Effect)
 update v h rowPg =
   case h of
     CmdSortAsc  -> sortEff True
@@ -158,7 +158,7 @@ update v h rowPg =
            Nothing -> Nothing
            Just nav' ->
              let needsMore = nav' ^. #row % #cur + 1 >= v ^. #nRows
-                           && TblOps.totalRows (n ^. #tbl) > v ^. #nRows
+                           && n ^. #tblTotal > v ^. #nRows
                            && (h == CmdRowInc || h == CmdRowPgdn || h == CmdRowBot)
              in Just (v & #nav .~ nav', if needsMore then EffectFetchMore else EffectNone)
   where

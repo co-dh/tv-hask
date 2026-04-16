@@ -51,7 +51,6 @@ import qualified Tv.Render as Render
 import qualified Tv.StrEnum as StrEnum
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
-import qualified Tv.Types as TblOps
 import Tv.Types
   ( Agg(..)
   , Cmd(..)
@@ -291,8 +290,8 @@ restoreView j = do
       case tblM of
         Nothing -> pure Nothing
         Just tbl -> do
-          let nRows_ = TblOps.nRows tbl
-              nCols_ = V.length (TblOps.colNames tbl)
+          let nRows_ = AdbcTable.nRows tbl
+              nCols_ = V.length (AdbcTable.colNames tbl)
           if nRows_ == 0 || nCols_ == 0
             then pure Nothing
             else case View.fromTbl tbl path_ (min col_ (nCols_ - 1)) grp_ (min row_ (nRows_ - 1)) of

@@ -26,7 +26,7 @@ import System.IO (hPutStrLn, stderr)
 
 import qualified Tv.App.Common as Common
 import Tv.App.Common (AppState(..))
-import qualified Tv.Data.ADBC.Ops as TblOps
+import qualified Tv.Data.ADBC.Ops as Ops
 import qualified Tv.Data.ADBC.Table as AdbcTable
 import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Data.Text as TextParse
@@ -136,7 +136,7 @@ runTsv r nm pipe test_ th ks = case r of
 -- output table as plain text
 outputTable :: AppState -> IO ()
 outputTable a = do
-  txt <- TblOps.toText (View.tbl (stk a))
+  txt <- Ops.toText (View.tbl (stk a))
   TIO.putStrLn txt
 
 -- main entry point: init backend, parse args, run app

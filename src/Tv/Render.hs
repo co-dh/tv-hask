@@ -38,13 +38,14 @@ import Tv.Nav (NavState(..), adjOff)
 import qualified Tv.Nav as Nav
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
+import qualified Tv.Data.ADBC.Adbc as Adbc
+import qualified Tv.Data.ADBC.Table as Table
+import Tv.Data.ADBC.Table (AdbcTable)
 import Tv.Types
   ( ColType
   , RenderCtx(..)
-  , TblOps
   , ViewKind(..)
   )
-import qualified Tv.Types as TblOps
 
 -- ViewState: scroll offsets (widths moved to View for type safety)
 data ViewState = ViewState
@@ -72,7 +73,15 @@ rowPg = 20
 -- Styles: loaded from Theme, or use default
 -- 9 states: cursor, selRow, selColCurRow, selCol, curRow, curCol, default, header, group
 
--- RenderTable removed: render method now in Table class (Types.hs)
+-- | Fetch rows from AdbcTable and render via renderCols
+renderView :: AdbcTable -> RenderCtx -> IO (Vector Int)
+renderView t ctx = do
+  texts <- Adbc.fetchRows (Table.qr t) (r0 ctx) (r1 ctx) (prec ctx)
+  heatDs <- if heatMode ctx == 0
+    then pure V.empty
+    else Adbc.fetchHeatDoubles (Table.qr t) (r0 ctx) (r1 ctx)
+  renderCols texts (Table.colNames t) (Table.colFmts t) (Table.colTypes t)
+    (Table.nRows t) ctx (r0 ctx) (r1 ctx - r0 ctx) heatDs
 
 -- | Shared render helper: adjusts cursor/selections for window, calls renderer
 renderCols
@@ -111,10 +120,9 @@ renderCols texts names fmts colTypes totalRows RenderCtx{..} r0_ nVisible heatDs
   pure (V.map fromIntegral ws)
 
 -- | Render table to terminal, returns (ViewState, widths)
--- Calls TblOps.render with NavState fields unpacked
+-- Calls renderView with NavState fields unpacked
 render
-  :: TblOps t
-  => NavState t -> ViewState -> Vector Int
+  :: NavState AdbcTable -> ViewState -> Vector Int
   -> Vector Word32 -> Int -> Int
   -> ViewKind -> Word8 -> Vector Text -> Vector Int
   -> IO (ViewState, Vector Int)
@@ -130,7 +138,7 @@ render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ ex
         if curColIdx_ > lastCol view then 1
         else if curColIdx_ < lastCol view then -1
         else 0
-  let nRows_ = TblOps.nRows (tbl nav)
+  let nRows_ = Table.nRows (tbl nav)
   let nCols_ = V.length (Nav.colNames nav)
   let ctx = RenderCtx
         { inWidths   = inWidths_
@@ -151,12 +159,12 @@ render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ ex
         , sparklines = sparklines_
         }
   -- C returns base widths (no widthAdj), store as-is
-  widths <- TblOps.render (tbl nav) ctx
+  widths <- renderView (tbl nav) ctx
   -- status line: colName left, stats right
   -- freqV shows total distinct groups, others show table totalRows
   let total = case vkind of
         VkFreqV _ t -> t
-        _           -> TblOps.totalRows (tbl nav)
+        _           -> Table.totalRows (tbl nav)
   let colName = Nav.colName nav
   let adj =
         (if prec_ /= 3 then " p" <> T.pack (show prec_) else "")

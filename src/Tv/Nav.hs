@@ -1,12 +1,14 @@
 {-
-  Typeclass-based navigation state for tabular viewer.
+  Navigation state for tabular viewer.
 
   Key abstractions:
-  - NavState: generic over table type + navigation state
+  - NavState: table + cached metadata + navigation cursors
   - NavAxis: cursor (Int) + selections (Vector)
 
   Port note: Lean uses `Fin n` for length-indexed cursors; Haskell uses plain
   `Int` with implicit bounds enforced at call sites (see `finClamp`, `exec`).
+  NavState caches nRows/totalRows/colNames/colTypes so Nav/View functions
+  don't need to query the table directly.
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -56,13 +58,7 @@ import Data.List (sortBy)
 import Data.Maybe (fromMaybe)
 import Data.Ord (comparing)
 import Tv.CmdConfig (Entry, mkEntry, navE)
-import Tv.Types
-  ( Cmd(..)
-  , ColType
-  , TblOps
-  , toggle
-  )
-import qualified Tv.Types as TblOps
+import Tv.Types (Cmd(..), ColType(..), toggle)
 
 -- Clamp value to [lo, hi)
 clamp :: Int -> Int -> Int -> Int
@@ -120,12 +116,16 @@ dispOrder group names =
 idxAt :: Vector Text -> Vector Text -> Int -> Int
 idxAt group names i = fromMaybe 0 (dispOrder group names V.!? i)
 
--- NavState: generic over table type + navigation state
--- Lean parameterizes on nRows/nCols type params for `Fin` bounds. Haskell uses
--- plain Int cursors, so those proof fields (`hRows`, `hCols`) are dropped;
--- bounds are fetched at call sites from `TblOps.nRows`/`colNames`.
+-- NavState: table + cached metadata + navigation cursors.
+-- The type parameter t is the underlying table type (AdbcTable in production,
+-- MockTable in tests). Cached fields (tblRows, tblTotal, tblNames, tblTypes)
+-- are set at construction and avoid typeclass dispatch.
 data NavState t = NavState
   { tbl      :: t                -- underlying table
+  , tblRows  :: Int              -- cached row count (view)
+  , tblTotal :: Int              -- cached total rows (before LIMIT)
+  , tblNames :: Vector Text      -- cached column names
+  , tblTypes :: Vector ColType   -- cached column types
   , row      :: RowNav           -- row cursor + selections
   , col      :: ColNav           -- col cursor + selections
   , grp      :: Vector Text      -- grouped column names (stable)
@@ -134,66 +134,72 @@ data NavState t = NavState
   }
 makeFieldLabelsNoPrefix ''NavState
 
--- | Column names from table
-colNames :: TblOps t => NavState t -> Vector Text
-colNames nav = TblOps.colNames (nav ^. #tbl)
+-- | Column names (cached in NavState)
+colNames :: NavState t -> Vector Text
+colNames nav = nav ^. #tblNames
 
 -- | Current column index in data order
-colIdx :: TblOps t => NavState t -> Int
+colIdx :: NavState t -> Int
 colIdx nav = idxAt (nav ^. #grp) (colNames nav) (nav ^. #col % #cur)
 
 -- | Current column name
-colName :: TblOps t => NavState t -> Text
+colName :: NavState t -> Text
 colName nav = fromMaybe "" (colNames nav V.!? colIdx nav)
 
 -- | Current column type
-colType :: TblOps t => NavState t -> ColType
-colType nav = TblOps.colType (nav ^. #tbl) (colIdx nav)
+colType :: NavState t -> ColType
+colType nav = fromMaybe ColTypeOther ((nav ^. #tblTypes) V.!? colIdx nav)
 
 -- | Column names in display order (grouped first, then rest)
-dispNames :: TblOps t => NavState t -> Vector Text
+dispNames :: NavState t -> Vector Text
 dispNames nav =
   let grp_ = nav ^. #grp
   in grp_ V.++ V.filter (not . (`V.elem` grp_)) (colNames nav)
 
 -- | Selected column indices
-selIdxs :: TblOps t => NavState t -> Vector Int
+selIdxs :: NavState t -> Vector Int
 selIdxs nav =
   let names = colNames nav
   in V.mapMaybe (idxOf names) (nav ^. #col % #sels)
 
--- | Hidden column indices (for C render)
-hiddenIdxs :: TblOps t => NavState t -> Vector Int
+-- | Hidden column indices (for render)
+hiddenIdxs :: NavState t -> Vector Int
 hiddenIdxs nav =
   let names = colNames nav
   in V.mapMaybe (idxOf names) (nav ^. #hidden)
 
--- Constructor for external use. Lean requires `hr : nRows > 0` / `hc : nCols > 0`;
--- Haskell callers must likewise ensure the table is non-empty.
-new :: TblOps t => t -> NavState t
-new t = NavState
+-- | Constructor. Caller provides cached metadata extracted from the table.
+new :: Int -> Int -> Vector Text -> Vector ColType -> t -> NavState t
+new nRows_ total names types t = NavState
   { tbl      = t
+  , tblRows  = nRows_
+  , tblTotal = total
+  , tblNames = names
+  , tblTypes = types
   , row      = defAxis
   , col      = defAxis
   , grp      = V.empty
   , hidden   = V.empty
-  , dispIdxs = dispOrder V.empty (TblOps.colNames t)
+  , dispIdxs = dispOrder V.empty names
   }
 
--- Constructor with initial row/col cursor and group (clamped to valid range)
-newAt :: TblOps t => t -> Int -> Vector Text -> Int -> NavState t
-newAt t colIx grp_ rowIx =
-  let nCols = V.length (TblOps.colNames t)
-      nRows = TblOps.nRows t
+-- | Constructor with initial row/col cursor and group (clamped to valid range)
+newAt :: Int -> Int -> Vector Text -> Vector ColType -> t -> Int -> Vector Text -> Int -> NavState t
+newAt nRows_ total names types t colIx grp_ rowIx =
+  let nCols = V.length names
       c = min colIx (nCols - 1)
-      r = min rowIx (nRows - 1)
+      r = min rowIx (nRows_ - 1)
   in NavState
        { tbl      = t
+       , tblRows  = nRows_
+       , tblTotal = total
+       , tblNames = names
+       , tblTypes = types
        , row      = NavAxis { cur = r, sels = V.empty }
        , col      = NavAxis { cur = c, sels = V.empty }
        , grp      = grp_
        , hidden   = V.empty
-       , dispIdxs = dispOrder grp_ (TblOps.colNames t)
+       , dispIdxs = dispOrder grp_ names
        }
 
 -- | Named composites reused as atoms by `exec` and by Filter (both hot
@@ -208,11 +214,10 @@ rowSels :: Lens' (NavState t) (Vector Int)
 rowSels = #row % #sels
 
 -- Execute by command, no (obj,verb) chars
-exec :: TblOps t => Cmd -> NavState t -> Int -> Maybe (NavState t)
+exec :: Cmd -> NavState t -> Int -> Maybe (NavState t)
 exec h nav rowPg =
-  let tbl_   = nav ^. #tbl
-      nRows_ = TblOps.nRows tbl_
-      nCols_ = V.length (TblOps.colNames tbl_)
+  let nRows_ = nav ^. #tblRows
+      nCols_ = V.length (nav ^. #tblNames)
       rCur   = nav ^. #row % #cur
       cCur   = nav ^. #col % #cur
       grp_   = nav ^. #grp

@@ -44,7 +44,6 @@ import qualified Tv.Data.ADBC.Adbc as Adbc
 import qualified Tv.Data.ADBC.Prql as Prql
 import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
 import Optics.Core ((&), (.~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
