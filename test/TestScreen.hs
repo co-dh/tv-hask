@@ -51,11 +51,9 @@ test_nav_left = do
   out <- runHask "lh" "data/basic.csv" []
   assertBool "lh returns to col 0" (contains (snd (footer out)) "c0/")
 
--- PTY-driven arrow-key tests. These go through Term.pollEvent, which the
--- `-c` flag bypasses via its in-process tokenizer. A regression here means
--- the interactive terminal input path (cbreak-mode tty + multi-byte
--- escape-sequence decoding) has drifted — which is invisible to the `-c`
--- tests and to unit tests of the pure bytesToEvent decoder.
+-- PTY-driven arrow-key tests. The `-c` flag's tokenizer bypasses
+-- Term.pollEvent entirely, so these are the only tests that exercise the
+-- real cbreak-mode tty input + escape-sequence decoding path.
 test_arrow_down_pty :: IO ()
 test_arrow_down_pty = do
   log "arrow_down_pty"

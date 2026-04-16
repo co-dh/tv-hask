@@ -54,20 +54,14 @@ run = runWith bin
 runHask :: Text -> FilePath -> [String] -> IO Text
 runHask = runWith tvHaskBin
 
--- | Drive the `tv` binary through a real pty via test/pty_run.py, sending
--- raw byte sequences (e.g. "\x1b[A" for arrow-up). Unlike runHask, this
--- exercises the full Term.pollEvent path — cbreak-mode tty input + escape
--- sequence decoding — so it catches regressions to the interactive key
--- path that the `-c` flag's in-process tokenizer bypasses.
---
--- `keys` is passed as argv[2] to pty_run.py, which translates only the
--- \\r/\\n/\\t/\\b/\\e escapes but leaves raw bytes literal — so pass
--- "\\e[A" (not "\x1B[A") to send a CSI Up.
+-- | Drive `tv` through a real pty via test/pty_run.py. `keys` is passed
+-- verbatim to pty_run.py, which expands only \\r/\\n/\\t/\\b/\\e — so send
+-- a CSI Up as "\\e[A", not "\\x1B[A".
 runPty :: String -> FilePath -> IO Text
 runPty keys file = do
   log (T.pack "  runPty: " <> T.pack file <> T.pack " keys=" <> T.pack (show keys))
-  -- Force pty_run.py to use the freshly-built binary in *this* tree
-  -- (which may be a worktree), not the hard-coded main-repo path.
+  -- pty_run.py's TV env var: point it at the binary in *this* build tree,
+  -- not the hard-coded main-repo fallback (matters in worktrees).
   parentEnv <- getEnvironment
   let envOverride = ("TV", tvHaskBin) : filter ((/= "TV") . fst) parentEnv
       cp = (proc "test/pty_run.py" [file, keys]) { env = Just envOverride }

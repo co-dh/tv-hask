@@ -231,24 +231,16 @@ init = do
     hSetBuffering stdout NoBuffering
     hSetEcho stdin False
     isTty <- hIsTerminalDevice stdin
-    -- Put the tty into cbreak-ish mode so single bytes (including the
-    -- multi-byte prefix of an arrow-key escape sequence) are delivered
-    -- immediately instead of waiting for a line terminator. Mirrors
-    -- termbox2's init_term_attrs (cfmakeraw + VMIN=1/VTIME=0). Only
-    -- touches the subset of flags we actually need — we leave OPOST on
-    -- so newline→CRLF translation for diagnostic stdout writes still
-    -- works, and leave CSIZE/PARENB alone since modern ptys are 8-bit.
+    -- cbreak-ish: ICANON off so bytes arrive unbuffered. Leaves OPOST on
+    -- so NL→CRLF translation on stdout still works (termbox2 turns it off
+    -- in cfmakeraw, but we don't emit bare `\n` during rendering).
     when isTty $ do
       orig <- PT.getTerminalAttributes stdInput
       writeIORef origTios (Just orig)
       let ta = foldl PT.withoutMode orig
-                 [ PT.ProcessInput       -- ICANON: canonical line-buffered input
-                 , PT.EnableEcho         -- ECHO: already off but be explicit
-                 , PT.EchoLF             -- ECHONL
-                 , PT.KeyboardInterrupts -- ISIG: deliver Ctrl-C as a key event
-                 , PT.ExtendedFunctions  -- IEXTEN: suspend literal-next etc.
-                 , PT.StartStopOutput    -- IXON: don't let Ctrl-S/Q freeze
-                 , PT.StartStopInput     -- IXOFF
+                 [ PT.ProcessInput, PT.EnableEcho, PT.EchoLF
+                 , PT.KeyboardInterrupts, PT.ExtendedFunctions
+                 , PT.StartStopOutput, PT.StartStopInput
                  ]
           ta' = PT.withMinInput (PT.withTime ta 0) 1
       PT.setTerminalAttributes stdInput ta' PT.WhenFlushed
@@ -302,9 +294,6 @@ shutdown = do
     TIO.hPutStr stdout "\x1b[m\x1b[?25h\x1b[?1l\x1b>\x1b[23;0;0t\x1b[?1049l"
     hSetEcho stdin True
     hFlush stdout
-    -- Restore saved termios so the parent shell's line-buffered mode
-    -- returns after the app exits. Skipping this leaves the shell in
-    -- cbreak mode and requires a `reset` to recover.
     mOrig <- readIORef origTios
     case mOrig of
       Just orig -> PT.setTerminalAttributes stdInput orig PT.WhenFlushed
@@ -406,7 +395,7 @@ byteToEvent c =
         0x0A -> (keyEnter, 0)         -- LF → Enter
         0x08 -> (keyBackspace, 0)
         0x7F -> (keyBackspace2, 0)
-        0x1B -> (keyEsc, 0)           -- no escape-sequence decoding yet
+        0x1B -> (keyEsc, 0)
         _    -> (0, fromIntegral code)
   in Event
        { eventType = eventKey
@@ -417,19 +406,20 @@ byteToEvent c =
        , eventH = 0
        }
 
--- | Pure multi-byte → Event translation. Handles the escape sequences that
--- termbox2's app-keypad mode emits for arrow/home/end/pgup/pgdn keys. CSI
--- (`ESC [ X`) and SS3 (`ESC O X`) share the same terminator letters so one
--- dispatch table covers both framings.
+-- | Pure multi-byte → Event translation. Handles CSI (`ESC [ …`) and SS3
+-- (`ESC O …`) sequences for arrows, home, end, pgup, pgdn. Any input the
+-- dispatch tables don't cover degrades to the first-byte `byteToEvent`,
+-- which for ESC yields keyEsc.
 bytesToEvent :: String -> Event
 bytesToEvent s = case s of
   ['\x1B', '[', c]      -> csiLetter c
   ['\x1B', 'O', c]      -> csiLetter c
-  ['\x1B', '[', d, '~'] -> csiTilde d
-  [c]                   -> byteToEvent c
-  []                    -> byteToEvent '\0'
-  _                     -> byteToEvent (head s)
+  ('\x1B' : '[' : rest)
+    | (digits, "~") <- span isDigit rest -> csiTilde digits
+  [c] -> byteToEvent c
+  _   -> byteToEvent '\x1B'
   where
+    isDigit ch = ch >= '0' && ch <= '9'
     key k = Event { eventType = eventKey, eventMod = 0, eventKeyCode = k
                   , eventCh = 0, eventW = 0, eventH = 0 }
     csiLetter 'A' = key keyArrowUp
@@ -439,20 +429,16 @@ bytesToEvent s = case s of
     csiLetter 'H' = key keyHome
     csiLetter 'F' = key keyEnd
     csiLetter _   = byteToEvent '\x1B'
-    csiTilde '5' = key keyPageUp
-    csiTilde '6' = key keyPageDown
-    csiTilde '1' = key keyHome
-    csiTilde '4' = key keyEnd
-    csiTilde '7' = key keyHome
-    csiTilde '8' = key keyEnd
+    csiTilde "1" = key keyHome
+    csiTilde "4" = key keyEnd
+    csiTilde "5" = key keyPageUp
+    csiTilde "6" = key keyPageDown
+    csiTilde "7" = key keyHome
+    csiTilde "8" = key keyEnd
     csiTilde _   = byteToEvent '\x1B'
 
--- | Poll a single key event. Reads one byte; if it's ESC and more input is
--- immediately available, drain the escape sequence and decode via
--- bytesToEvent. A lone ESC (no follow-up within the 100 ms budget) maps to
--- keyEsc — standard terminal ESC-timeout to disambiguate the key from the
--- prefix of a CSI/SS3 sequence. 100 ms is conservative for local ttys but
--- robust to remote links and the PTY test harness's per-byte pacing.
+-- | Poll a single key event. After ESC, `hWaitForInput` briefly for a CSI
+-- or SS3 sequence; if none arrives within 100 ms, treat it as a lone Esc.
 pollEvent :: IO Event
 pollEvent = do
   c <- hGetChar stdin
@@ -469,11 +455,18 @@ pollEvent = do
             'O' -> do c3 <- hGetChar stdin; pure (bytesToEvent ['\x1B', 'O', c3])
             _   -> pure (byteToEvent '\x1B')
   where
+    -- A CSI tail is either a single letter final byte (arrows, home, end)
+    -- or any run of digit parameters terminated by `~` (pgup, pgdn, …).
     readCsi = do
       c <- hGetChar stdin
       if c >= '0' && c <= '9'
-        then do _ <- hGetChar stdin; pure (bytesToEvent ['\x1B', '[', c, '~'])
+        then readCsiTilde [c]
         else pure (bytesToEvent ['\x1B', '[', c])
+    readCsiTilde acc = do
+      c <- hGetChar stdin
+      if c >= '0' && c <= '9'
+        then readCsiTilde (c : acc)
+        else pure (bytesToEvent ('\x1B' : '[' : reverse acc ++ [c]))
 
 -- | Read termbox internal cell buffer as string (rows separated by newlines).
 -- Trailing spaces on each row are trimmed to match Lean's lean_tb_buffer_str.

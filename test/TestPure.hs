@@ -129,10 +129,7 @@ keyMapTests = testGroup "evToKey"
       Key.evToKey (Term.byteToEvent 'j') @?= "j"
   , testCase "byteToEvent ' ' -> ' '" $
       Key.evToKey (Term.byteToEvent ' ') @?= " "
-  -- Arrow keys arrive as multi-byte CSI/SS3 escape sequences from the PTY.
-  -- Without decoding them, every arrow press was delivered as "<esc>" and
-  -- the entire app-keypad binding set (hjkl via arrows) broke. Cover both
-  -- CSI (normal cursor keys) and SS3 (application cursor keys mode).
+  -- CSI (`ESC [ X`) and SS3 (`ESC O X`) — both framings for arrow/home/end.
   , testCase "bytesToEvent CSI up -> k" $
       Key.evToKey (Term.bytesToEvent "\x1B[A") @?= "k"
   , testCase "bytesToEvent CSI down -> j" $
