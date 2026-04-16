@@ -29,6 +29,7 @@ module Tv.View
   , dup
   , tabNames
   , updateStack
+  , opsStr
   ) where
 
 import Data.Text (Text)
@@ -39,6 +40,7 @@ import Data.Word (Word8, Word32)
 
 import Optics.Core ((%), (&), (.~), (^.))
 import Optics.TH (makeFieldLabelsNoPrefix)
+import qualified Tv.Data.ADBC.Prql as Prql
 import qualified Tv.Data.ADBC.Table as Table
 import Tv.Data.ADBC.Table (AdbcTable)
 import Tv.Nav (NavState)
@@ -220,3 +222,7 @@ updateStack s h = case h of
     Nothing -> Just (s, EffectQuit)
   CmdStkSwap -> Just (swap s, EffectNone)
   _          -> Nothing
+
+-- | PRQL pipeline ops string from view's query (for tab line display).
+opsStr :: View AdbcTable -> Text
+opsStr v = Prql.renderOps (Table.query (Nav.tbl (nav v)))

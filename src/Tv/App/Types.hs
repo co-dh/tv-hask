@@ -46,7 +46,7 @@ import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
 import Tv.Render (ViewState, errorPopup)
-import qualified Tv.Runner as Freq
+import qualified Tv.Freq as Freq
 import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Theme as Theme
 import qualified Tv.Data.ADBC.Ops as Ops
