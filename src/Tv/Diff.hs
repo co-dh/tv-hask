@@ -10,6 +10,7 @@
 module Tv.Diff
   ( run
   , showSame
+  , commands
   ) where
 
 import Control.Monad (forM_)
@@ -23,6 +24,8 @@ import Data.Word (Word64)
 
 import Optics.Core ((&), (.~))
 
+import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk, resetVS)
+import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
 import qualified Tv.Data.ADBC.Prql as Prql
@@ -33,7 +36,8 @@ import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
 import qualified Tv.Util as Log
 import Tv.Types
-  ( ColType (..)
+  ( Cmd(..)
+  , ColType (..)
   , isNumeric
   )
 import Tv.View (View (..), ViewStack (..))
@@ -185,3 +189,13 @@ run s = case tl s of
 -- | Clear sameHide to reveal identical-value columns (toggle)
 showSame :: View AdbcTable -> View AdbcTable
 showSame v = v & #sameHide .~ V.empty
+
+commands :: V.Vector (Entry, Maybe HandlerFn)
+commands = V.fromList
+  [ hdl (mkEntry CmdTblDiff "S" "d" "Diff top two views" False "")
+        (\a ci _ ->
+          if V.null (View.sameHide (View.cur (stk a)))
+            then tryStk a ci (run (stk a))
+            else pure (ActOk (resetVS
+                    (a & #stk .~ View.setCur (stk a) (showSame (View.cur (stk a)))))))
+  ]

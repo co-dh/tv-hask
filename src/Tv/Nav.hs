@@ -43,6 +43,8 @@ module Tv.Nav
   , rowSels
     -- * Exec
   , exec
+    -- * Commands
+  , commands
   ) where
 
 import Data.Text (Text)
@@ -50,6 +52,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Optics.Core (Lens', (%), (&), (.~), (^.), over)
 import Optics.TH (makeFieldLabelsNoPrefix)
+import Tv.CmdConfig (Entry, mkEntry, navE)
 import Tv.Types
   ( Cmd(..)
   , ColType
@@ -255,3 +258,27 @@ exec h nav rowPg =
                      d = if fwd then 1 else -1
                      nav' = nav & #grp .~ newGrp & #dispIdxs .~ dispOrder newGrp (colNames nav)
                  in Just (over colCur (\f -> finClamp nCols_ f d) nav')
+
+commands :: V.Vector (Entry, Maybe f)
+commands = V.fromList
+  [ navE (mkEntry CmdRowInc     "r"  "j"         ""                                False "")
+  , navE (mkEntry CmdRowDec     "r"  "k"         ""                                False "")
+  , navE (mkEntry CmdRowPgdn    "r"  "<pgdn>"    ""                                False "")
+  , navE (mkEntry CmdRowPgup    "r"  "<pgup>"    ""                                False "")
+  , navE (mkEntry CmdRowPgdn    "r"  "<C-d>"     ""                                False "")
+  , navE (mkEntry CmdRowPgup    "r"  "<C-u>"     ""                                False "")
+  , navE (mkEntry CmdRowTop     "r"  "<home>"    ""                                False "")
+  , navE (mkEntry CmdRowBot     "r"  "<end>"     ""                                False "")
+  , navE (mkEntry CmdRowSel     "r"  "T"         "Select/deselect current row"      False "")
+  , navE (mkEntry CmdColInc     "c"  "l"         ""                                False "")
+  , navE (mkEntry CmdColDec     "c"  "h"         ""                                False "")
+  , navE (mkEntry CmdColFirst   "c"  ""          ""                                False "")
+  , navE (mkEntry CmdColLast    "c"  ""          ""                                False "")
+  , navE (mkEntry CmdColGrp     "c"  "!"         "Toggle group on current column"   False "")
+  , navE (mkEntry CmdColHide    "c"  "H"         "Hide/unhide current column"       False "")
+  , navE (mkEntry CmdColExclude "c"  "x"         "Delete column(s) from query"      True  "")
+  , navE (mkEntry CmdColShiftL  "c"  "<S-left>"  "Shift key column left"            False "")
+  , navE (mkEntry CmdColShiftR  "c"  "<S-right>" "Shift key column right"           False "")
+  , navE (mkEntry CmdSortAsc    "c"  "["         "Sort ascending"                   True  "")
+  , navE (mkEntry CmdSortDesc   "c"  "]"         "Sort descending"                  True  "")
+  ]

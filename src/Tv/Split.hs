@@ -11,6 +11,7 @@
 module Tv.Split
   ( runWith
   , run
+  , commands
   ) where
 
 import Control.Exception (SomeException, try)
@@ -21,6 +22,8 @@ import qualified Data.Vector as V
 
 import Optics.Core ((&), (.~))
 
+import Tv.App.Types (HandlerFn, argH)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import qualified Tv.Data.ADBC.Prql as Prql
 import qualified Tv.Data.ADBC.Table as Table
@@ -28,7 +31,7 @@ import Tv.Data.ADBC.Table (AdbcTable, stripSemi)
 import Tv.Data.ADBC.Ops (quoteId)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
-import Tv.Types (ColType(..), Op(..), escSql)
+import Tv.Types (Cmd(..), ColType(..), Op(..), escSql)
 import qualified Tv.Util as Log
 import Tv.View (ViewStack)
 import qualified Tv.View as View
@@ -109,3 +112,8 @@ run s = do
   case mRaw of
     Nothing  -> pure s
     Just raw -> runWith s (T.strip raw)
+
+commands :: V.Vector (Entry, Maybe HandlerFn)
+commands = V.fromList
+  [ hdl (mkEntry CmdColSplit "ca" ":" "Split column by delimiter" False "") (argH run runWith)
+  ]

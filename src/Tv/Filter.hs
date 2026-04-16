@@ -18,6 +18,7 @@ module Tv.Filter
   , filterWith
   , searchWith
     -- Tc.Filter namespace
+  , commands
   , dispatch
   ) where
 
@@ -33,6 +34,8 @@ import qualified Data.List as L
 import Text.Read (readMaybe)
 
 import Optics.Core ((%), (&), (.~), (^.), over)
+import Tv.App.Types (HandlerFn, domainH', argH)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (NavState, rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd(..), TblOps, ColType, isNumeric, typeStr)
@@ -308,3 +311,11 @@ dispatch s h = case h of
   CmdRowSearchNext -> Just (searchDir s True)
   CmdRowSearchPrev -> Just (searchDir s False)
   _                -> Nothing
+
+commands :: V.Vector (Entry, Maybe HandlerFn)
+commands = V.fromList
+  [ hdl (mkEntry CmdRowFilter     "a"  "\\" "Filter rows by PRQL expression"    True  "") (argH rowFilter filterWith)
+  , hdl (mkEntry CmdRowSearchNext "rc" "n"  "Jump to next search match"         False "") (domainH' dispatch)
+  , hdl (mkEntry CmdRowSearchPrev "rc" "N"  "Jump to previous search match"     False "") (domainH' dispatch)
+  , hdl (mkEntry CmdColSearch     "a"  "g"  "Jump to column by name"            True  "") (argH colSearch jumpCol)
+  ]

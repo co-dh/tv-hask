@@ -24,6 +24,7 @@ module Tv.Folder
   , del
   , setDepth
   , dispatch
+  , commands
   ) where
 
 import Data.Char (ord)
@@ -38,6 +39,8 @@ import System.Process (readProcessWithExitCode)
 
 import Optics.Core ((&), (.~))
 
+import Tv.App.Types (HandlerFn, domainH)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Data.ADBC.Table as Table
 import Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
@@ -514,4 +517,14 @@ dispatch s h =
     CmdFolderParent   -> if isFld then opt goParent else Nothing
     CmdFolderEnter    -> if isFld then opt enter else Nothing
     _                 -> Nothing
+
+commands :: V.Vector (Entry, Maybe HandlerFn)
+commands = V.fromList
+  [ hdl (mkEntry CmdFolderPush     "r" "D"     "Browse folder"              True  "")    (domainH dispatch)
+  , hdl (mkEntry CmdFolderEnter    "r" "<ret>" "Open file or enter directory" True "fld") (domainH dispatch)
+  , hdl (mkEntry CmdFolderParent   ""  "<bs>"  "Go to parent directory"      True "fld") (domainH dispatch)
+  , hdl (mkEntry CmdFolderDel      "r" ""      "Move to trash"              True  "")    (domainH dispatch)
+  , hdl (mkEntry CmdFolderDepthDec ""  ""      "Decrease folder depth"      True  "")    (domainH dispatch)
+  , hdl (mkEntry CmdFolderDepthInc ""  ""      "Increase folder depth"      True  "")    (domainH dispatch)
+  ]
 
