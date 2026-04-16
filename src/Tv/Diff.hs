@@ -12,8 +12,6 @@ module Tv.Diff
   , showSame
   ) where
 
-import Control.Monad (forM_)
-import Data.IORef (newIORef, readIORef, modifyIORef')
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -130,11 +128,14 @@ buildJoinTbl left right allKeys valCols common = do
   pure tblName
 
 -- | Detect same-value column pairs → sameHide; rename differing pairs with Δ prefix.
+-- Split into two passes: first classify each column (requires COUNT query);
+-- then execute ALTER TABLE renames. The classification pass only accumulates
+-- data; the rename pass is a flat effectful V.forM_.
 renameDiffCols :: Text -> Vector Text -> IO (Vector Text)
 renameDiffCols tblName valCols = do
   let q = quoted
-  ref <- newIORef (V.empty :: Vector Text)
-  V.forM_ valCols $ \v -> do
+  -- Pass 1: classify each column as same-valued (Left) or differing (Right).
+  classified <- V.forM valCols $ \v -> do
     let leftCol  = v <> "_left"
         rightCol = v <> "_right"
     qr_ <- Adbc.query
@@ -142,15 +143,18 @@ renameDiffCols tblName valCols = do
               <> " WHERE NOT (" <> q leftCol
               <> " IS NOT DISTINCT FROM " <> q rightCol <> ")")
     cnt <- Adbc.cellInt qr_ 0 0
-    if cnt == 0
-      then modifyIORef' ref (\a -> a V.++ V.fromList [leftCol, rightCol])
-      else forM_
-             [(leftCol, "Δ" <> v <> "_L"), (rightCol, "Δ" <> v <> "_R")]
-             (\(oldN, renamed) ->
-                () <$ Adbc.query
-                        ("ALTER TABLE " <> tblName
-                         <> " RENAME COLUMN " <> q oldN <> " TO " <> q renamed))
-  readIORef ref
+    pure $ if cnt == 0
+      then Left (V.fromList [leftCol, rightCol])
+      else Right (V.fromList [(leftCol, "Δ" <> v <> "_L"), (rightCol, "Δ" <> v <> "_R")])
+  -- Pure accumulation of the two output lists.
+  let sameHide = V.concatMap (either id (const V.empty)) classified
+      renames  = V.concatMap (either (const V.empty) id) classified
+  -- Pass 2: execute renames.
+  V.forM_ renames $ \(oldN, renamed) ->
+    () <$ Adbc.query
+            ("ALTER TABLE " <> tblName
+             <> " RENAME COLUMN " <> q oldN <> " TO " <> q renamed)
+  pure sameHide
 
 -- | FULL OUTER JOIN top 2 stack views on shared categorical columns.
 run :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))

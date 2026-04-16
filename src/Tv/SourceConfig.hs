@@ -596,7 +596,9 @@ configRunEnter cfg name =
                              <> " AS SELECT * FROM read_json_auto('"
                              <> T.pack tmpFile <> "')" )
               Log.tryRemoveFile tmpFile
-              -- Apply types from DuckDB stub view (e.g. osq.groups has typed columns)
+              -- Apply types from DuckDB stub view (e.g. osq.groups has typed columns).
+              -- Two passes: first collect (colName, colType) pairs from the query
+              -- result; then issue ALTER TABLEs in a flat effectful forM_.
               let typeApply :: IO ()
                   typeApply = do
                     qr <- Adbc.queryParam
@@ -604,9 +606,11 @@ configRunEnter cfg name =
                       name
                     nr <- Adbc.nrows qr
                     let n = fromIntegral nr :: Int
-                    forM_ [0 .. n - 1] $ \i -> do
+                    cols <- V.generateM n $ \i -> do
                       colName <- Adbc.cellStr qr (fromIntegral i) 0
                       colType <- Adbc.cellStr qr (fromIntegral i) 1
+                      pure (colName, colType)
+                    V.forM_ cols $ \(colName, colType) -> do
                       let alter = "ALTER TABLE " <> tbl
                                 <> " ALTER COLUMN \"" <> colName <> "\" TYPE "
                                 <> colType <> " USING TRY_CAST(\"" <> colName
