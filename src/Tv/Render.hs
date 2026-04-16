@@ -39,7 +39,7 @@ import qualified Tv.Nav as Nav
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import Tv.Types
-  ( Column
+  ( ColType
   , RenderCtx(..)
   , TblOps
   , ViewKind(..)
@@ -74,16 +74,21 @@ defaultRowPg = 20
 
 -- RenderTable removed: render method now in Table class (Types.hs)
 
--- | Shared render helper: adjusts cursor/selections for window, calls C FFI
+-- | Shared render helper: adjusts cursor/selections for window, calls renderer
 renderCols
-  :: Vector Column -> Vector Text -> Vector Char
-  -> Int -> RenderCtx -> Int -> Int -> IO (Vector Int)
-renderCols cols names fmts totalRows RenderCtx{..} r0_ nVisible = do
+  :: Vector (Vector Text)  -- text grid (column-major)
+  -> Vector Text           -- column names
+  -> Vector Char           -- fmts
+  -> Vector ColType        -- colTypes
+  -> Int -> RenderCtx -> Int -> Int
+  -> Vector (Vector Double)  -- heatDoubles
+  -> IO (Vector Int)
+renderCols texts names fmts colTypes totalRows RenderCtx{..} r0_ nVisible heatDs = do
   let adjCur = curRow - r0_
       adjSel = V.mapMaybe
         (\r -> if r >= r0_ && r < r0_ + nVisible then Just (r - r0_) else Nothing)
         rowSels
-  ws <- Term.renderTable cols names fmts
+  ws <- Term.renderTable texts names fmts colTypes
     (V.map fromIntegral inWidths)
     (V.map fromIntegral dispIdxs)
     (fromIntegral totalRows)
@@ -102,6 +107,7 @@ renderCols cols names fmts totalRows RenderCtx{..} r0_ nVisible = do
     (fromIntegral widthAdj :: Int64)
     heatMode
     sparklines
+    heatDs
   pure (V.map fromIntegral ws)
 
 -- | Render table to terminal, returns (ViewState, widths)

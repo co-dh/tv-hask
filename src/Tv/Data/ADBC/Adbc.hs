@@ -10,7 +10,7 @@
   singleton `DB.Conn`.
 -}
 module Tv.Data.ADBC.Adbc
-  ( QueryResult
+  ( QueryResult(..)
   , init
   , shutdown
   , query
@@ -24,10 +24,14 @@ module Tv.Data.ADBC.Adbc
   , cellFloat
   , colType
   , getConn
+  , fetchRows
+  , fetchHeatDoubles
+  , fmtIntComma
   ) where
 
 import Prelude hiding (init)
 import Control.Exception (SomeException, try)
+import Numeric (showFFloat)
 import Data.IORef
 import Data.Int (Int64)
 import Data.Text (Text)
@@ -207,3 +211,76 @@ findChunk qr row
           ix    = go 0 (V.length chs - 1)
           local = row - offs V.! ix
       in Just (chs V.! ix, local)
+
+-- | Format an integer with comma separators (replicates C fmt_int_comma).
+-- 1234567 -> "1,234,567", -42 -> "-42", 0 -> "0"
+fmtIntComma :: Int64 -> T.Text
+fmtIntComma v
+  | v < 0     = T.cons '-' (fmtIntComma (negate v))
+  | otherwise = T.reverse (addCommas (T.reverse (T.pack (show v))))
+  where
+    addCommas t
+      | T.length t <= 3 = t
+      | otherwise        = let (h, rest) = T.splitAt 3 t
+                           in h <> "," <> addCommas rest
+
+-- | Format a single cell for display. Dispatches on column type:
+-- ints get comma formatting, floats use precision control, bools are true/false.
+formatCellDisplay :: QueryResult -> Int -> Int -> Int -> Tc.ColType -> IO T.Text
+formatCellDisplay qr row col prec_ typ =
+  case findChunk qr row of
+    Nothing -> pure ""
+    Just (ch, local) ->
+      let cv = DB.chunkColumn ch (fromIntegral col)
+      in case typ of
+        Tc.ColTypeInt -> pure $ case DB.readCellInt cv local of
+          Nothing -> ""
+          Just n  -> fmtIntComma n
+        Tc.ColTypeFloat -> pure $ case DB.readCellDouble cv local of
+          Nothing -> ""
+          Just f  -> if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
+        Tc.ColTypeDecimal -> pure $ case DB.readCellDouble cv local of
+          Nothing -> ""
+          Just f  -> if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
+        Tc.ColTypeBool -> pure $ case DB.readCellInt cv local of
+          Just 0  -> "false"
+          Just _  -> "true"
+          Nothing -> ""
+        _ -> pure (DB.readCellAny cv local)
+
+-- | Materialize a rectangular cell region as display-formatted text.
+-- Column-major: outer Vector indexed by column, inner by local row.
+fetchRows :: QueryResult -> Int -> Int -> Int -> IO (V.Vector (V.Vector T.Text))
+fetchRows qr r0 r1 prec_ =
+  let nc = V.length (qrColNames qr)
+      types = qrColTypes qr
+  in V.generateM nc $ \c ->
+    V.generateM (max 0 (r1 - r0)) $ \ri ->
+      formatCellDisplay qr (r0 + ri) c prec_
+        (if c < V.length types then types V.! c else Tc.ColTypeOther)
+
+-- | Fetch raw doubles for heat mode. NaN for non-numeric or null cells.
+fetchHeatDoubles :: QueryResult -> Int -> Int -> IO (V.Vector (V.Vector Double))
+fetchHeatDoubles qr r0 r1 =
+  let nc = V.length (qrColNames qr)
+      types = qrColTypes qr
+      nan = 0/0 :: Double
+  in V.generateM nc $ \c ->
+    let typ = if c < V.length types then types V.! c else Tc.ColTypeOther
+    in V.generateM (max 0 (r1 - r0)) $ \ri ->
+      let row = r0 + ri
+      in case findChunk qr row of
+        Nothing -> pure nan
+        Just (ch, local) ->
+          let cv = DB.chunkColumn ch (fromIntegral c)
+          in case typ of
+            Tc.ColTypeInt -> pure $ case DB.readCellInt cv local of
+              Nothing -> nan
+              Just n  -> fromIntegral n
+            Tc.ColTypeFloat -> pure $ case DB.readCellDouble cv local of
+              Nothing -> nan
+              Just f  -> f
+            Tc.ColTypeDecimal -> pure $ case DB.readCellDouble cv local of
+              Nothing -> nan
+              Just f  -> f
+            _ -> pure nan

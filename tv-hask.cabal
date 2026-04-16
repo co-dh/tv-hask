@@ -26,9 +26,6 @@ common shared
 library
   import: shared
   hs-source-dirs: src
-  include-dirs: cbits
-  c-sources: cbits/tv_render.c
-  cc-options: -O2 -Wall
   -- Seed branch: no ported modules yet. Each layer's commit adds its
   -- modules here. Tv.Data.DuckDB is parked on disk but not listed until
   -- its deps (Tv.Types, Tv.Data.ADBC.Prql) come online.
@@ -83,6 +80,7 @@ library
     duckdb-ffi >= 1.5 && < 2,
     file-embed >= 0.0.15,
     filepath >= 1.4,
+    containers >= 0.6,
     hashable >= 1.4,
     network >= 3.1,
     optics-core >= 0.4 && < 0.5,
