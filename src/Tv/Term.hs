@@ -1,15 +1,6 @@
 {-
-  termbox2 FFI bindings for TUI rendering
-
-  Literal port of Tc/Tc/Term.lean. Lean uses @[extern] termbox2 bindings;
-  Haskell has no termbox2 package, so this module routes the same API names
-  to Haskell-native equivalents: System.Console.ANSI for clear/present/cursor,
-  System.IO + hSetBuffering for raw-ish input, System.Posix.Terminal for
-  isatty, and a Storable cell buffer for width/height/print/buffer.
-
-  renderTable calls a C shim in cbits/tv_render.c (plain-C port of the Lean
-  reference's render.c; no Lean runtime deps). The cell buffer is kept in a
-  Storable.Mutable.IOVector so the C side can write to it in place.
+  Terminal rendering: cell buffer, keyboard input, table renderer.
+  renderTable is pure Haskell; no C FFI.
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
@@ -47,6 +38,7 @@ import qualified Data.HashMap.Strict as HM
 import Data.Int (Int32, Int64)
 import qualified Data.IntSet as IS
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -617,16 +609,18 @@ heatDateToNum s = T.foldl' step 0 s
                  | otherwise             = v
 
 -- Viridis-inspired color ramp (xterm-256)
+heatRamp :: V.Vector Word32
+heatRamp = V.fromList [53,54,55,61,25,31,30,36,42,41,77,113,149,148,184,190,226]
+{-# NOINLINE heatRamp #-}
+
 heatColor :: Double -> Word32
-heatColor t =
-  let ramp = V.fromList [53,54,55,61,25,31,30,36,42,41,77,113,149,148,184,190,226 :: Word32]
-      n = V.length ramp
-  in if t <= 0.0 then ramp V.! 0
-     else if t >= 1.0 then ramp V.! (n - 1)
-     else let pos = t * fromIntegral (n - 1)
-              lo = floor pos :: Int
-              lo' = if lo >= n - 1 then n - 2 else lo
-          in if pos - fromIntegral lo' < 0.5 then ramp V.! lo' else ramp V.! (lo' + 1)
+heatColor t
+  | t <= 0.0  = heatRamp V.! 0
+  | t >= 1.0  = heatRamp V.! (n - 1)
+  | otherwise = let pos = t * fromIntegral (n - 1)
+                    lo = min (n - 2) (floor pos :: Int)
+                in if pos - fromIntegral lo < 0.5 then heatRamp V.! lo else heatRamp V.! (lo + 1)
+  where n = V.length heatRamp
 
 -- | setCell: write a character into the screen buffer
 setCell :: VSM.IOVector Cell -> Int -> Int -> Int -> Int -> Word32 -> Word32 -> Word32 -> IO ()
@@ -697,10 +691,8 @@ renderTable
   -- sparkline: active if any non-empty string
   let sparkOn = V.any (\sp -> not (T.null sp)) sparklines
 
-  -- extract styles
-  let stFg, stBg :: Int -> Word32
-      stFg si = maybe 0 id (styles V.!? (si * 2))
-      stBg si = maybe 0 id (styles V.!? (si * 2 + 1))
+  let stFg si = fromMaybe 0 (styles V.!? (si * 2))
+      stBg si = fromMaybe 0 (styles V.!? (si * 2 + 1))
 
   -- build selection bitsets
   let colBits = IS.fromList (map fromIntegral (V.toList selCols))
@@ -751,28 +743,24 @@ renderTable
             in if cumX <= sw || co >= curDI then co
                else adjustColOff (co + 1) curDI sw
 
-  -- Build visible column layout: (dispIdx, x, w)
-  let buildLayout = do
-        -- 1. pinned key columns
+  let buildLayout =
         let goKey c x acc
               | c >= nKeysI || c >= nDispCols || x >= screenW = (acc, c, x)
               | otherwise =
                   let origIdx = fromIntegral (colIdxs V.! c)
                       cw = min (allWidthsV V.! origIdx) (screenW - x)
-                  in goKey (c + 1) (x + cw + 1) (acc V.++ V.singleton (c, x, cw))
-            (keyLayoutV, _visKeyCount, x1) = goKey 0 0 V.empty
-            visKeys = V.length keyLayoutV
-        -- 2. non-key columns from colOff onward
-        let nonKeyStart = nKeysI + adjColOff
+                  in goKey (c + 1) (x + cw + 1) ((c, x, cw) : acc)
+            (keyList, _visKeyCount, x1) = goKey 0 0 []
+            visKeys = length keyList
+            nonKeyStart = nKeysI + adjColOff
             goNonKey c x acc
               | c >= nDispCols || x >= screenW = acc
               | otherwise =
                   let origIdx = fromIntegral (colIdxs V.! c)
                       cw = min (allWidthsV V.! origIdx) (screenW - x)
-                  in goNonKey (c + 1) (x + cw + 1) (acc V.++ V.singleton (c, x, cw))
-            nonKeyLayoutV = goNonKey nonKeyStart x1 V.empty
-        let layoutV = keyLayoutV V.++ nonKeyLayoutV
-        (layoutV, visKeys)
+                  in goNonKey (c + 1) (x + cw + 1) ((c, x, cw) : acc)
+            nonKeyList = goNonKey nonKeyStart x1 []
+        in (V.fromList (reverse keyList ++ reverse nonKeyList), visKeys)
       (layoutV, visKeys) = buildLayout
 
   let nVisCols = V.length layoutV
@@ -809,7 +797,7 @@ renderTable
   forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
     let (dispIdx, xPos, cw) = layoutV2 V.! c
         origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
-        name = maybe "" id (names V.!? origIdx)
+        name = fromMaybe "" (names V.!? origIdx)
         isSel = IS.member origIdx colBits
         isCur = origIdx == fromIntegral curCol
         isGrp = dispIdx < nKeysI
@@ -853,7 +841,7 @@ renderTable
     forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
       let (dispIdx, xPos, cw) = layoutV2 V.! c
           origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
-          sp = maybe "" id (sparklines V.!? origIdx)
+          sp = fromMaybe "" (sparklines V.!? origIdx)
       printPadBuf buf screenW screenH xPos 1 cw spFg spBg sp False
       let sX = xPos + cw
       when (sX < screenW) $ do
@@ -928,7 +916,7 @@ renderTable
                 else if hkKind hc == HeatStr && not (testBit heatMode 1) then (fgBase, bgBase)
                 else
                   let textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
-                      cellText = maybe "" id (textCol V.!? ri)
+                      cellText = fromMaybe "" (textCol V.!? ri)
                   in if hkKind hc == HeatNum
                      then if hkDate hc
                           then if T.null cellText then (fgBase, bgBase)
@@ -948,7 +936,7 @@ renderTable
 
       -- get cell text
       let textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
-          cellText = maybe "" id (textCol V.!? ri)
+          cellText = fromMaybe "" (textCol V.!? ri)
           isNum = maybe False colTypeIsNumeric (colTypes V.!? origIdx)
 
       -- leading space
@@ -972,7 +960,7 @@ renderTable
     let (dispIdx, xPos, cw) = layoutV2 V.! c
         origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
     when (origIdx == fromIntegral curCol) $ do
-      let name = maybe "" id (names V.!? origIdx)
+      let name = fromMaybe "" (names V.!? origIdx)
           nameLen = T.length name
           colW = cw - 2
       when (nameLen > colW) $ do
