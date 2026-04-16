@@ -87,7 +87,7 @@ fzfCore tm opts input poll = do
       out <- readIORef outRef
       _ <- waitForProcess ph
       -- Clear after re-init: fzf inline renders below termbox area, leaving residue
-      when (not inTmux) $ do
+      unless inTmux $ do
         _ <- Term.init
         Term.clear
         Term.present

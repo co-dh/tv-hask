@@ -23,6 +23,7 @@ module Tv.CmdConfig
   , menuItems
   ) where
 
+import Control.Applicative ((<|>))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
@@ -84,9 +85,8 @@ buildCache cmds =
 -- | O(1) context-aware lookup: try (key, viewCtx) first, fall back to (key, "")
 keyLookup :: CmdCache -> Text -> Text -> Maybe CmdInfo
 keyLookup cc key_ viewCtx_ =
-  case HashMap.lookup (key_, viewCtx_) (ccKeyInfo cc) of
-    Just ci -> Just ci
-    Nothing -> HashMap.lookup (key_, "") (ccKeyInfo cc)
+  HashMap.lookup (key_, viewCtx_) (ccKeyInfo cc)
+    <|> HashMap.lookup (key_, "") (ccKeyInfo cc)
 
 -- | O(1) lookup by Cmd -> CmdInfo.
 cmdLookup :: CmdCache -> Cmd -> CmdInfo
@@ -95,10 +95,7 @@ cmdLookup cc c =
 
 -- | Lookup by handler name string (socket/external boundary only)
 handlerLookup :: CmdCache -> Text -> Maybe CmdInfo
-handlerLookup cc h =
-  case StrEnum.ofStringQ h :: Maybe Cmd of
-    Just c  -> Just (cmdLookup cc c)
-    Nothing -> Nothing
+handlerLookup cc h = fmap (cmdLookup cc) (StrEnum.ofStringQ h)
 
 -- | O(1) check if command takes user input (ctx contains 'a').
 isArgCmd :: CmdCache -> Cmd -> Bool

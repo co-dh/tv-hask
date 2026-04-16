@@ -29,7 +29,7 @@ module Tv.Term
   ) where
 
 import Prelude hiding (init, print)
-import Control.Monad (forM, forM_, when, zipWithM_)
+import Control.Monad (forM, forM_, unless, when, zipWithM_)
 import Data.Bits ((.&.), (.|.), testBit)
 import qualified Data.Bits
 import Data.Char (chr)
@@ -328,7 +328,7 @@ data PresentAcc = PresentAcc
 present :: IO ()
 present = do
   headless <- readIORef headlessRef
-  when (not headless) $ do
+  unless headless $ do
     (w, h, buf) <- readIORef screenBuf
     front <- readIORef frontBuf
     -- One TIO.hPutStr per frame mirrors termbox2's tb_present flush —
@@ -689,7 +689,7 @@ renderTable
       nRows = if r1 > r0 then fromIntegral (r1 - r0) else 0 :: Int
 
   -- sparkline: active if any non-empty string
-  let sparkOn = V.any (\sp -> not (T.null sp)) sparklines
+  let sparkOn = V.any (not . T.null) sparklines
 
   let stFg si = fromMaybe 0 (styles V.!? (si * 2))
       stBg si = fromMaybe 0 (styles V.!? (si * 2 + 1))

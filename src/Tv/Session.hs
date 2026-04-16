@@ -351,7 +351,7 @@ load noSign_ name = do
         Right json -> do
           let views = jd json "views" V.empty :: Vector Value
           restored <- fmap (V.mapMaybe id) (V.mapM (restoreView noSign_) views)
-          if V.length restored > 0
+          if not (V.null restored)
             then pure (Just (ViewStack
                                { hd = restored V.! 0
                                , tl = V.toList (V.slice 1 (V.length restored - 1) restored)

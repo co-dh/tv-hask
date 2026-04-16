@@ -226,7 +226,7 @@ waitForQ = do
 errorPopup :: Text -> IO ()
 errorPopup msg = do
   on <- Term.inited
-  unless (not on) $ do
+  when on $ do
     s <- Theme.getStyles
     let fg  = Theme.styleFg s Theme.sError
         bg  = Theme.styleBg s Theme.sError
@@ -252,7 +252,7 @@ errorPopup msg = do
 statusMsg :: Text -> IO ()
 statusMsg msg = do
   on <- Term.inited
-  unless (not on) $ do
+  when on $ do
     h <- Term.height
     unless (h == 0) $ do
       s <- Theme.getStyles
