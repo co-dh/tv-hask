@@ -45,6 +45,7 @@ import qualified Tv.Diff as Diff
 import qualified Tv.Export as Export
 import qualified Tv.Filter as Filter
 import qualified Tv.Folder as Folder
+import qualified Tv.Freq as Freq
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Join as Join
 import qualified Tv.Key as Key
@@ -129,6 +130,11 @@ commands = Nav.commands <> Filter.commands <> Split.commands <> Derive.commands
   <> Export.commands <> Session.commands <> Join.commands
   <> Transpose.commands <> Diff.commands <> localCmds
 
+freqH :: HandlerFn
+freqH = \a ci _ -> case Freq.update (stk a) (ciCmd ci) of
+  Just (s', e) -> runViewEffect (withStk a ci s') ci (View.cur s') e
+  Nothing      -> viewUp a ci
+
 localCmds :: Vector (Entry, Maybe HandlerFn)
 localCmds = V.fromList
   [ hdl (mkEntry CmdRowSearch "ca" "/"  "Search for value in current column" True "")
@@ -173,8 +179,8 @@ localCmds = V.fromList
   , hdl (mkEntry CmdHeat1     ""  ""   "Heatmap: numeric columns"           False "") (heatSet 1)
   , hdl (mkEntry CmdHeat2     ""  ""   "Heatmap: categorical columns"       False "") (heatSet 2)
   , hdl (mkEntry CmdHeat3     ""  ""   "Heatmap: all columns"               False "") (heatSet 3)
-  , hdl (mkEntry CmdFreqOpen   "cg" "F"     "Open frequency view"           True  "") vuH
-  , hdl (mkEntry CmdFreqFilter "r"  "<ret>" "Filter parent table by current row" True "freqV") vuH
+  , hdl (mkEntry CmdFreqOpen   "cg" "F"     "Open frequency view"                True  "")    freqH
+  , hdl (mkEntry CmdFreqFilter "r"  "<ret>" "Filter parent table by current row" True "freqV") freqH
   , hdl (mkEntry CmdThemeOpen ""  ""   "Pick color theme"                    False "")
         (\a _ _ -> do
           ref <- newIORef a

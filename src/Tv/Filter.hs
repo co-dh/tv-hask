@@ -19,7 +19,6 @@ module Tv.Filter
   , searchWith
     -- Tc.Filter namespace
   , commands
-  , dispatch
   ) where
 
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef)
@@ -35,7 +34,7 @@ import Data.Maybe (fromMaybe)
 import Text.Read (readMaybe)
 
 import Optics.Core ((%), (&), (.~), (^.), over)
-import Tv.App.Types (AppState(..), HandlerFn, domainH', stackIO)
+import Tv.App.Types (AppState(..), HandlerFn, onStk, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (NavState, rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
@@ -292,24 +291,12 @@ searchWith s val = do
         Nothing     -> pure s
         Just rowIdx -> pure (moveRowTo s rowIdx (Just (curCol, val)))
 
--- | Dispatch filter handler to IO action. Returns none if handler not recognized.
-dispatch
-  :: Bool -> ViewStack AdbcTable
-  -> Cmd
-  -> Maybe (IO (ViewStack AdbcTable))
-dispatch tm s h = case h of
-  CmdColSearch     -> Just (colSearch tm s)
-  CmdRowFilter     -> Just (rowFilter tm s)
-  CmdRowSearchNext -> Just (searchDir s True)
-  CmdRowSearchPrev -> Just (searchDir s False)
-  _                -> Nothing
-
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
   [ hdl (mkEntry CmdRowFilter     "a"  "\\" "Filter rows by PRQL expression"    True  "")
         (\a _ arg -> stackIO a (if T.null arg then rowFilter (testMode a) (stk a) else filterWith (stk a) arg))
-  , hdl (mkEntry CmdRowSearchNext "rc" "n"  "Jump to next search match"         False "") (domainH' (dispatch False))
-  , hdl (mkEntry CmdRowSearchPrev "rc" "N"  "Jump to previous search match"     False "") (domainH' (dispatch False))
+  , hdl (mkEntry CmdRowSearchNext "rc" "n"  "Jump to next search match"         False "") (onStk (fmap Just . (`searchDir` True)))
+  , hdl (mkEntry CmdRowSearchPrev "rc" "N"  "Jump to previous search match"     False "") (onStk (fmap Just . (`searchDir` False)))
   , hdl (mkEntry CmdColSearch     "a"  "g"  "Jump to column by name"            True  "")
         (\a _ arg -> stackIO a (if T.null arg then colSearch (testMode a) (stk a) else jumpCol (stk a) arg))
   ]

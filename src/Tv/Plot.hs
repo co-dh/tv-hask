@@ -40,8 +40,8 @@ import System.Exit (ExitCode(..))
 import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
 import qualified Tv.Term as Term
-import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk)
-import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
+import Tv.App.Types (HandlerFn, onStk)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
@@ -50,7 +50,6 @@ import Tv.Types
   , ColType(..)
   , PlotKind(..)
   , StrEnum(toString)
-  , plotKind
   , typeStr
   , isNumeric
   , isTime
@@ -482,21 +481,18 @@ run s kind = do
 _unused :: IO ()
 _unused = altLeave >> setSane
 
-plotH :: HandlerFn
-plotH = \a ci _ ->
-  case plotKind (ciCmd ci) of
-    Just k  -> tryStk a ci (run (stk a) k)
-    Nothing -> pure ActUnhandled
+plotCmd :: PlotKind -> HandlerFn
+plotCmd k = onStk (`run` k)
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
-  [ hdl (mkEntry CmdPlotArea    "cg" "" "Area (g=x numeric, c=y numeric)"        False "") plotH
-  , hdl (mkEntry CmdPlotLine    "cg" "" "Line (g=x numeric, c=y numeric)"        False "") plotH
-  , hdl (mkEntry CmdPlotScatter "cg" "" "Scatter (g=x numeric, c=y numeric)"     False "") plotH
-  , hdl (mkEntry CmdPlotBar     "cg" "" "Bar (g=x categorical, c=y numeric)"     False "") plotH
-  , hdl (mkEntry CmdPlotBox     "cg" "" "Boxplot (g=x categorical, c=y numeric)" False "") plotH
-  , hdl (mkEntry CmdPlotStep    "cg" "" "Step (g=x numeric, c=y numeric)"        False "") plotH
-  , hdl (mkEntry CmdPlotHist    "c"  "" "Histogram (c=numeric column)"           False "") plotH
-  , hdl (mkEntry CmdPlotDensity "c"  "" "Density (c=numeric column)"             False "") plotH
-  , hdl (mkEntry CmdPlotViolin  "cg" "" "Violin (g=x categorical, c=y numeric)"  False "") plotH
+  [ hdl (mkEntry CmdPlotArea    "cg" "" "Area (g=x numeric, c=y numeric)"        False "") (plotCmd PlotArea)
+  , hdl (mkEntry CmdPlotLine    "cg" "" "Line (g=x numeric, c=y numeric)"        False "") (plotCmd PlotLine)
+  , hdl (mkEntry CmdPlotScatter "cg" "" "Scatter (g=x numeric, c=y numeric)"     False "") (plotCmd PlotScatter)
+  , hdl (mkEntry CmdPlotBar     "cg" "" "Bar (g=x categorical, c=y numeric)"     False "") (plotCmd PlotBar)
+  , hdl (mkEntry CmdPlotBox     "cg" "" "Boxplot (g=x categorical, c=y numeric)" False "") (plotCmd PlotBox)
+  , hdl (mkEntry CmdPlotStep    "cg" "" "Step (g=x numeric, c=y numeric)"        False "") (plotCmd PlotStep)
+  , hdl (mkEntry CmdPlotHist    "c"  "" "Histogram (c=numeric column)"           False "") (plotCmd PlotHist)
+  , hdl (mkEntry CmdPlotDensity "c"  "" "Density (c=numeric column)"             False "") (plotCmd PlotDensity)
+  , hdl (mkEntry CmdPlotViolin  "cg" "" "Violin (g=x categorical, c=y numeric)"  False "") (plotCmd PlotViolin)
   ]

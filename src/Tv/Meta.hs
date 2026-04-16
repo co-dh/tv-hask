@@ -12,7 +12,6 @@ module Tv.Meta
   , selNull
   , selSingle
   , setKey
-  , dispatch
   , commands
   ) where
 
@@ -20,10 +19,9 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
-import Data.Vector (Vector)
 
 import Optics.Core ((%), (&), (.~), (^.))
-import Tv.App.Types (HandlerFn, domainH)
+import Tv.App.Types (AppState (stk), HandlerFn, onStk, tryStk, viewUp)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd (..), ViewKind (..))
@@ -90,22 +88,11 @@ setKey s =
         pure (Just (View.setCur s' v))
       Nothing -> pure (Just s)
 
--- | Dispatch meta handler to IO action. Returns Nothing if handler not recognized.
-dispatch
-  :: ViewStack AdbcTable -> Cmd
-  -> Maybe (IO (Maybe (ViewStack AdbcTable)))
-dispatch s h = case h of
-  CmdMetaPush      -> Just (push s)
-  CmdMetaSelNull   -> Just (Just <$> selNull s)
-  CmdMetaSelSingle -> Just (Just <$> selSingle s)
-  CmdMetaSetKey ->
-    if View.cur s ^. #vkind == VkColMeta then Just (setKey s) else Nothing
-  _ -> Nothing
-
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
-  [ hdl (mkEntry CmdMetaPush      ""  "M"     "Open column metadata view"       True  "")        (domainH dispatch)
-  , hdl (mkEntry CmdMetaSetKey    "s" "<ret>" "Set selected rows as key columns" True  "colMeta") (domainH dispatch)
-  , hdl (mkEntry CmdMetaSelNull   ""  "0"     "Select columns with null values"  True  "")        (domainH dispatch)
-  , hdl (mkEntry CmdMetaSelSingle ""  "1"     "Select columns with single value" True  "")        (domainH dispatch)
+  [ hdl (mkEntry CmdMetaPush      ""  "M"     "Open column metadata view"       True  "")        (onStk push)
+  , hdl (mkEntry CmdMetaSetKey    "s" "<ret>" "Set selected rows as key columns" True  "colMeta")
+        (\a ci _ -> if View.cur (stk a) ^. #vkind == VkColMeta then tryStk a ci (setKey (stk a)) else viewUp a ci)
+  , hdl (mkEntry CmdMetaSelNull   ""  "0"     "Select columns with null values"  True  "")        (onStk (fmap Just . selNull))
+  , hdl (mkEntry CmdMetaSelSingle ""  "1"     "Select columns with single value" True  "")        (onStk (fmap Just . selSingle))
   ]

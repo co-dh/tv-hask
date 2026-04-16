@@ -23,7 +23,6 @@ module Tv.Folder
   , trashFiles
   , del
   , setDepth
-  , dispatch
   , commands
   ) where
 
@@ -40,7 +39,7 @@ import System.Process (readProcessWithExitCode)
 import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, tryStk, viewUp)
-import Tv.CmdConfig (CmdInfo(..), Entry, mkEntry, hdl)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Table as Table
 import qualified Tv.Data.DuckDB.Ops as Ops
@@ -495,33 +494,21 @@ setDepth noSign_ s delta = case View.vkind (View.cur s) of
           else refreshView noSign_ s path_ newDepth
   _ -> pure Nothing
 
--- | Dispatch folder handler to IO action. Returns Nothing if handler not recognized.
-dispatch :: Bool -> Bool -> ViewStack AdbcTable -> Cmd
-         -> Maybe (IO (Maybe (ViewStack AdbcTable)))
-dispatch tm noSign_ s h =
-  let isFld = case View.vkind (View.cur s) of { VkFld _ _ -> True; _ -> False }
-  in case h of
-    CmdFolderPush     -> Just (push noSign_ s)
-    CmdFolderDepthInc -> Just (setDepth noSign_ s 1)
-    CmdFolderDepthDec -> Just (setDepth noSign_ s (-1))
-    CmdFolderDel      -> if isFld then Just (del tm noSign_ s) else Nothing
-    CmdFolderParent   -> if isFld then Just (goParent noSign_ s) else Nothing
-    CmdFolderEnter    -> if isFld then Just (enter tm noSign_ s) else Nothing
-    _                 -> Nothing
-
-folderH :: HandlerFn
-folderH = \a ci _ ->
-  case dispatch (testMode a) (noSign a) (stk a) (ciCmd ci) of
-    Just f  -> tryStk a ci f
-    Nothing -> viewUp a ci
-
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
-  [ hdl (mkEntry CmdFolderPush     "r" "D"     "Browse folder"              True  "")    folderH
-  , hdl (mkEntry CmdFolderEnter    "r" "<ret>" "Open file or enter directory" True "fld") folderH
-  , hdl (mkEntry CmdFolderParent   ""  "<bs>"  "Go to parent directory"      True "fld") folderH
-  , hdl (mkEntry CmdFolderDel      "r" ""      "Move to trash"              True  "")    folderH
-  , hdl (mkEntry CmdFolderDepthDec ""  ""      "Decrease folder depth"      True  "")    folderH
-  , hdl (mkEntry CmdFolderDepthInc ""  ""      "Increase folder depth"      True  "")    folderH
+  [ hdl (mkEntry CmdFolderPush     "r" "D"     "Browse folder"               True  "")
+        (\a ci _ -> tryStk a ci (push (noSign a) (stk a)))
+  , hdl (mkEntry CmdFolderEnter    "r" "<ret>" "Open file or enter directory" True "fld")
+        (\a ci _ -> tryStk a ci (enter (testMode a) (noSign a) (stk a)))
+  , hdl (mkEntry CmdFolderParent   ""  "<bs>"  "Go to parent directory"       True "fld")
+        (\a ci _ -> tryStk a ci (goParent (noSign a) (stk a)))
+  , hdl (mkEntry CmdFolderDel      "r" ""      "Move to trash"               True  "")
+        (\a ci _ -> case View.vkind (View.cur (stk a)) of
+            VkFld _ _ -> tryStk a ci (del (testMode a) (noSign a) (stk a))
+            _         -> viewUp a ci)
+  , hdl (mkEntry CmdFolderDepthDec ""  ""      "Decrease folder depth"       True  "")
+        (\a ci _ -> tryStk a ci (setDepth (noSign a) (stk a) (-1)))
+  , hdl (mkEntry CmdFolderDepthInc ""  ""      "Increase folder depth"       True  "")
+        (\a ci _ -> tryStk a ci (setDepth (noSign a) (stk a) 1))
   ]
 
