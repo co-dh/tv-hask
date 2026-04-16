@@ -12,7 +12,7 @@ module Tv.Join
   , commands
   ) where
 
-import Data.Maybe (listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
@@ -134,7 +134,7 @@ run s = case resolveOps s of
       case mIdx of
         Nothing  -> pure Nothing
         Just idx ->
-          let op = maybe JoinInner id (ops V.!? idx)
+          let op = fromMaybe JoinInner (ops V.!? idx)
           in execJoin s op leftGrp
 
 -- | Join by operation index directly (no fzf). Called by socket/dispatch.
@@ -142,11 +142,11 @@ runWith :: ViewStack AdbcTable -> Text -> IO (Maybe (ViewStack AdbcTable))
 runWith s idxStr = case resolveOps s of
   Nothing -> pure Nothing
   Just (ops, leftGrp) -> do
-    let idx = maybe 0 id (readMaybe (T.unpack idxStr) :: Maybe Int)
+    let idx = fromMaybe 0 (readMaybe (T.unpack idxStr) :: Maybe Int)
     if idx >= V.length ops
       then pure Nothing
       else
-        let op = maybe JoinInner id (ops V.!? idx)
+        let op = fromMaybe JoinInner (ops V.!? idx)
         in execJoin s op leftGrp
 
 

@@ -53,6 +53,7 @@ import qualified Data.Vector as V
 import Optics.Core (Lens', (%), (&), (.~), (^.), over)
 import Optics.TH (makeFieldLabelsNoPrefix)
 import Data.List (sortBy)
+import Data.Maybe (fromMaybe)
 import Data.Ord (comparing)
 import Tv.CmdConfig (Entry, mkEntry, navE)
 import Tv.Types
@@ -106,18 +107,18 @@ idxOf a x = V.findIndex (== x) a
 dispOrder :: Vector Text -> Vector Text -> Vector Int
 dispOrder group names =
   let n = V.length names
-      getD i = maybe "" id (names V.!? i)
+      getD i = fromMaybe "" (names V.!? i)
       isGrp i = V.elem (getD i) group
       -- Sort group indices by position in grp array (respects grp add/reorder order)
       grpSorted =
         let filtered = V.filter isGrp (V.enumFromN 0 n)
-            key i = maybe 0 id (idxOf group (getD i))
+            key i = fromMaybe 0 (idxOf group (getD i))
         in V.fromList (sortBy (comparing key) (V.toList filtered))
   in grpSorted V.++ V.filter (not . isGrp) (V.enumFromN 0 n)
 
 -- Get column index at display position
 idxAt :: Vector Text -> Vector Text -> Int -> Int
-idxAt group names i = maybe 0 id (dispOrder group names V.!? i)
+idxAt group names i = fromMaybe 0 (dispOrder group names V.!? i)
 
 -- NavState: generic over table type + navigation state
 -- Lean parameterizes on nRows/nCols type params for `Fin` bounds. Haskell uses
@@ -143,7 +144,7 @@ colIdx nav = idxAt (nav ^. #grp) (colNames nav) (nav ^. #col % #cur)
 
 -- | Current column name
 colName :: TblOps t => NavState t -> Text
-colName nav = maybe "" id (colNames nav V.!? colIdx nav)
+colName nav = fromMaybe "" (colNames nav V.!? colIdx nav)
 
 -- | Current column type
 colType :: TblOps t => NavState t -> ColType
@@ -246,8 +247,8 @@ exec h nav rowPg =
              | not fwd && i == 0 -> Nothing
              | otherwise ->
                  let j  = if fwd then i + 1 else i - 1
-                     gi = maybe "" id (grp_ V.!? i)
-                     gj = maybe "" id (grp_ V.!? j)
+                     gi = fromMaybe "" (grp_ V.!? i)
+                     gj = fromMaybe "" (grp_ V.!? j)
                      newGrp = grp_ V.// [(i, gj), (j, gi)]
                      d = if fwd then 1 else -1
                      nav' = nav & #grp .~ newGrp & #dispIdxs .~ dispOrder newGrp (colNames nav)

@@ -822,7 +822,7 @@ renderTable
     -- type char
     let tc = if origIdx < V.length fmts
              then typeCharFmt (fmts V.! origIdx)
-             else typeCharColType (maybe ColTypeOther id (colTypes V.!? origIdx))
+             else typeCharColType (fromMaybe ColTypeOther (colTypes V.!? origIdx))
     setCell buf screenW screenH (xPos + cw - 1) 0 (fromIntegral (fromEnum tc)) fg bg
     setCell buf screenW screenH (xPos + cw - 1) yFoot (fromIntegral (fromEnum tc)) fg bg
 
@@ -859,7 +859,7 @@ renderTable
           let (dispIdx, _, _) = layoutV2 V.! c
               origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
               fmt = if origIdx < V.length fmts then fmts V.! origIdx else '\0'
-              typ = maybe ColTypeOther id (colTypes V.!? origIdx)
+              typ = fromMaybe ColTypeOther (colTypes V.!? origIdx)
               -- Get text column for this origIdx
               textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
               -- Get heat doubles column for this origIdx
@@ -927,7 +927,7 @@ renderTable
                           else -- numeric: use heatDoubles
                             let hdCol = if origIdx < V.length heatDoubles
                                         then heatDoubles V.! origIdx else V.empty
-                                val = maybe (0/0) id (hdCol V.!? ri)
+                                val = fromMaybe (0/0) (hdCol V.!? ri)
                             in if isNaN val then (fgBase, bgBase)
                                else let t = (val - hkMn hc) / (hkMx hc - hkMn hc)
                                     in (_HEAT_FG, heatColor t)

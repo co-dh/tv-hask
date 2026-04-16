@@ -12,6 +12,7 @@ module Tv.Transpose
 
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Maybe (fromMaybe)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
@@ -49,7 +50,7 @@ transposeSql baseSql colNames nRows =
       -- _ord preserves original column order (UNPIVOT emits names in declaration order,
       -- but GROUP BY would lose that without an explicit ordering column)
       ordCases = T.intercalate " "
-        [ "WHEN \"column\" = '" <> escSql (maybe "" id (colNames V.!? i)) <> "' THEN " <> T.pack (show i)
+        [ "WHEN \"column\" = '" <> escSql (fromMaybe "" (colNames V.!? i)) <> "' THEN " <> T.pack (show i)
         | i <- [0 .. V.length colNames - 1]
         ]
   in "WITH __src AS (SELECT * FROM (" <> baseSql <> ") LIMIT " <> T.pack (show n) <> "), "

@@ -12,6 +12,7 @@ module Tv.Data.Text
   , fromStdin
   ) where
 
+import Data.List (foldl')
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -25,7 +26,7 @@ mode xs =
   let m :: HM.HashMap Int Int
       m = V.foldl' (\acc x -> HM.insertWith (+) x 1 acc) HM.empty xs
       step (b, cnt) (k, v) = if v > cnt then (k, v) else (b, cnt)
-      (best, _) = foldl step (0 :: Int, 0 :: Int) (HM.toList m)
+      (best, _) = foldl' step (0 :: Int, 0 :: Int) (HM.toList m)
   in best
 
 -- | Count word starts (non-space after space, plus position 0 if non-space)
@@ -38,7 +39,7 @@ wordStarts s =
      else
        let c0 = if getD 0 /= ' ' then 1 else 0
            step cnt i = if getD i /= ' ' && getD (i - 1) == ' ' then cnt + 1 else cnt
-       in foldl step c0 [1 .. n - 1]
+       in foldl' step c0 [1 .. n - 1]
 
 -- | Split line into n fields (last field gets remainder with spaces)
 splitN :: Text -> Int -> Vector Text
@@ -68,7 +69,7 @@ colStarts hdr =
           else
             let starts' = if spaceCount >= 2 then starts ++ [i] else starts
             in (starts', 0)
-      (result, _) = foldl step ([0], 0 :: Int) [0 .. n - 1]
+      (result, _) = foldl' step ([0], 0 :: Int) [0 .. n - 1]
   in V.fromList result
 
 -- | Split line by column start positions (last col extends to end)

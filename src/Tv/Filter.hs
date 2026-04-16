@@ -31,6 +31,7 @@ import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.List as L
+import Data.Maybe (fromMaybe)
 import Text.Read (readMaybe)
 
 import Optics.Core ((%), (&), (.~), (^.), over)
@@ -150,7 +151,7 @@ searchPoll tbl_ curCol vals sRef preview = do
                       then pure ()
                       else do
                         writeIORef lastIdx (Just idx)
-                        let val = maybe "" id (vals V.!? idx)
+                        let val = fromMaybe "" (vals V.!? idx)
                         mri <- cachedFindRow cache tbl_ curCol idx val
                         case mri of
                           Nothing     -> pure ()
@@ -170,7 +171,7 @@ rowSearchLive s preview = withDistinct s $ \curCol curName vals -> do
   tm <- Fzf.getTest
   if tm
     then do
-      let result = maybe "" id (vals V.!? 0)
+      let result = fromMaybe "" (vals V.!? 0)
       if T.null result
         then pure s
         else do
@@ -203,7 +204,7 @@ rowSearchLive s preview = withDistinct s $ \curCol curName vals -> do
           case readMaybe (T.unpack hd) :: Maybe Int of
             Nothing  -> pure s
             Just idx -> do
-              let result = maybe "" id (vals V.!? idx)
+              let result = fromMaybe "" (vals V.!? idx)
               mri <- cachedFindRow cache (tbl s) curCol idx result
               case mri of
                 Nothing     -> pure s

@@ -14,6 +14,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import Data.Maybe (fromMaybe)
 import Data.Word (Word32)
 
 import qualified Tv.Term as Term
@@ -63,7 +64,7 @@ render screenH screenW text scroll0 = do
       ("┌" <> T.replicate innerW "─" <> "┐")
     -- content lines with side borders
     mapM_ (\i -> do
-        let line = maybe T.empty id (lns V.!? (scroll + i))
+        let line = fromMaybe T.empty (lns V.!? (scroll + i))
             trimmed = if T.length line > innerW then T.take innerW line else line
             padded = trimmed <> T.replicate (innerW - T.length trimmed) " "
         Term.print (fromIntegral x0 :: Word32) (fromIntegral (y0 + 1 + i) :: Word32) fg bg

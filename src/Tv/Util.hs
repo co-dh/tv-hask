@@ -76,7 +76,7 @@ import System.Exit (ExitCode(..))
 -- | Log dir — ~/.cache/tv/, works from any cwd (including CI)
 logDir :: IORef String
 logDir = unsafePerformIO $ do
-  home <- maybe "/tmp" id <$> lookupEnv "HOME"
+  home <- fromMaybe "/tmp" <$> lookupEnv "HOME"
   let d = home ++ "/.cache/tv"
   createDirectoryIfMissing True d
   newIORef d
@@ -240,7 +240,7 @@ sockPath = unsafePerformIO (newIORef "")
 -- | Start socket listener, set TV_SOCK env var
 socketInit :: IO ()
 socketInit = do
-  tmp <- maybe "/tmp" id <$> lookupEnv "TMPDIR"
+  tmp <- fromMaybe "/tmp" <$> lookupEnv "TMPDIR"
   pid <- getPid
   let p = tmp ++ "/tv-" ++ show pid ++ ".sock"
   ok <- sockStart p
@@ -283,7 +283,7 @@ joinRemote pfx name =
 -- | Strip trailing slash from path
 stripSlash :: Text -> Text
 stripSlash p =
-  if T.isSuffixOf "/" p then T.take (T.length p - 1) p else p
+  if T.isSuffixOf "/" p then T.dropEnd 1 p else p
 
 -- | Get parent URI: drop last path component. Returns none at root (<= minParts components).
 parent :: Text -> Int -> Maybe Text

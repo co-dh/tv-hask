@@ -132,7 +132,7 @@ pathParts :: Text -> Text -> Vector Text
 pathParts pfx_ path_ =
   let rest0 = T.drop (T.length pfx_) path_
       rest  = if T.isSuffixOf "/" rest0
-                then T.take (T.length rest0 - 1) rest0
+                then T.dropEnd 1 rest0
                 else rest0
   in if T.null rest then V.empty else V.fromList (T.splitOn "/" rest)
 

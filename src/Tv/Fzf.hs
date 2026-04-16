@@ -19,6 +19,7 @@ module Tv.Fzf
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Monad (unless, when)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.List (foldl')
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -69,7 +70,7 @@ fzfCore opts input poll = do
                               _ : rest -> T.intercalate "\t" rest
                               _        -> l) lines_
             else lines_
-          maxW = foldl (\m l -> max m (T.length l)) 0 visLines
+          maxW = foldl' (\m l -> max m (T.length l)) 0 visLines
           popupW = min (max (maxW + 4) 50) 80  -- fit content, floor 50 for typing
           baseArgs = if inTmux
             then V.fromList

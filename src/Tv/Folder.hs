@@ -130,7 +130,7 @@ cellStr v colIdx = do
   let rowCur = Nav.cur (Nav.row (View.nav v))
   cols <- TblOps.getCols (Nav.tbl (View.nav v)) (V.singleton colIdx) rowCur (rowCur + 1)
   case cols V.!? 0 of
-    Just c  -> pure (maybe "" id (c V.!? 0))
+    Just c  -> pure (fromMaybe "" (c V.!? 0))
     Nothing -> pure ""
 
 -- | Get path column value from current row
@@ -354,12 +354,12 @@ selPaths v = case View.vkind v of
       Just pathCol -> do
         cols <- TblOps.getCols (Nav.tbl (View.nav v)) (V.singleton pathCol)
                   0 (View.nRows v)
-        let c = maybe V.empty id (cols V.!? 0)
+        let c = fromMaybe V.empty (cols V.!? 0)
             rows =
               if V.null (Nav.sels (Nav.row (View.nav v)))
                 then V.singleton (Nav.cur (Nav.row (View.nav v)))
                 else Nav.sels (Nav.row (View.nav v))
-        pure (V.map (\r -> joinPath curDir_ (maybe "" id (c V.!? r))) rows)
+        pure (V.map (\r -> joinPath curDir_ (fromMaybe "" (c V.!? r))) rows)
   _ -> pure V.empty
 
 -- | Draw centered dialog box

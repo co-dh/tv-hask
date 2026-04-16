@@ -20,6 +20,7 @@ module Tv.FileFormat
 
 import Control.Exception (SomeException, try)
 import Control.Monad (void)
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -70,7 +71,7 @@ formats = V.fromList
 
 -- | Strip .gz suffix for extension matching
 stripGz :: Text -> Text
-stripGz p = if T.isSuffixOf ".gz" p then T.take (T.length p - 3) p else p
+stripGz p = if T.isSuffixOf ".gz" p then T.dropEnd 3 p else p
 
 -- | Find format by file extension (handles .gz: strip suffix, match inner ext)
 find :: Text -> Maybe Format
@@ -80,7 +81,7 @@ find path_ =
 
 -- | Is file a recognized data format?
 isData :: Text -> Bool
-isData p = case find p of { Just _ -> True; Nothing -> False }
+isData = isJust . find
 
 -- | Is file a .txt (or .txt.gz)?
 isTxt :: Text -> Bool

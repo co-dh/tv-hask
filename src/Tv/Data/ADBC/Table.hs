@@ -110,7 +110,7 @@ prqlLimit = 1000
 stripSemi :: Text -> Text
 stripSemi s =
   let t = T.strip s
-  in if T.isSuffixOf ";" t then T.take (T.length t - 1) t else t
+  in if T.isSuffixOf ";" t then T.dropEnd 1 t else t
 
 -- | Zero-copy table with PRQL query for re-query on modification
 data AdbcTable = AdbcTable
@@ -188,7 +188,7 @@ ofResult qr_ q total = do
     n <- Adbc.colName qr_ iW
     MV.write namesMV i n
     fmt <- Adbc.colFmt qr_ iW
-    MV.write fmtsMV i (if T.length fmt > 0 then T.head fmt else '?')
+    MV.write fmtsMV i (if not (T.null fmt) then T.head fmt else '?')
     typ <- Adbc.colType qr_ iW
     MV.write typesMV i (ofString typ)
   names <- V.freeze namesMV

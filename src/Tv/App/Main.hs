@@ -13,6 +13,8 @@ module Tv.App.Main
   ) where
 
 import Control.Exception (SomeException, try)
+import Control.Monad (unless)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -88,7 +90,7 @@ parseArgs args0 =
 withTui :: Bool -> IO a -> IO a
 withTui test_ f = do
   r <- Socket.bracket test_ f
-  if not test_ then Term.shutdown else pure ()
+  unless test_ Term.shutdown
   pure r
 
 -- | Build the initial AppState with Lean's `.default` equivalents for
@@ -187,7 +189,7 @@ appMain args = do
                 Nothing -> pure ()
               pure ()
           | otherwise -> do
-              let p0 = maybe "" id path_
+              let p0 = fromMaybe "" path_
               finallyCleanup (runPath p0 keys_ testMode pipeMode theme)
 
     runPath path_ keys_ testMode pipeMode theme = do
@@ -244,8 +246,6 @@ appMain args = do
         Right _ -> pure ()
         Left e  -> TIO.hPutStrLn stderr ("Error: " <> T.pack (show e))
 
-    isJust (Just _) = True
-    isJust Nothing  = False
 
 main :: IO ()
 main = do

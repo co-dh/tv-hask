@@ -9,6 +9,7 @@ module Tv.Ftp
   ) where
 
 import Data.Char (isAlphaNum)
+import Data.List (foldl')
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -48,7 +49,7 @@ parseLs :: Text -> Text
 parseLs raw =
   let header = "name\tsize\tdate\ttype"
       ls = T.splitOn "\n" raw
-      rows = foldl step [header] ls
+      rows = foldl' step [header] ls
   in T.intercalate "\n" (reverse rows)
   where
     step acc line =

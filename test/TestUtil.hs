@@ -25,6 +25,7 @@ import Control.Exception (catch, SomeException)
 import Data.IORef (IORef, readIORef, writeIORef)
 import Data.Char (isAlpha, isDigit)
 import Data.Text (Text)
+import Tv.Util (getD)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.IO (hFlush, stderr, withFile, IOMode (..), Handle)
@@ -147,8 +148,3 @@ cachedCheck ref check = do
       writeIORef ref (Just ok)
       pure ok
 
--- | Lean's List.getD — indexed lookup with a default.
-getD :: [a] -> Int -> a -> a
-getD xs i d
-  | i < 0     = d
-  | otherwise = case drop i xs of { [] -> d; (x:_) -> x }

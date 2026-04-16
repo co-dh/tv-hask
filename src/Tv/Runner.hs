@@ -13,6 +13,7 @@ module Tv.Runner
 
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Maybe (fromMaybe)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
@@ -36,7 +37,7 @@ filterIO tbl cols row = do
       idxs  = V.mapMaybe (Nav.idxOf names) cols
   fetchedCols <- TblOps.getCols tbl idxs row (row + 1)
   let vals = V.zipWith (\txtCol colIdx ->
-        toPrql (TblOps.colType tbl colIdx) (maybe "" id (txtCol V.!? 0))
+        toPrql (TblOps.colType tbl colIdx) (fromMaybe "" (txtCol V.!? 0))
         ) fetchedCols idxs
       exprs = V.zipWith (\c v -> c <> " == " <> v) cols vals
   pure (T.intercalate " && " (V.toList exprs))

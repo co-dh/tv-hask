@@ -33,6 +33,7 @@ import Prelude hiding (init)
 import Control.Exception (SomeException, try)
 import Numeric (showFFloat)
 import Data.IORef
+import Data.Maybe (fromMaybe)
 import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -183,7 +184,7 @@ cellInt qr r c = do
     Nothing -> pure 0
     Just (ch, local) ->
       let cv = DB.chunkColumn ch c'
-      in pure (maybe 0 id (DB.cellInt cv local))
+      in pure (fromMaybe 0 (DB.cellInt cv local))
 
 cellFloat :: QueryResult -> Word64 -> Word64 -> IO Double
 cellFloat qr r c = do
@@ -192,7 +193,7 @@ cellFloat qr r c = do
     Nothing -> pure 0
     Just (ch, local) ->
       let cv = DB.chunkColumn ch c'
-      in pure (maybe 0 id (DB.cellDbl cv local))
+      in pure (fromMaybe 0 (DB.cellDbl cv local))
 
 -- | Locate (chunk, local row index) for a global row index. Binary search
 -- over the prescanned chunk offsets.

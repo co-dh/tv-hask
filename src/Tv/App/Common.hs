@@ -30,6 +30,7 @@ import Control.Monad (when)
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
@@ -299,7 +300,7 @@ renderFrame showPreview a0 = do
     w <- Term.width
     let nav_ = View.nav (View.cur (stk a))
     cellText <- TblOps.cellStr (Nav.tbl nav_) (Nav.cur (Nav.row nav_)) (Nav.colIdx nav_)
-    let colW = min (maybe 10 id (View.widths (View.cur (stk a)) V.!? Nav.cur (Nav.col nav_))) 50
+    let colW = min (fromMaybe 10 (View.widths (View.cur (stk a)) V.!? Nav.cur (Nav.col nav_))) 50
     when (T.length cellText + 2 > colW) $
       UIPreview.render (fromIntegral h) (fromIntegral w) cellText (prevScroll a)
   Term.present
@@ -372,7 +373,7 @@ testInterp ref = Interp
       ks <- readIORef ref
       if V.any (== "<ret>") ks
         then do
-          let idx = maybe (V.length ks) id (V.findIndex (== "<ret>") ks)
+          let idx = fromMaybe (V.length ks) (V.findIndex (== "<ret>") ks)
           writeIORef ref (V.drop (idx + 1) ks)
           pure (T.concat (V.toList (V.take idx ks)))
         else pure ""

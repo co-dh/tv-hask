@@ -46,6 +46,7 @@ import Control.Monad (when)
 import Data.Bits (shiftR, (.&.))
 import qualified Data.ByteString as BS
 import Data.Int (Int16, Int32, Int64, Int8)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -393,11 +394,11 @@ cellAny cv row = case cvType cv of
   -- (`format_struct_cell` passes decimals=3). Used by status-bar aggregates
   -- and any generic cellStr consumer.
   ColTypeFloat     -> maybe "" (T.pack . printf "%.3f") (cellDbl cv row)
-  ColTypeStr       -> maybe "" id (cellText cv row)
-  ColTypeDate      -> maybe "" id (cellDate cv row)
-  ColTypeTime      -> maybe "" id (cellTime cv row)
-  ColTypeTimestamp -> maybe "" id (cellTs cv row)
-  _                -> maybe "" id (cellText cv row)
+  ColTypeStr       -> fromMaybe "" (cellText cv row)
+  ColTypeDate      -> fromMaybe "" (cellDate cv row)
+  ColTypeTime      -> fromMaybe "" (cellTime cv row)
+  ColTypeTimestamp -> fromMaybe "" (cellTs cv row)
+  _                -> fromMaybe "" (cellText cv row)
 
 -- | DuckDB DATE: int32 days since 1970-01-01. Format YYYY-MM-DD.
 cellDate :: ColumnView -> Int -> Maybe Text

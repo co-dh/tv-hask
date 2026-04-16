@@ -118,14 +118,10 @@ isDark = do
   mcfb <- lookupEnv "COLORFGBG"
   case mcfb of
     Just s ->
-      case lastMay (T.splitOn ";" (T.pack s)) >>= (readMaybe . T.unpack) of
+      case listToMaybe (reverse (T.splitOn ";" (T.pack s))) >>= (readMaybe . T.unpack) of
         Just bg -> pure (bg < (7 :: Int))
         Nothing -> pure True
     Nothing -> pure True
-  where
-    lastMay :: [a] -> Maybe a
-    lastMay [] = Nothing
-    lastMay xs = Just (last xs)
 
 -- | Available themes (must match theme.csv)
 themes :: Vector (Text, Text)
@@ -166,14 +162,10 @@ builtinCsv = T.unlines
 loadCsv :: IO Text
 loadCsv = do
   bin <- getExecutablePath
-  let dir = T.unpack (T.intercalate "/" (dropLast (T.splitOn "/" (T.pack bin))))
+  let dir = T.unpack (T.intercalate "/" (init (T.splitOn "/" (T.pack bin))))
       candidates = [dir ++ "/theme.csv", "theme.csv"]
   tryPaths candidates
   where
-    dropLast :: [a] -> [a]
-    dropLast []     = []
-    dropLast [_]    = []
-    dropLast (x:xs) = x : dropLast xs
     tryPaths :: [FilePath] -> IO Text
     tryPaths [] = pure builtinCsv
     tryPaths (p:ps) = do

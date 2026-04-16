@@ -57,6 +57,7 @@ import qualified Data.Vector as V
 import Data.Word (Word8, Word32)
 import Optics.TH (makeFieldLabelsNoPrefix)
 import Data.List (nub)
+import Data.Maybe (fromMaybe)
 import Tv.StrEnum (StrEnum(..))
 import qualified Tv.StrEnum as StrEnum
 
@@ -171,7 +172,7 @@ makeFieldLabelsNoPrefix ''RenderCtx
 filterPrql :: Text -> Vector Text -> Text -> Bool -> Text
 filterPrql col vals result numeric =
   let lines_ = V.fromList (filter (not . T.null) (T.splitOn "\n" result))
-      input = maybe "" id (lines_ V.!? 0)
+      input = fromMaybe "" (lines_ V.!? 0)
       fromHints = V.filter (`V.elem` vals) (V.slice 1 (max 0 (V.length lines_ - 1)) lines_)
       selected =
         if V.elem input vals && not (V.elem input fromHints)
@@ -179,7 +180,7 @@ filterPrql col vals result numeric =
           else fromHints
       q v = if numeric then v else "'" <> v <> "'"
   in if V.length selected == 1
-       then col <> " == " <> q (maybe "" id (selected V.!? 0))
+       then col <> " == " <> q (fromMaybe "" (selected V.!? 0))
      else if V.length selected > 1
        then "(" <> joinWith (V.map (\v -> col <> " == " <> q v) selected) " || " <> ")"
      else if not (T.null input)
@@ -246,7 +247,7 @@ modifyTableHide
 modifyTableHide tbl cursor sels grp = do
   let idxs = if V.elem cursor sels then sels else V.snoc sels cursor
       names = colNames tbl
-      hideNames = V.map (\i -> maybe "" id (names V.!? i)) idxs
+      hideNames = V.map (\i -> fromMaybe "" (names V.!? i)) idxs
   newTbl <- hideCols idxs tbl
   pure (newTbl, V.filter (not . (`V.elem` hideNames)) grp)
 
@@ -265,7 +266,7 @@ modifyTableSort tbl cursor selIdxs grpIdxs asc =
 -- | Keep columns not in hide set (shared by hideCols impls)
 keepCols :: Int -> Vector Int -> Vector Text -> Vector Text
 keepCols nCols hideIdxs names =
-  V.map (\i -> maybe "" id (names V.!? i))
+  V.map (\i -> fromMaybe "" (names V.!? i))
     (V.filter (not . (`V.elem` hideIdxs)) (V.enumFromN 0 nCols))
 
 -- | Convert columns to tab-separated text (shared by Table toText impls)
@@ -273,7 +274,7 @@ colText :: Vector Text -> Vector (Vector Text) -> Int -> Text
 colText names cols nr =
   let header = joinWith names "\t"
       rowLines = V.generate nr $ \r ->
-        let row = V.map (\col -> maybe "" id (col V.!? r)) cols
+        let row = V.map (\col -> fromMaybe "" (col V.!? r)) cols
         in joinWith row "\t"
   in joinWith (V.cons header rowLines) "\n"
 
