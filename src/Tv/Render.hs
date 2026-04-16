@@ -123,8 +123,8 @@ render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ ex
   h <- Term.height
   w <- Term.width
   let sparkOn = V.any (not . T.null) sparklines_
-  let visRows = min visRows (fromIntegral h - reservedLines sparkOn)
-  let rowOff_ = adjOff (Nav.cur (Nav.row nav)) (rowOff view) visRows
+  let nVis = min visRows (fromIntegral h - reservedLines sparkOn)
+  let rowOff_ = adjOff (Nav.cur (Nav.row nav)) (rowOff view) nVis
   let curColIdx_ = Nav.colIdx nav
   let moveDir_ =
         if curColIdx_ > lastCol view then 1
@@ -137,7 +137,7 @@ render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ ex
         , dispIdxs   = Nav.dispIdxs nav
         , nGrp       = V.length (grp nav)
         , r0         = rowOff_
-        , r1         = min nRows_ (rowOff_ + visRows)
+        , r1         = min nRows_ (rowOff_ + nVis)
         , curRow     = Nav.cur (Nav.row nav)
         , curCol     = curColIdx_
         , moveDir    = moveDir_

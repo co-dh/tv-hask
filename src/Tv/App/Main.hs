@@ -152,9 +152,9 @@ appMain args = do
   theme <- Theme.stateInit
   logPath <- Log.path
   Log.setLog (T.pack logPath)
-  td <- Log.tmpDir `seq` pure ""  -- Log.tmpDir is an IORef; fetch via Log.dir-style (stub)
+  td <- Log.tmpDir `seq` pure ""
   _  <- td `seq` pure ()
-  tdStr <- Log.dir  -- use log dir as tmpdir surrogate for init log line
+  tdStr <- Log.dir
   Log.write "init" ("tmpdir=" <> T.pack tdStr)
   initRes <- try AdbcTable.init :: IO (Either SomeException Text)
   case initRes of
@@ -162,7 +162,7 @@ appMain args = do
     Right err
       | not (T.null err) -> TIO.hPutStrLn stderr ("Backend init failed: " <> err)
       | otherwise -> do
-          Common.initHandlers  -- also initializes CmdConfig caches
+          Common.initHandlers
           runRest cli path_ keys_ testMode pipeMode theme
   where
     runRest cli path_ keys_ testMode pipeMode theme = do
@@ -228,7 +228,6 @@ appMain args = do
           Just v  -> do _ <- runApp v pipeMode testMode theme keys_; pure ()
           Nothing -> FileFormat.viewFile path_
       else do
-        -- try/catch: DuckDB throws on unrecognized formats
         r <- try (FileFormat.openFile path_) :: IO (Either SomeException (Maybe (View AdbcTable)))
         mv <- case r of
           Right m -> pure m
