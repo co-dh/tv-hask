@@ -48,13 +48,13 @@ import qualified Tv.Fzf as Fzf
 import Optics.Core ((%), (&), (.~), (^.))
 import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
-import qualified Tv.StrEnum as StrEnum
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Types
   ( Agg(..)
   , Cmd(..)
   , Op(..)
+  , StrEnum(toString, ofStringQ)
   , ViewKind(..)
   )
 import Tv.View (View(..), ViewStack(..))
@@ -87,12 +87,12 @@ sessPath name = do
 -- ## ToJson / FromJson instances
 
 aggToJ :: Agg -> Value
-aggToJ a = String (StrEnum.toString a)
+aggToJ a = String (toString a)
 
 aggFromJ :: Value -> A.Parser Agg
 aggFromJ v = do
   s <- A.parseJSON v
-  case StrEnum.ofStringQ s of
+  case ofStringQ s of
     Just a  -> pure a
     Nothing -> fail "unknown agg"
 

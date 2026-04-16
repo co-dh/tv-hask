@@ -39,7 +39,6 @@ import System.Exit (ExitCode(..))
 
 import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
-import qualified Tv.StrEnum as StrEnum
 import qualified Tv.Term as Term
 import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk)
 import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
@@ -50,6 +49,7 @@ import Tv.Types
   ( Cmd(..)
   , ColType(..)
   , PlotKind(..)
+  , StrEnum(toString)
   , plotKind
   , typeStr
   , isNumeric
@@ -170,7 +170,7 @@ err s msg = do
 -- | Plot title: "density of Close" or "line: Price vs Date by Ticker"
 plotTitle :: PlotKind -> Text -> Text -> Bool -> Text -> Text
 plotTitle kind xName yName hasCat catName =
-  let k = StrEnum.toString kind
+  let k = toString kind
   in if T.null xName
        then k <> " of " <> yName
        else k <> ": " <> yName <> " vs " <> xName
@@ -339,7 +339,7 @@ run s kind = do
           yName = Nav.colName n
           yType = Nav.colType n
       if not (isNumeric yType)
-        then err s (StrEnum.toString kind <> " needs a numeric column")
+        then err s (toString kind <> " needs a numeric column")
         else do
           Term.shutdown
           altEnter

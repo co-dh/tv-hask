@@ -61,7 +61,7 @@ library
     Tv.Sparkline
     Tv.Split
     Tv.StatusAgg
-    Tv.StrEnum
+
     Tv.Term
     Tv.Theme
     Tv.Transpose

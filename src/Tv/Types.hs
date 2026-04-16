@@ -5,8 +5,10 @@
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Tv.Types
-  ( -- * Utility
-    joinWith
+  ( -- * StrEnum
+    StrEnum(..)
+    -- * Utility
+  , joinWith
   , toggle
     -- * Column types
   , ColType(..)
@@ -57,8 +59,11 @@ import Optics.TH (makeFieldLabelsNoPrefix)
 import Data.List (nub)
 import Data.Hashable (Hashable(..))
 import Data.Maybe (fromMaybe)
-import Tv.StrEnum (StrEnum(..))
-import qualified Tv.StrEnum as StrEnum
+-- | StrEnum: simple enums with string round-trip.
+class StrEnum a where
+  toString  :: a -> Text
+  all       :: Vector a
+  ofStringQ :: Text -> Maybe a
 
 -- | Join array elements with separator (avoids .toList |> sep.intercalate)
 joinWith :: Vector Text -> Text -> Text
@@ -243,10 +248,10 @@ instance StrEnum Agg where
   ofStringQ _        = Nothing
 
 aggShort :: Agg -> Text
-aggShort a = StrEnum.toString a
+aggShort a = toString a
 
 parseAgg :: Text -> Maybe Agg
-parseAgg = StrEnum.ofStringQ
+parseAgg = ofStringQ
 
 -- | Table operation (single pipeline stage)
 data Op
@@ -510,12 +515,12 @@ instance StrEnum Cmd where
     , CmdTblExport, CmdSessSave, CmdSessLoad, CmdTblJoin
     , CmdThemeOpen, CmdThemePreview
     ]
-  ofStringQ s = V.find (\c -> StrEnum.toString c == s) (StrEnum.all :: Vector Cmd)
+  ofStringQ s = V.find (\c -> toString c == s) (Tv.Types.all :: Vector Cmd)
 
 -- Hash via canonical string form (StrEnum). Defined here (not CmdConfig) to
 -- avoid an orphan instance.
 instance Hashable Cmd where
-  hashWithSalt s c = hashWithSalt s (StrEnum.toString c :: Text)
+  hashWithSalt s c = hashWithSalt s (toString c :: Text)
 
 plotKind :: Cmd -> Maybe PlotKind
 plotKind CmdPlotArea    = Just PlotArea

@@ -31,8 +31,7 @@ import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable, stripSemi)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Render as Render
-import qualified Tv.StrEnum as StrEnum
-import Tv.Types (Cmd(..), ExportFmt (..), escSql)
+import Tv.Types (Cmd(..), ExportFmt(..), StrEnum(toString, ofStringQ), escSql)
 import qualified Tv.Util as Log
 import Tv.View (ViewStack)
 import qualified Tv.View as View
@@ -41,9 +40,9 @@ import qualified Tv.View as View
 -- Tc.ExportFmt namespace
 -- ============================================================================
 
--- | File extension for an export format (== StrEnum.toString)
+-- | File extension for an export format (== toString)
 ext :: ExportFmt -> Text
-ext f = StrEnum.toString f
+ext f = toString f
 
 -- | DuckDB COPY option clause for an export format
 copyOpt :: ExportFmt -> Text
@@ -61,7 +60,7 @@ pickFmt :: Bool -> IO (Maybe ExportFmt)
 pickFmt tm = do
   m <- Fzf.fzf tm (V.fromList ["--prompt=export: "]) "csv\nparquet\njson\nndjson"
   case m of
-    Just raw -> pure (StrEnum.ofStringQ (T.strip raw))
+    Just raw -> pure (ofStringQ (T.strip raw))
     Nothing  -> pure Nothing
 
 -- | Export current view to file via DuckDB COPY
@@ -94,7 +93,7 @@ run s fmt = do
 -- | Export by format string directly (no fzf). Called by socket/dispatch.
 runWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 runWith s fmtStr =
-  case StrEnum.ofStringQ fmtStr of
+  case ofStringQ fmtStr of
     Nothing  -> pure s
     Just fmt -> run s fmt
 

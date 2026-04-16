@@ -33,9 +33,7 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
-import Tv.StrEnum (StrEnum(..))
-import qualified Tv.StrEnum as StrEnum
-import Tv.Types (Cmd)
+import Tv.Types (Cmd, StrEnum(..))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Lookup result for dispatch
@@ -95,7 +93,7 @@ cmdLookup cc c =
 
 -- | Lookup by handler name string (socket/external boundary only)
 handlerLookup :: CmdCache -> Text -> Maybe CmdInfo
-handlerLookup cc h = fmap (cmdLookup cc) (StrEnum.ofStringQ h)
+handlerLookup cc h = fmap (cmdLookup cc) (ofStringQ h)
 
 -- | O(1) check if command takes user input (ctx contains 'a').
 isArgCmd :: CmdCache -> Cmd -> Bool
@@ -108,7 +106,7 @@ menuItems cc vctx = V.mapMaybe go (ccMenu cc)
     go e
       | T.null (label e) = Nothing
       | not (T.null (viewCtx e)) && viewCtx e /= vctx = Nothing
-      | otherwise = Just (StrEnum.toString (cmd e), ctx e, key e, label e)
+      | otherwise = Just (toString (cmd e), ctx e, key e, label e)
 
 -- | Entry constructor shorthand.
 mkEntry :: Cmd -> Text -> Text -> Text -> Bool -> Text -> Entry
