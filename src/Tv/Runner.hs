@@ -24,20 +24,20 @@ import Tv.Types
   , ViewKind (..)
   , toPrql
   )
-import qualified Tv.Types as TblOps
 import qualified Tv.View as View
 import Tv.View (ViewStack)
+import qualified Tv.Data.ADBC.Ops as Ops
+import qualified Tv.Data.ADBC.Table as Table
 import Tv.Data.ADBC.Table (AdbcTable)
-import Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
 
 -- | Build filter expression from freq view row
 filterIO :: AdbcTable -> Vector Text -> Int -> IO Text
 filterIO tbl cols row = do
-  let names = TblOps.colNames tbl
+  let names = Table.colNames tbl
       idxs  = V.mapMaybe (Nav.idxOf names) cols
-  fetchedCols <- TblOps.getCols tbl idxs row (row + 1)
+  fetchedCols <- Ops.getCols tbl idxs row (row + 1)
   let vals = V.zipWith (\txtCol colIdx ->
-        toPrql (TblOps.colType tbl colIdx) (fromMaybe "" (txtCol V.!? 0))
+        toPrql (Ops.colType tbl colIdx) (fromMaybe "" (txtCol V.!? 0))
         ) fetchedCols idxs
       exprs = V.zipWith (\c v -> c <> " == " <> v) cols vals
   pure (T.intercalate " && " (V.toList exprs))

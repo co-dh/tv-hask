@@ -1,5 +1,5 @@
 {-
-  Core types: ColType, RenderCtx, TblOps, ModifyTable, Cmd, Effect, etc.
+  Core types: ColType, RenderCtx, Cmd, Effect, etc.
 -}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -22,11 +22,8 @@ module Tv.Types
     -- * Filter
   , filterPrql
   , numType
-    -- * TblOps / ModifyTable
-  , TblOps(..)
-  , ModifyTable(..)
-  , modifyTableHide
-  , modifyTableSort
+    -- * Table helpers
+  , filterPrompt
   , keepCols
   , colText
     -- * Agg
@@ -167,7 +164,7 @@ data RenderCtx = RenderCtx
   }
 makeFieldLabelsNoPrefix ''RenderCtx
 
--- | Build PRQL filter expression from fzf result (default for TblOps.buildFilter)
+-- | Build PRQL filter expression from fzf result
 -- With --print-query: line 0 = query, lines 1+ = selections
 filterPrql :: Text -> Vector Text -> Text -> Bool -> Text
 filterPrql col vals result numeric =
@@ -191,77 +188,13 @@ filterPrql col vals result numeric =
 numType :: Text -> Bool
 numType t = isNumeric (ofString t)
 
-{- | TblOps: unified read-only table interface.
-    Provides row/column access, metadata queries, filtering, and rendering. -}
-class TblOps a where
-  nRows     :: a -> Int                                            -- row count in view
-  colNames  :: a -> Vector Text                                    -- column names
-  totalRows :: a -> Int                                            -- actual rows (ADBC)
-  totalRows = nRows
-  filter_   :: a -> Text -> IO (Maybe a)                           -- filter by expr
-  distinct  :: a -> Int -> IO (Vector Text)                        -- distinct values
-  findRow   :: a -> Int -> Text -> Int -> Bool -> IO (Maybe Int)   -- find row
-  render    :: a -> RenderCtx -> IO (Vector Int)
-  -- extract columns [r0, r1) by index as raw text (for plot/export/PRQL)
-  getCols   :: a -> Vector Int -> Int -> Int -> IO (Vector (Vector Text))
-  getCols _ _ _ _ = pure V.empty
-  -- column type
-  colType   :: a -> Int -> ColType
-  colType _ _ = ColTypeOther
-  -- build filter expression from fzf result (default: PRQL syntax)
-  buildFilter :: a -> Text -> Vector Text -> Text -> Bool -> Text
-  buildFilter _ = filterPrql
-  -- filter header hint (shown above fzf input, default: PRQL examples)
-  filterPrompt :: a -> Text -> Text -> Text
-  filterPrompt _ col typ =
-    let eg = if numType typ
-               then "e.g. " <> col <> " > 5,  " <> col <> " >= 10 && " <> col <> " < 100"
-               else "e.g. " <> col <> " == 'USD',  " <> col <> " ~= 'pattern'"
-    in "PRQL filter on " <> col <> " (" <> typ <> "):  " <> eg
-  -- export plot data to tmpdir/plot.dat via DB (returns category list, or none for fallback)
-  -- args: tbl xName yName catName? xIsTime step truncLen
-  plotExport :: a -> Text -> Text -> Maybe Text -> Bool -> Int -> Int -> IO (Maybe (Vector Text))
-  plotExport _ _ _ _ _ _ _ = pure Nothing
-  -- get cell value as string (for preview)
-  cellStr   :: a -> Int -> Int -> IO Text
-  cellStr _ _ _ = pure ""
-  -- fetch more rows (scroll-to-bottom): returns table with more rows, or none
-  fetchMore :: a -> IO (Maybe a)
-  fetchMore _ = pure Nothing
-  -- loading (file or URL)
-  fromFile  :: Text -> IO (Maybe a)
-  fromFile _ = pure Nothing
-  fromUrl   :: Text -> IO (Maybe a)
-  fromUrl _ = pure Nothing
-
-{- | ModifyTable: mutable table operations (extends TblOps).
-    Column hiding and sorting; row deletion is done via filter. -}
-class TblOps a => ModifyTable a where
-  hideCols :: Vector Int -> a -> IO a           -- hide columns
-  sortBy   :: Vector Int -> Bool -> a -> IO a   -- sort by columns
-
--- Hide columns at cursor + selections, return new table and filtered group
-modifyTableHide
-  :: ModifyTable a
-  => a -> Int -> Vector Int -> Vector Text -> IO (a, Vector Text)
-modifyTableHide tbl cursor sels grp = do
-  let idxs = if V.elem cursor sels then sels else V.snoc sels cursor
-      names = colNames tbl
-      hideNames = V.map (\i -> fromMaybe "" (names V.!? i)) idxs
-  newTbl <- hideCols idxs tbl
-  pure (newTbl, V.filter (not . (`V.elem` hideNames)) grp)
-
--- Sort table by selected columns + cursor column, excluding group (key) columns
-modifyTableSort
-  :: ModifyTable a
-  => a -> Int -> Vector Int -> Vector Int -> Bool -> IO a
-modifyTableSort tbl cursor selIdxs grpIdxs asc =
-  let cols = V.fromList
-             . nub
-             . V.toList
-             . V.filter (not . (`V.elem` grpIdxs))
-             $ selIdxs V.++ V.singleton cursor
-  in if V.null cols then pure tbl else sortBy cols asc tbl
+-- | Filter prompt hint (PRQL examples for the given column/type)
+filterPrompt :: Text -> Text -> Text
+filterPrompt col typ =
+  let eg = if numType typ
+             then "e.g. " <> col <> " > 5,  " <> col <> " >= 10 && " <> col <> " < 100"
+             else "e.g. " <> col <> " == 'USD',  " <> col <> " ~= 'pattern'"
+  in "PRQL filter on " <> col <> " (" <> typ <> "):  " <> eg
 
 -- | Keep columns not in hide set (shared by hideCols impls)
 keepCols :: Int -> Vector Int -> Vector Text -> Vector Text

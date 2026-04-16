@@ -43,17 +43,18 @@ import qualified Tv.StrEnum as StrEnum
 import qualified Tv.Term as Term
 import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk)
 import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
+import qualified Tv.Data.ADBC.Ops as Ops
+import qualified Tv.Data.ADBC.Table as Table
+import Tv.Data.ADBC.Table (AdbcTable)
 import Tv.Types
   ( Cmd(..)
   , ColType(..)
   , PlotKind(..)
-  , TblOps
   , plotKind
   , typeStr
   , isNumeric
   , isTime
   )
-import qualified Tv.Types as TblOps
 import qualified Tv.Util as Log
 import Tv.View (ViewStack)
 import qualified Tv.View as View
@@ -160,7 +161,7 @@ readKey = do
     Right c -> pure c
     Left _  -> pure 'q'
 
-err :: TblOps t => ViewStack t -> Text -> IO (Maybe (ViewStack t))
+err :: ViewStack AdbcTable -> Text -> IO (Maybe (ViewStack AdbcTable))
 err s msg = do
   Log.write "plot" msg
   Render.errorPopup msg
@@ -292,11 +293,10 @@ renderR script = do
 
 -- | Export plot data with headers for R (prepends column names to plotExport output)
 exportWithHeaders
-  :: TblOps t
-  => t -> Text -> Text -> Maybe Text -> Bool -> Int -> Int
+  :: AdbcTable -> Text -> Text -> Maybe Text -> Bool -> Int -> Int
   -> IO (Maybe (Vector Text))
 exportWithHeaders t xName yName catName_ xIsTime step truncLen_ = do
-  mCats <- TblOps.plotExport t xName yName catName_ xIsTime step truncLen_
+  mCats <- Table.plotExport t xName yName catName_ xIsTime step truncLen_
   case mCats of
     Nothing -> pure Nothing
     Just cats -> do
@@ -328,7 +328,7 @@ renderFrame pngPath intervals idx err_ = do
     TIO.putStrLn ("\r                                  " <> hi "," <> "/" <> hi "." <> ":" <> bar)
 
 -- | Run plot with interactive controls (in-place re-rendering)
-run :: TblOps t => ViewStack t -> PlotKind -> IO (Maybe (ViewStack t))
+run :: ViewStack AdbcTable -> PlotKind -> IO (Maybe (ViewStack AdbcTable))
 run s kind = do
   Log.write "plot" ("run entered, kind=" <> T.pack (show kind))
   let n = View.nav (View.cur s)
@@ -345,8 +345,8 @@ run s kind = do
           altEnter
           datPath <- Log.tmpPath "plot.dat"
           pngPath <- Log.tmpPath "plot.png"
-          let nr = min (TblOps.nRows (Nav.tbl n)) maxPoints
-          cols <- TblOps.getCols (Nav.tbl n) (V.singleton yIdx) 0 nr
+          let nr = min (Table.nRows (Nav.tbl n)) maxPoints
+          cols <- Ops.getCols (Nav.tbl n) (V.singleton yIdx) 0 nr
           let vals = fromMaybe V.empty (cols V.!? 0)
           TIO.writeFile datPath
             (yName <> "\n"
@@ -394,12 +394,12 @@ run s kind = do
                     then err s ("y-axis '" <> yName <> "' must be numeric (got "
                                  <> typeStr yType <> ")")
                     else do
-                      let nr = TblOps.totalRows (Nav.tbl n)
-                          xType0 = TblOps.colType (Nav.tbl n) xIdx
+                      let nr = Table.totalRows (Nav.tbl n)
+                          xType0 = Ops.colType (Nav.tbl n) xIdx
                       xType <-
                         if xType0 /= ColTypeStr then pure xType0
                         else do
-                          cols <- TblOps.getCols (Nav.tbl n) (V.singleton xIdx) 0 1
+                          cols <- Ops.getCols (Nav.tbl n) (V.singleton xIdx) 0 1
                           let v = T.strip (fromMaybe "" (cols V.!? 0 >>= (V.!? 0)))
                               cs = T.unpack v
                               at_ i = Log.getD cs i ' '

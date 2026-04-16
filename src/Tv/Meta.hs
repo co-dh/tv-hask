@@ -27,7 +27,6 @@ import Tv.App.Types (HandlerFn, domainH)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd (..), ViewKind (..))
-import qualified Tv.Types as TblOps
 import Tv.View (ViewStack)
 import qualified Tv.View as View
 
@@ -83,7 +82,7 @@ setKey s =
     colNames <- Ops.metaNames (tblName s) (View.cur s ^. #nav % #row % #sels)
     case View.pop s of
       Just s' -> do
-        let di = Nav.dispOrder colNames (TblOps.colNames (View.tbl s'))
+        let di = Nav.dispOrder colNames (Table.colNames (View.tbl s'))
             v  = View.cur s'
                  & #nav % #grp      .~ colNames
                  & #nav % #dispIdxs .~ di

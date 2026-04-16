@@ -43,7 +43,7 @@ import Tv.App.Types (HandlerFn, domainH)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Data.ADBC.Table (AdbcTable)
 import qualified Tv.Data.ADBC.Table as Table
-import Tv.Data.ADBC.Ops ()  -- TblOps AdbcTable instance
+import qualified Tv.Data.ADBC.Ops as Ops
 import qualified Tv.FileFormat as FileFormat
 import qualified Tv.Fzf as Fzf
 import qualified Tv.SourceConfig as SourceConfig
@@ -54,7 +54,6 @@ import Tv.Types
   ( Cmd(..)
   , ViewKind(..)
   )
-import qualified Tv.Types as TblOps
 import qualified Tv.Util as Log
 import qualified Tv.Util as Remote
 import Tv.View (View, ViewStack)
@@ -128,7 +127,7 @@ pathIdx names =
 cellStr :: View AdbcTable -> Int -> IO Text
 cellStr v colIdx = do
   let rowCur = Nav.cur (Nav.row (View.nav v))
-  cols <- TblOps.getCols (Nav.tbl (View.nav v)) (V.singleton colIdx) rowCur (rowCur + 1)
+  cols <- Ops.getCols (Nav.tbl (View.nav v)) (V.singleton colIdx) rowCur (rowCur + 1)
   case cols V.!? 0 of
     Just c  -> pure (fromMaybe "" (c V.!? 0))
     Nothing -> pure ""
@@ -352,7 +351,7 @@ selPaths v = case View.vkind v of
     case pathIdx (Nav.colNames (View.nav v)) of
       Nothing -> pure V.empty
       Just pathCol -> do
-        cols <- TblOps.getCols (Nav.tbl (View.nav v)) (V.singleton pathCol)
+        cols <- Ops.getCols (Nav.tbl (View.nav v)) (V.singleton pathCol)
                   0 (View.nRows v)
         let c = fromMaybe V.empty (cols V.!? 0)
             rows =

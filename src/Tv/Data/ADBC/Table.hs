@@ -11,7 +11,7 @@
   `AdbcTable.foo` becomes `foo` here (with prefixed aliases only where a
   collision forces it).
 
-  NOTE: TblOps/ModifyTable instances for AdbcTable are in ADBC/Ops.hs.
+  NOTE: Table operations (getCols, renderView, etc.) are in ADBC/Ops.hs.
 -}
 module Tv.Data.ADBC.Table
   ( -- top-level (Lean: def Prql.query in Table.lean)
@@ -446,7 +446,7 @@ fileWith path_ reader duckdbExt = do
       requery q total
 
 -- ----------------------------------------------------------------------------
--- NOTE: TblOps/ModifyTable instances for AdbcTable are in ADBC/Ops.hs
+-- NOTE: Table operations (getCols, renderView, etc.) are in ADBC/Ops.hs
 -- ----------------------------------------------------------------------------
 
 -- | Create freq table entirely in SQL (no round-trip to Lean)

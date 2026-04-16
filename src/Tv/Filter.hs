@@ -39,40 +39,39 @@ import Tv.App.Types (HandlerFn, domainH', argH)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (NavState, rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
-import Tv.Types (Cmd(..), TblOps, ColType, isNumeric, typeStr)
-import qualified Tv.Types as TblOps
+import Tv.Types (Cmd(..), ColType, isNumeric, typeStr, filterPrql, filterPrompt)
+import qualified Tv.Data.ADBC.Ops as Ops
+import qualified Tv.Data.ADBC.Table as Table
+import Tv.Data.ADBC.Table (AdbcTable)
 import Tv.View (View(..), ViewStack, cur, setCur, push, tbl)
 import qualified Tv.View as View
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Util as Util
-import Tv.Data.ADBC.Table (AdbcTable)
-import Tv.Data.ADBC.Ops ()  -- TblOps instance for AdbcTable
 
 -- | Move row cursor to target index (pure helper)
 moveRowTo
-  :: TblOps t
-  => ViewStack t -> Int -> Maybe (Int, Text) -> ViewStack t
+  :: ViewStack AdbcTable -> Int -> Maybe (Int, Text) -> ViewStack AdbcTable
 moveRowTo s rowIdx search_ =
   let v      = cur s
       n      = v ^. #nav
-      nRows_ = TblOps.nRows (n ^. #tbl)
+      nRows_ = Table.nRows (n ^. #tbl)
       delta  = rowIdx - n ^. #row % #cur
       nav'   = over rowCur (\f -> finClamp nRows_ f delta) n
   in setCur s (v & #nav .~ nav'
                  & #search .~ maybe (v ^. #search) Just search_)
 
 -- | Move col cursor to target index (pure helper)
-moveTo :: TblOps t => ViewStack t -> Int -> ViewStack t
+moveTo :: ViewStack AdbcTable -> Int -> ViewStack AdbcTable
 moveTo s colIdx =
   let v      = cur s
       n      = v ^. #nav
-      nCols_ = V.length (TblOps.colNames (n ^. #tbl))
+      nCols_ = V.length (Table.colNames (n ^. #tbl))
       delta  = colIdx - n ^. #col % #cur
       nav'   = over colCur (\f -> finClamp nCols_ f delta) n
   in setCur s (v & #nav .~ nav')
 
 -- | col search: fzf jump to column by name (IO version for backward compat)
-colSearch :: TblOps t => ViewStack t -> IO (ViewStack t)
+colSearch :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 colSearch s = do
   mi <- Fzf.fzfIdx (V.fromList ["--prompt=Column: "]) (Nav.dispNames (nav (cur s)))
   case mi of
@@ -81,20 +80,19 @@ colSearch s = do
 
 -- | Shared: resolve current column, fetch sorted distinct values
 withDistinct
-  :: TblOps t
-  => ViewStack t
-  -> (Int -> Text -> Vector Text -> IO (ViewStack t))
-  -> IO (ViewStack t)
+  :: ViewStack AdbcTable
+  -> (Int -> Text -> Vector Text -> IO (ViewStack AdbcTable))
+  -> IO (ViewStack AdbcTable)
 withDistinct s f = do
   let v       = cur s
       curCol  = Nav.colIdx (v ^. #nav)
       curName = Nav.colName (v ^. #nav)
-  vals <- TblOps.distinct (v ^. #nav % #tbl) curCol
+  vals <- Table.distinct (v ^. #nav % #tbl) curCol
   let sorted = V.fromList (L.sort (V.toList vals))
   f curCol curName sorted
 
 -- | row search (/): find value in current column, jump to matching row (IO)
-rowSearch :: TblOps t => ViewStack t -> IO (ViewStack t)
+rowSearch :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 rowSearch s = withDistinct s $ \curCol curName vals -> do
   mr <- Fzf.fzf (V.fromList ["--prompt=/" <> curName <> ": "])
                 (T.intercalate "\n" (V.toList vals))
@@ -102,7 +100,7 @@ rowSearch s = withDistinct s $ \curCol curName vals -> do
     Nothing     -> pure s
     Just result -> do
       let start = cur s ^. #nav % #row % #cur + 1
-      mri <- TblOps.findRow (tbl s) curCol result start True
+      mri <- Table.findRow (tbl s) curCol result start True
       case mri of
         Nothing     -> pure s
         Just rowIdx -> pure (moveRowTo s rowIdx (Just (curCol, result)))
@@ -110,24 +108,22 @@ rowSearch s = withDistinct s $ \curCol curName vals -> do
 -- | findRow with cache: fzf fires focus on every arrow key, so without caching
 -- each fires a SQL query causing visible lag.
 cachedFindRow
-  :: TblOps t
-  => IORef (HashMap Int (Maybe Int))
-  -> t -> Int -> Int -> Text -> IO (Maybe Int)
+  :: IORef (HashMap Int (Maybe Int))
+  -> AdbcTable -> Int -> Int -> Text -> IO (Maybe Int)
 cachedFindRow cache tbl_ col idx val = do
   m <- readIORef cache
   case HM.lookup idx m of
     Just hit -> pure hit
     Nothing  -> do
-      r <- TblOps.findRow tbl_ col val 0 True
+      r <- Table.findRow tbl_ col val 0 True
       modifyIORef cache (HM.insert idx r)
       pure r
 
 -- | Build poll callback for live search preview.
 -- On each fzf focus change, finds the matching row (cached) and re-renders.
 searchPoll
-  :: TblOps t
-  => t -> Int -> Vector Text
-  -> IORef (ViewStack t) -> (ViewStack t -> IO ())
+  :: AdbcTable -> Int -> Vector Text
+  -> IORef (ViewStack AdbcTable) -> (ViewStack AdbcTable -> IO ())
   -> IO (IORef (HashMap Int (Maybe Int)), IO ())
 searchPoll tbl_ curCol vals sRef preview = do
   lastIdx <- newIORef (Nothing :: Maybe Int)
@@ -165,8 +161,7 @@ searchPoll tbl_ curCol vals sRef preview = do
 -- | Row search with live preview: cursor moves as user browses fzf results.
 -- fzf focus -> shell script -> socat -> socket -> poll -> findRow -> re-render.
 rowSearchLive
-  :: TblOps t
-  => ViewStack t -> (ViewStack t -> IO ()) -> IO (ViewStack t)
+  :: ViewStack AdbcTable -> (ViewStack AdbcTable -> IO ()) -> IO (ViewStack AdbcTable)
 rowSearchLive s preview = withDistinct s $ \curCol curName vals -> do
   tm <- Fzf.getTest
   if tm
@@ -175,7 +170,7 @@ rowSearchLive s preview = withDistinct s $ \curCol curName vals -> do
       if T.null result
         then pure s
         else do
-          mri <- TblOps.findRow (tbl s) curCol result 0 True
+          mri <- Table.findRow (tbl s) curCol result 0 True
           case mri of
             Nothing     -> pure s
             Just rowIdx -> pure (moveRowTo s rowIdx (Just (curCol, result)))
@@ -211,7 +206,7 @@ rowSearchLive s preview = withDistinct s $ \curCol curName vals -> do
                 Just rowIdx -> pure (moveRowTo s rowIdx (Just (curCol, result)))
 
 -- | search in direction: fwd=true (n), bwd=false (N)
-searchDir :: TblOps t => ViewStack t -> Bool -> IO (ViewStack t)
+searchDir :: ViewStack AdbcTable -> Bool -> IO (ViewStack AdbcTable)
 searchDir s fwd = do
   let v = cur s
   case v ^. #search of
@@ -219,29 +214,28 @@ searchDir s fwd = do
     Just (col, val) -> do
       let rowCur = v ^. #nav % #row % #cur
           start  = if fwd then rowCur + 1 else rowCur
-      mri <- TblOps.findRow (v ^. #nav % #tbl) col val start fwd
+      mri <- Table.findRow (v ^. #nav % #tbl) col val start fwd
       case mri of
         Nothing     -> pure s
         Just rowIdx -> pure (moveRowTo s rowIdx Nothing)
 
 -- | row filter (\): filter rows by expression, push filtered view (IO)
--- Uses TblOps.buildFilter for backend-specific syntax (PRQL vs q)
-rowFilter :: TblOps t => ViewStack t -> IO (ViewStack t)
+rowFilter :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 rowFilter s = withDistinct s $ \_curCol curName vals -> do
-  let typ    = TblOps.colType (tbl s) _curCol
+  let typ    = Ops.colType (tbl s) _curCol
       typStr = typeStr typ
-      header = TblOps.filterPrompt (tbl s) curName typStr
+      header = filterPrompt curName typStr
   mr <- Fzf.fzf
           (V.fromList ["--print-query", "--header=" <> header, "--prompt=filter > "])
           (T.intercalate "\n" (V.toList vals))
   case mr of
     Nothing     -> pure s
     Just result -> do
-      let expr = TblOps.buildFilter (tbl s) curName vals result (isNumeric typ)
+      let expr = filterPrql curName vals result (isNumeric typ)
       if T.null expr
         then pure s
         else do
-          mt <- TblOps.filter_ (tbl s) expr
+          mt <- Table.filter (tbl s) expr
           case mt of
             Nothing   -> pure s
             Just tbl' ->
@@ -256,7 +250,7 @@ rowFilter s = withDistinct s $ \_curCol curName vals -> do
                    Just v' -> pure (push s (v' & #disp .~ ("\\" <> curName)))
 
 -- | Jump to column by name directly (no fzf). Called by socket/dispatch.
-jumpCol :: TblOps t => ViewStack t -> Text -> IO (ViewStack t)
+jumpCol :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 jumpCol s name = do
   if T.null name
     then pure s
@@ -265,12 +259,12 @@ jumpCol s name = do
       Nothing  -> pure s
 
 -- | Filter by expression directly (no fzf). Called by socket/dispatch.
-filterWith :: TblOps t => ViewStack t -> Text -> IO (ViewStack t)
+filterWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 filterWith s expr = do
   if T.null expr
     then pure s
     else do
-      mt <- TblOps.filter_ (tbl s) expr
+      mt <- Table.filter (tbl s) expr
       case mt of
         Nothing   -> pure s
         Just tbl' ->
@@ -286,7 +280,7 @@ filterWith s expr = do
                Just v' -> pure (push s (v' & #disp .~ ("\\" <> expr)))
 
 -- | Search for value directly (no fzf). Called by socket/dispatch.
-searchWith :: TblOps t => ViewStack t -> Text -> IO (ViewStack t)
+searchWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 searchWith s val = do
   if T.null val
     then pure s
@@ -294,7 +288,7 @@ searchWith s val = do
       let v      = cur s
           curCol = Nav.colIdx (v ^. #nav)
           start  = v ^. #nav % #row % #cur + 1
-      mri <- TblOps.findRow (tbl s) curCol val start True
+      mri <- Table.findRow (tbl s) curCol val start True
       case mri of
         Nothing     -> pure s
         Just rowIdx -> pure (moveRowTo s rowIdx (Just (curCol, val)))
