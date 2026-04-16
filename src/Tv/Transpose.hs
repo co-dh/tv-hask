@@ -7,6 +7,7 @@
 -}
 module Tv.Transpose
   ( push
+  , commands
   ) where
 
 import Data.Text (Text)
@@ -16,12 +17,14 @@ import qualified Data.Vector as V
 
 import Optics.Core ((&), (.~))
 
+import Tv.App.Types (AppState(..), HandlerFn, tryStk)
+import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import Tv.Data.ADBC.Ops (quoteId)
 import qualified Tv.Data.ADBC.Prql as Prql
 import Tv.Data.ADBC.Table (AdbcTable, stripSemi, tmpName, fromTmp)
 import qualified Tv.Data.ADBC.Table as Table
-import Tv.Types (escSql)
+import Tv.Types (Cmd(..), escSql)
 import Tv.View (View(..), ViewStack)
 import qualified Tv.View as View
 
@@ -76,3 +79,9 @@ push s = do
             Just adbc ->
               pure (fmap (\v -> View.push s (v & #disp .~ "xpose"))
                          (View.fromTbl adbc (View.path (View.cur s)) 0 V.empty 0))
+
+commands :: V.Vector (Entry, Maybe HandlerFn)
+commands = V.fromList
+  [ hdl (mkEntry CmdTblXpose "" "X" "Transpose table (rows <-> columns)" False "")
+        (\a ci _ -> tryStk a ci (push (stk a)))
+  ]

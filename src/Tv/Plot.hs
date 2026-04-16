@@ -18,6 +18,7 @@ module Tv.Plot
   , handleKey
   , rScript
   , run
+  , commands
   ) where
 
 import Control.Exception (SomeException, try)
@@ -39,10 +40,14 @@ import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
 import qualified Tv.StrEnum as StrEnum
 import qualified Tv.Term as Term
+import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk)
+import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
 import Tv.Types
-  ( ColType(..)
+  ( Cmd(..)
+  , ColType(..)
   , PlotKind(..)
   , TblOps
+  , plotKind
   , typeStr
   , isNumeric
   , isTime
@@ -475,3 +480,22 @@ run s kind = do
 -- as private helpers but the current run path uses exitPlot instead).
 _unused :: IO ()
 _unused = altLeave >> setSane
+
+plotH :: HandlerFn
+plotH = \a ci _ ->
+  case plotKind (ciCmd ci) of
+    Just k  -> tryStk a ci (run (stk a) k)
+    Nothing -> pure ActUnhandled
+
+commands :: V.Vector (Entry, Maybe HandlerFn)
+commands = V.fromList
+  [ hdl (mkEntry CmdPlotArea    "cg" "" "Area (g=x numeric, c=y numeric)"        False "") plotH
+  , hdl (mkEntry CmdPlotLine    "cg" "" "Line (g=x numeric, c=y numeric)"        False "") plotH
+  , hdl (mkEntry CmdPlotScatter "cg" "" "Scatter (g=x numeric, c=y numeric)"     False "") plotH
+  , hdl (mkEntry CmdPlotBar     "cg" "" "Bar (g=x categorical, c=y numeric)"     False "") plotH
+  , hdl (mkEntry CmdPlotBox     "cg" "" "Boxplot (g=x categorical, c=y numeric)" False "") plotH
+  , hdl (mkEntry CmdPlotStep    "cg" "" "Step (g=x numeric, c=y numeric)"        False "") plotH
+  , hdl (mkEntry CmdPlotHist    "c"  "" "Histogram (c=numeric column)"           False "") plotH
+  , hdl (mkEntry CmdPlotDensity "c"  "" "Density (c=numeric column)"             False "") plotH
+  , hdl (mkEntry CmdPlotViolin  "cg" "" "Violin (g=x categorical, c=y numeric)"  False "") plotH
+  ]

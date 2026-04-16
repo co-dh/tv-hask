@@ -15,6 +15,7 @@ module Tv.Export
   , exportView
   , run
   , runWith
+  , commands
   ) where
 
 import Data.Text (Text)
@@ -22,6 +23,8 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
+import Tv.App.Types (AppState(..), HandlerFn, stackIO)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import qualified Tv.Data.ADBC.Prql as Prql
 import qualified Tv.Data.ADBC.Table as Table
@@ -29,7 +32,7 @@ import Tv.Data.ADBC.Table (AdbcTable, stripSemi)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Render as Render
 import qualified Tv.StrEnum as StrEnum
-import Tv.Types (ExportFmt (..), escSql)
+import Tv.Types (Cmd(..), ExportFmt (..), escSql)
 import qualified Tv.Util as Log
 import Tv.View (ViewStack)
 import qualified Tv.View as View
@@ -94,3 +97,18 @@ runWith s fmtStr =
   case StrEnum.ofStringQ fmtStr of
     Nothing  -> pure s
     Just fmt -> run s fmt
+
+exportH :: HandlerFn
+exportH = \a _ arg -> stackIO a
+  (if T.null arg
+     then do
+       mf <- pickFmt
+       case mf of
+         Just f  -> run (stk a) f
+         Nothing -> pure (stk a)
+     else runWith (stk a) arg)
+
+commands :: V.Vector (Entry, Maybe HandlerFn)
+commands = V.fromList
+  [ hdl (mkEntry CmdTblExport "a" "e" "Export table (csv/parquet/json/ndjson)" False "") exportH
+  ]

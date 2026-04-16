@@ -13,14 +13,18 @@ module Tv.Meta
   , selSingle
   , setKey
   , dispatch
+  , commands
   ) where
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Vector as V
 import Data.Vector (Vector)
 
 import Optics.Core ((%), (&), (.~), (^.))
+import Tv.App.Types (HandlerFn, domainH)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd (..), ViewKind (..))
 import qualified Tv.Types as TblOps
@@ -98,3 +102,11 @@ dispatch s h = case h of
   CmdMetaSetKey ->
     if View.cur s ^. #vkind == VkColMeta then Just (setKey s) else Nothing
   _ -> Nothing
+
+commands :: V.Vector (Entry, Maybe HandlerFn)
+commands = V.fromList
+  [ hdl (mkEntry CmdMetaPush      ""  "M"     "Open column metadata view"       True  "")        (domainH dispatch)
+  , hdl (mkEntry CmdMetaSetKey    "s" "<ret>" "Set selected rows as key columns" True  "colMeta") (domainH dispatch)
+  , hdl (mkEntry CmdMetaSelNull   ""  "0"     "Select columns with null values"  True  "")        (domainH dispatch)
+  , hdl (mkEntry CmdMetaSelSingle ""  "1"     "Select columns with single value" True  "")        (domainH dispatch)
+  ]

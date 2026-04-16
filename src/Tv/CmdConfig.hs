@@ -1,6 +1,7 @@
 {-
   Command config: Entry type + cached lookups.
-  Commands array lives in App/Common (single table with both metadata and handler).
+  Entry constructors (mkEntry, navE, hdl) live here so feature modules
+  can define their own commands without importing App.Types.
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -9,6 +10,10 @@ module Tv.CmdConfig
   ( -- * Types
     CmdInfo(..)
   , Entry(..)
+    -- * Entry constructors
+  , mkEntry
+  , navE
+  , hdl
     -- * Cached refs
   , keyInfoMap
   , cmdInfoMap
@@ -145,3 +150,16 @@ menuItems vctx = do
       | T.null (label e) = Nothing
       | not (T.null (viewCtx e)) && viewCtx e /= vctx = Nothing
       | otherwise = Just (StrEnum.toString (cmd e), ctx e, key e, label e)
+
+-- | Entry constructor shorthand.
+mkEntry :: Cmd -> Text -> Text -> Text -> Bool -> Text -> Entry
+mkEntry c ctx_ key_ label_ resets_ vctx = Entry
+  { cmd = c, ctx = ctx_, key = key_, label = label_, resets = resets_, viewCtx = vctx }
+
+-- | Nav/sort entry: no handler, falls through to viewUp in dispatch.
+navE :: Entry -> (Entry, Maybe f)
+navE e = (e, Nothing)
+
+-- | Entry with explicit handler.
+hdl :: Entry -> f -> (Entry, Maybe f)
+hdl e f = (e, Just f)

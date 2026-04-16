@@ -12,6 +12,7 @@ module Tv.Derive
   , parseDerive
   , runWith
   , run
+  , commands
   ) where
 
 import Data.Maybe (fromMaybe)
@@ -22,9 +23,11 @@ import qualified Data.Vector as V
 
 import Optics.Core ((&), (.~))
 
+import Tv.App.Types (HandlerFn, argH)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
-import Tv.Types (ColType (..), Op (..), typeStr)
+import Tv.Types (Cmd(..), ColType (..), Op (..), typeStr)
 import qualified Tv.Types as TblOps
 import qualified Tv.Util as Log
 import qualified Tv.View as View
@@ -114,3 +117,8 @@ run s = do
   case mRaw of
     Nothing  -> pure s
     Just raw -> runWith s (T.strip raw)
+
+commands :: V.Vector (Entry, Maybe HandlerFn)
+commands = V.fromList
+  [ hdl (mkEntry CmdColDerive "a" "=" "Derive new column (name = expr)" False "") (argH run runWith)
+  ]

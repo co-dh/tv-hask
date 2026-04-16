@@ -9,6 +9,7 @@ module Tv.Join
   ( JoinOp(..)
   , run
   , runWith
+  , commands
   ) where
 
 import Data.Text (Text)
@@ -19,6 +20,9 @@ import Text.Read (readMaybe)
 
 import Optics.Core ((&), (.~))
 
+import Tv.App.Types (AppState(..), HandlerFn, stackIO)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
+import Tv.Types (Cmd(..))
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import Tv.Data.ADBC.Ops ()
 import qualified Tv.Data.ADBC.Prql as Prql
@@ -148,3 +152,13 @@ runWith s idxStr = case resolveOps s of
 headMay :: [a] -> Maybe a
 headMay []    = Nothing
 headMay (x:_) = Just x
+
+commands :: V.Vector (Entry, Maybe HandlerFn)
+commands = V.fromList
+  [ hdl (mkEntry CmdTblJoin "Sa" "J" "Join tables" False "")
+        (\a _ arg -> stackIO a (do
+          ms <- runWith (stk a) arg
+          case ms of
+            Just s' -> pure s'
+            Nothing -> pure (stk a)))
+  ]

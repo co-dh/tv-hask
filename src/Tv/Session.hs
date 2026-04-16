@@ -17,6 +17,7 @@ module Tv.Session
   , loadName
   , saveWith
   , loadWith
+  , commands
   ) where
 
 import Control.Exception (SomeException, try)
@@ -48,9 +49,12 @@ import Optics.Core ((%), (&), (.~), (^.))
 import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
 import qualified Tv.StrEnum as StrEnum
+import Tv.App.Types (AppState(..), HandlerFn, stackIO)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Types as TblOps
 import Tv.Types
   ( Agg(..)
+  , Cmd(..)
   , Op(..)
   , ViewKind(..)
   )
@@ -414,4 +418,16 @@ instance A.FromJSON Op where
 
 instance A.FromJSON ViewKind where
   parseJSON = vkFromJ
+
+commands :: V.Vector (Entry, Maybe HandlerFn)
+commands = V.fromList
+  [ hdl (mkEntry CmdSessSave "a" "W" "Save session" False "")
+        (\a _ arg -> stackIO a (do saveWith (stk a) arg; pure (stk a)))
+  , hdl (mkEntry CmdSessLoad "a" ""  "Load session"  False "")
+        (\a _ arg -> stackIO a (do
+          ms <- loadWith arg
+          case ms of
+            Just stk' -> pure stk'
+            Nothing   -> pure (stk a)))
+  ]
 
