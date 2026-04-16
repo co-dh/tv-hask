@@ -39,7 +39,7 @@ module Tv.Term
 
 import Prelude hiding (init, print)
 import Control.Exception (bracket)
-import Control.Monad (forM, forM_, when, zipWithM_)
+import Control.Monad (foldM, forM, forM_, when, zipWithM_)
 import Data.Bits ((.&.))
 import Data.Char (chr)
 import Data.HashMap.Strict (HashMap)
@@ -336,31 +336,48 @@ present = do
     -- flushes its internal output buffer once per call — keeps the PTY
     -- recorder's `drain()` from slicing the frame across multiple cast
     -- frames, which was breaking byte parity for multi-step demos.
-    styleRef  <- newIORef (Nothing :: Maybe (Word32, Word32))
-    cursorRef <- newIORef ((-1, -1) :: (Int, Int))
-    outRef    <- newIORef (mempty :: TB.Builder)
-    let emit t = modifyIORef' outRef (<> TB.fromText t)
-    forM_ [0 .. h - 1] $ \y ->
-      forM_ [0 .. w - 1] $ \x -> do
-        let idx = y * w + x
-        cell     <- VSM.read buf idx
-        prevCell <- VSM.read front idx
-        when (cell /= prevCell) $ do
-          let Cell ch fg bg = cell
-          lastStyle <- readIORef styleRef
-          let style = (fg, bg)
-          when (Just style /= lastStyle) $ do
-            emit (sgrFor fg bg)
-            writeIORef styleRef (Just style)
-          lastCursor <- readIORef cursorRef
-          when (lastCursor /= (y, x)) $
-            emit (cursorAt y x)
-          emit (T.singleton (chr (fromIntegral ch)))
-          writeIORef cursorRef (y, x + 1)
-          VSM.write front idx cell
-    out <- TL.toStrict . TB.toLazyText <$> readIORef outRef
-    TIO.hPutStr stdout out
+    --
+    -- The style/cursor/builder trio is a left fold: each emitted cell
+    -- updates all three. We thread the tuple through a `foldM` over the
+    -- row-major cell indices instead of using IORefs — same iteration
+    -- order, same emission conditions, byte-identical output. The
+    -- `VSM.read buf/front` and `VSM.write front` calls stay inline
+    -- because they are the IO side of the diff-flush contract.
+    let s0 = (Nothing :: Maybe (Word32, Word32), (-1, -1) :: (Int, Int), mempty :: TB.Builder)
+    (_, _, outB) <- foldM (stepCell w buf front) s0 [(y, x) | y <- [0 .. h - 1], x <- [0 .. w - 1]]
+    TIO.hPutStr stdout (TL.toStrict (TB.toLazyText outB))
     hFlush stdout
+
+-- | Single-cell step of the `present` fold. Reads the back/front cell,
+-- updates the front buffer on diff, and returns the new
+-- (lastStyle, lastCursor, builder) accumulator. Pulled out of `present`
+-- so the fold body stays readable.
+stepCell
+  :: Int
+  -> VSM.IOVector Cell
+  -> VSM.IOVector Cell
+  -> (Maybe (Word32, Word32), (Int, Int), TB.Builder)
+  -> (Int, Int)
+  -> IO (Maybe (Word32, Word32), (Int, Int), TB.Builder)
+stepCell w buf front acc@(lastStyle, lastCursor, b) (y, x) = do
+  let idx = y * w + x
+  cell     <- VSM.read buf idx
+  prevCell <- VSM.read front idx
+  if cell == prevCell
+    then pure acc
+    else do
+      let Cell ch fg bg = cell
+          style = (fg, bg)
+          (b1, lastStyle') =
+            if Just style /= lastStyle
+              then (b <> TB.fromText (sgrFor fg bg), Just style)
+              else (b, lastStyle)
+          b2 = if lastCursor /= (y, x)
+                 then b1 <> TB.fromText (cursorAt y x)
+                 else b1
+          b3 = b2 <> TB.singleton (chr (fromIntegral ch))
+      VSM.write front idx cell
+      pure (lastStyle', (y, x + 1), b3)
 
 -- | Build the SGR + charset-reset prefix for a cell. Extracts attr bits
 -- from `fg` before masking off the color. Matches Lean termbox2's output
