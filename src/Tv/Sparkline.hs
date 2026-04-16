@@ -79,7 +79,7 @@ compute t nBars = do
                 Right qr_ -> do
                   nr <- Adbc.nrows qr_
                   let nrI = fromIntegral nr :: Int
-                      emptyBuckets = V.map (const (V.empty :: Vector (Int, Int))) numIdxs
+                      emptyBuckets = V.replicate (V.length numIdxs) (V.empty :: Vector (Int, Int))
                       stepRow cb r_ = do
                         let rW = fromIntegral r_ :: Word64
                         colIdx <- Adbc.cellInt qr_ rW 0
@@ -109,7 +109,7 @@ compute t nBars = do
                                      let level = (c * 8 + maxCnt - 1) `div` maxCnt  -- ceil: 0->0, >0->1..8
                                      in fromMaybe ' ' (blocks V.!? level))
                                    counts
-                      updates = V.toList $ V.mapMaybe id $ V.zipWith
-                        (\i buckets -> (,) i <$> sparkFor buckets)
-                        numIdxs colBuckets
+                      updates = V.toList $ V.mapMaybe
+                        (\(i, buckets) -> (,) i <$> sparkFor buckets)
+                        (V.zip numIdxs colBuckets)
                   pure (empty V.// updates)
