@@ -9,8 +9,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Meta
   ( push
-  , selNull
-  , selSingle
   , setKey
   , commands
   ) where
@@ -65,11 +63,15 @@ selBy s flt =
     rows <- Ops.metaIdxs (tblName s) flt
     pure (View.setCur s (View.cur s & #nav % #row % #sels .~ rows))
 
-selNull :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-selNull s = selBy s "null_pct == 100"
+-- Data-driven selection predicates: (Cmd, key, label, PRQL filter)
+metaSels :: [(Cmd, Text, Text, Text)]
+metaSels =
+  [ (CmdMetaSelNull,   "0", "Select columns with null values",  "null_pct == 100")
+  , (CmdMetaSelSingle, "1", "Select columns with single value", "dist == 1")
+  ]
 
-selSingle :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-selSingle s = selBy s "dist == 1"
+selByH :: Text -> HandlerFn
+selByH flt = onStk (fmap Just . (`selBy` flt))
 
 -- | Set key cols from meta view selections, pop to parent, select cols
 setKey :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
@@ -89,10 +91,8 @@ setKey s =
       Nothing -> pure (Just s)
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
-commands = V.fromList
+commands = V.fromList $
   [ hdl (mkEntry CmdMetaPush      ""  "M"     "Open column metadata view"       True  "")        (onStk push)
   , hdl (mkEntry CmdMetaSetKey    "s" "<ret>" "Set selected rows as key columns" True  "colMeta")
         (\a ci _ -> if View.cur (stk a) ^. #vkind == VkColMeta then tryStk a ci (setKey (stk a)) else viewUp a ci)
-  , hdl (mkEntry CmdMetaSelNull   ""  "0"     "Select columns with null values"  True  "")        (onStk (fmap Just . selNull))
-  , hdl (mkEntry CmdMetaSelSingle ""  "1"     "Select columns with single value" True  "")        (onStk (fmap Just . selSingle))
-  ]
+  ] ++ [ hdl (mkEntry c "" k lbl True "") (selByH flt) | (c, k, lbl, flt) <- metaSels ]

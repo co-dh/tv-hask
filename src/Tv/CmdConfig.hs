@@ -41,7 +41,6 @@ data CmdInfo = CmdInfo
   { ciCmd    :: Cmd
   , ciResets :: Bool
   }
-makeFieldLabelsNoPrefix ''CmdInfo
 
 -- | Command entry: metadata for key binding, menu, and dispatch
 data Entry = Entry
