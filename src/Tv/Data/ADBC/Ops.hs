@@ -40,6 +40,7 @@ import qualified Tv.Data.ADBC.Table as Table
 import Tv.Data.ADBC.Table (AdbcTable(..))
 import Data.List (nub)
 import Tv.Types (ColType(..), colText, escSql, keepCols)
+import qualified Tv.Util as Log
 
 -- ----------------------------------------------------------------------------
 -- Table operations (were typeclass methods, now plain functions)
@@ -204,7 +205,9 @@ columnComment path_ colName =
     else do
       r <- try action :: IO (Either SomeException Text)
       case r of
-        Left _  -> pure ""
+        Left e  -> do
+          Log.write "ops" ("columnComment " <> tbl <> "." <> colName <> ": " <> T.pack (show e))
+          pure ""
         Right s -> pure s
   where
     tbl = pathTable path_
@@ -229,7 +232,9 @@ enrichComments metaTbl path_ =
     else do
       r <- try action :: IO (Either SomeException ())
       case r of
-        Left _  -> pure False
+        Left e  -> do
+          Log.write "ops" ("enrichComments " <> metaTbl <> ": " <> T.pack (show e))
+          pure False
         Right _ -> pure True
   where
     tbl = pathTable path_

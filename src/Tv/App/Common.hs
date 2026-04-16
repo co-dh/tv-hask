@@ -228,7 +228,9 @@ dispatchHandler a cmdStr = do
         (x : rest) -> (x, T.intercalate " " rest)
         []           -> (cmdStr, "")
   case CmdConfig.handlerLookup (cmdCache a) h of
-    Nothing -> pure a
+    Nothing -> do
+      Log.write "cmd" ("unknown command: " <> h)
+      pure a
     Just ci -> do
       act <- dispatch a ci arg
       case act of

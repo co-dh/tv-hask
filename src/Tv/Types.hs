@@ -2,6 +2,7 @@
   Core types: ColType, RenderCtx, Cmd, Effect, etc.
 -}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TemplateHaskell #-}
 module Tv.Types
   ( -- * Utility
