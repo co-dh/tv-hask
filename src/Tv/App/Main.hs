@@ -44,6 +44,7 @@ import Tv.View (View, ViewStack(..))
 import qualified Tv.View as View
 import qualified Tv.Util as Log
 import qualified Tv.Util as Socket
+import Optics.Core ((&), (.~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- parsed CLI arguments
@@ -79,9 +80,9 @@ parseArgs args0 =
        (p : "-c" : k : _) ->
          CliArgs { path = Just p, keys = toK k, test = True, noSign = noSign_, session = session_ }
        (p : _) ->
-         defaultCliArgs { path = Just p, noSign = noSign_, session = session_ }
+         defaultCliArgs & #path .~ Just p & #noSign .~ noSign_ & #session .~ session_
        [] ->
-         defaultCliArgs { noSign = noSign_, session = session_ }
+         defaultCliArgs & #noSign .~ noSign_ & #session .~ session_
 
 -- | Init/shutdown socket + terminal around a mainLoop call
 withTui :: Bool -> IO a -> IO a

@@ -35,6 +35,7 @@ import Tv.Types
   , joinWith
   )
 import qualified Tv.Util as Log
+import Optics.Core ((&), (%~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | PRQL query: base table + operations (PRQL-specific base format)
@@ -103,7 +104,7 @@ queryRender q =
 
 -- | Pipe: append operation to query
 pipe :: Query -> Op -> Query
-pipe q op = q { ops = V.snoc (ops q) op }
+pipe q op = q & #ops %~ (`V.snoc` op)
 
 -- | Filter helper
 queryFilter :: Query -> Text -> Query

@@ -202,9 +202,7 @@ exec h nav rowPg =
        CmdRowSel   -> Just (over rowSelsL (`toggle` rCur) nav)
        CmdColGrp   ->
          let newGrp = toggle grp_ (curColName nav)
-         in Just (nav { grp = newGrp
-                      , dispIdxs = dispOrder newGrp (colNames nav)
-                      })
+         in Just (nav & #grp .~ newGrp & #dispIdxs .~ dispOrder newGrp (colNames nav))
        CmdColHide  -> Just (over #hidden (`toggle` curColName nav) nav)
        CmdColShiftL -> shiftGrp False grp_ nCols_
        CmdColShiftR -> shiftGrp True  grp_ nCols_
@@ -223,7 +221,5 @@ exec h nav rowPg =
                      gj = maybe "" id (grp_ V.!? j)
                      newGrp = grp_ V.// [(i, gj), (j, gi)]
                      d = if fwd then 1 else -1
-                     nav' = nav { grp = newGrp
-                                , dispIdxs = dispOrder newGrp (colNames nav)
-                                }
+                     nav' = nav & #grp .~ newGrp & #dispIdxs .~ dispOrder newGrp (colNames nav)
                  in Just (over colCurL (\f -> finClamp nCols_ f d) nav')

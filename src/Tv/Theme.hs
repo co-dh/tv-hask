@@ -36,6 +36,7 @@ import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcessWithExitCode)
 import Text.Read (readMaybe)
 
+import Optics.Core ((&), (.~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 import qualified Tv.Fzf as Fzf
@@ -239,7 +240,7 @@ stateApplyIdx :: State -> Int -> IO State
 stateApplyIdx s idx = do
   sty <- loadIdx idx
   writeIORef stylesRef sty
-  pure (s { styles = sty, themeIdx = idx })
+  pure (s & #styles .~ sty & #themeIdx .~ idx)
 
 -- end State
 

@@ -36,7 +36,7 @@ import qualified Tv.Folder as Folder
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Join as Join
 import qualified Tv.Key as Key
-import Optics.Core (Lens', (%), (&), (.~), (^.), over, set)
+import Optics.Core (Lens', (%), (&), (.~), (%~), (^.), over, set)
 import qualified Tv.Meta as Meta
 import qualified Tv.Nav as Nav
 import qualified Tv.Plot as Plot
@@ -110,12 +110,13 @@ handlerMap = unsafePerformIO (newIORef HashMap.empty)
 
 -- | Reset view state caches (after data changes)
 resetVS :: AppState -> AppState
-resetVS a = a { vs = Render.viewStateDefault, sparklines = V.empty }
+resetVS a = a & #vs .~ Render.viewStateDefault & #sparklines .~ V.empty
 
 -- | Update stk, reset vs if ci.resetsVS
 withStk :: AppState -> CmdInfo -> ViewStack AdbcTable -> AppState
 withStk a ci s' =
-  a { stk = s', vs = if ciResetsVS ci then Render.viewStateDefault else vs a }
+  a & #stk .~ s'
+    & #vs .~ (if ciResetsVS ci then Render.viewStateDefault else a ^. #vs)
 
 -- | Log error, show popup, return unchanged state
 errAction :: AppState -> SomeException -> IO Action
@@ -273,7 +274,7 @@ runStackIO :: AppState -> IO (ViewStack AdbcTable) -> IO Action
 runStackIO a f = do
   r <- try f :: IO (Either SomeException (ViewStack AdbcTable))
   case r of
-    Right s' -> pure (ActOk (resetVS (a { stk = s' })))
+    Right s' -> pure (ActOk (resetVS (a & #stk .~ s')))
     Left  e  -> errAction a e
 
 -- end namespace AppState
@@ -439,28 +440,28 @@ commands = V.fromList
           if V.null (View.sameHide (View.cur (stk a)))
             then tryStk a ci (Diff.run (stk a))
             else pure (ActOk (resetVS
-                    (a { stk = View.setCur (stk a) (Diff.showSame (View.cur (stk a))) }))))
+                    (a & #stk .~ View.setCur (stk a) (Diff.showSame (View.cur (stk a)))))))
     -- info: precision, heatmap, scroll
   , cmd (mkEntry CmdInfoTog    ""   "I"  "Toggle info overlay"                     False "")
         (\a ci _ -> pure (case UIInfo.update (info a) (ciCmd ci) of
-                             Just i' -> ActOk (a { info = i' })
+                             Just i' -> ActOk (a & #info .~ i')
                              Nothing -> ActUnhandled))
   , cmd (mkEntry CmdPrecDec    ""   ""   "Decrease decimal precision"              False "") (precAdj (-1))
   , cmd (mkEntry CmdPrecInc    ""   ""   "Increase decimal precision"              False "") (precAdj 1)
   , cmd (mkEntry CmdPrecZero   ""   ""   "Set precision to 0 decimals"             False "") (precSet 0)
   , cmd (mkEntry CmdPrecMax    ""   ""   "Set precision to max (17)"               False "") (precSet 17)
   , cmd (mkEntry CmdCellUp     ""   "{"  "Scroll cell preview up"                  False "")
-        (\a _ _ -> pure (ActOk (a { prevScroll = prevScroll a - min (prevScroll a) 5 })))
+        (\a _ _ -> pure (ActOk (a & #prevScroll %~ (\p -> p - min p 5))))
   , cmd (mkEntry CmdCellDn     ""   "}"  "Scroll cell preview down"                False "")
-        (\a _ _ -> pure (ActOk (a { prevScroll = prevScroll a + 5 })))
+        (\a _ _ -> pure (ActOk (a & #prevScroll %~ (+ 5))))
   , cmd (mkEntry CmdHeat0      ""   ""   "Heatmap: off"                            False "")
-        (\a _ _ -> pure (ActOk (a { heatMode = 0 })))
+        (\a _ _ -> pure (ActOk (a & #heatMode .~ 0)))
   , cmd (mkEntry CmdHeat1      ""   ""   "Heatmap: numeric columns"                False "")
-        (\a _ _ -> pure (ActOk (a { heatMode = 1 })))
+        (\a _ _ -> pure (ActOk (a & #heatMode .~ 1)))
   , cmd (mkEntry CmdHeat2      ""   ""   "Heatmap: categorical columns"            False "")
-        (\a _ _ -> pure (ActOk (a { heatMode = 2 })))
+        (\a _ _ -> pure (ActOk (a & #heatMode .~ 2)))
   , cmd (mkEntry CmdHeat3      ""   ""   "Heatmap: all columns"                    False "")
-        (\a _ _ -> pure (ActOk (a { heatMode = 3 })))
+        (\a _ _ -> pure (ActOk (a & #heatMode .~ 3)))
     -- metaV: column metadata view
   , cmd (mkEntry CmdMetaPush      ""  "M"     "Open column metadata view"            True  "")
         (domainH Meta.dispatch)
@@ -580,11 +581,11 @@ renderBase a0 = do
   a <- if V.null (sparklines a0)
          then do
            sp <- Sparkline.compute (View.tbl (stk a0)) 20
-           pure (a0 { sparklines = sp })
+           pure (a0 & #sparklines .~ sp)
          else pure a0
   (vs', v') <- View.doRender (View.cur (stk a)) (vs a) (Theme.styles (theme a))
                  (heatMode a) (sparklines a)
-  let a' = a { stk = View.setCur (stk a) v', vs = vs' }
+  let a' = a & #stk .~ View.setCur (stk a) v' & #vs .~ vs'
   renderTabLine (View.tabNames (stk a')) 0 (Replay.opsStr (View.cur (stk a')))
   -- Column description on status line from DuckDB column comments (cached by path+col)
   let colName = Nav.curColName (View.nav (View.cur (stk a')))
@@ -593,8 +594,8 @@ renderBase a0 = do
            then pure a'
            else do
              desc <- Ops.columnComment (View.path (View.cur (stk a'))) colName
-             pure (a' { statusCache =
-                          (View.path (View.cur (stk a')), colName, desc) })
+             pure (a' & #statusCache .~
+                          (View.path (View.cur (stk a')), colName, desc))
   let (_, _, desc) = statusCache a''
   when (not (T.null desc)) $ do
     ht <- Term.height

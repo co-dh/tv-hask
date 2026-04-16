@@ -14,6 +14,8 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
+import Optics.Core ((&), (.~))
+
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import Tv.Data.ADBC.Ops (quoteId)
 import qualified Tv.Data.ADBC.Prql as Prql
@@ -72,5 +74,5 @@ push s = do
           case mAdbc of
             Nothing -> pure Nothing
             Just adbc ->
-              pure (fmap (\v -> View.push s (v { disp = "xpose" }))
+              pure (fmap (\v -> View.push s (v & #disp .~ "xpose"))
                          (View.fromTbl adbc (View.path (View.cur s)) 0 V.empty 0))

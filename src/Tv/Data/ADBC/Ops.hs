@@ -32,6 +32,8 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word64)
 
+import Optics.Core ((&), (.~))
+
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import qualified Tv.Data.ADBC.Prql as Prql
 import Tv.Data.ADBC.Prql (Query(..))
@@ -159,7 +161,7 @@ queryMeta t = do
           _ <- Adbc.query ("CREATE OR REPLACE TEMP TABLE " <> tblName
                           <> " AS (" <> metaSql <> ")")
           qr_ <- Adbc.query ("SELECT * FROM " <> tblName)
-          Just <$> Table.ofQueryResult qr_ (Prql.defaultQuery { base = "from " <> tblName }) 0
+          Just <$> Table.ofQueryResult qr_ (Prql.defaultQuery & #base .~ ("from " <> tblName)) 0
 
 -- | Query row indices matching PRQL filter on meta table
 queryMetaIndices :: Text -> Text -> IO (Vector Int)

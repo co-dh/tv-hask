@@ -20,6 +20,8 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
+import Optics.Core ((&), (.~))
+
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
 import qualified Tv.StrEnum as StrEnum
@@ -99,7 +101,7 @@ runWith s input = case parseDerive input of
             grp_  = Nav.grp (View.nav curV)
         in case View.rebuild curV tbl' (nCols - 1) grp_ 0 of
              Nothing -> pure s
-             Just v  -> pure (View.push s (v { View.disp = "=" <> name }))
+             Just v  -> pure (View.push s (v & #disp .~ ("=" <> name)))
 
 -- | Prompt for name = expr via fzf, then derive.
 run :: ViewStack AdbcTable -> IO (ViewStack AdbcTable)

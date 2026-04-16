@@ -17,6 +17,8 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Text.Read (readMaybe)
 
+import Optics.Core ((&), (.~))
+
 import qualified Tv.Data.ADBC.Adbc as Adbc
 import Tv.Data.ADBC.Ops ()
 import qualified Tv.Data.ADBC.Prql as Prql
@@ -103,7 +105,7 @@ execJoin s op leftGrp = do
                       _ -> "⋈ (" <> T.intercalate ", " (V.toList leftGrp) <> ")"
                     curV  = View.cur s'
                     mView = View.fromTbl adbc (View.path curV) 0 V.empty 0
-                in pure (fmap (\v -> View.setCur s' (v { View.disp = disp_ })) mView)
+                in pure (fmap (\v -> View.setCur s' (v & #disp .~ disp_)) mView)
 
 -- | Resolve available ops from stack state
 resolveOps :: ViewStack AdbcTable -> Maybe (Vector JoinOp, Vector Text)

@@ -19,6 +19,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word32)
 
+import Optics.Core ((%~), (&))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 import Tv.Types (Cmd(..), ViewKind(..))
@@ -33,7 +34,7 @@ makeFieldLabelsNoPrefix ''State
 
 -- | Pure update by Cmd
 update :: State -> Cmd -> Maybe State
-update s CmdInfoTog = Just s { vis = not (vis s) }
+update s CmdInfoTog = Just (s & #vis %~ not)
 update _ _          = Nothing
 
 -- | Context-specific key hints per view (no common navigation)

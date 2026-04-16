@@ -296,13 +296,12 @@ restoreView j = do
                 let nav' = (view ^. #nav)
                          & #hidden       .~ hidden_
                          & #col % #sels  .~ colSels_
-                in pure (Just view { View.vkind    = vkind_
-                                   , View.disp     = disp_
-                                   , View.prec     = prec_
-                                   , View.widthAdj = widthAdj_
-                                   , View.search   = search_
-                                   , View.nav      = nav'
-                                   })
+                in pure (Just (view & #vkind    .~ vkind_
+                                    & #disp     .~ disp_
+                                    & #prec     .~ prec_
+                                    & #widthAdj .~ widthAdj_
+                                    & #search   .~ search_
+                                    & #nav      .~ nav'))
               Nothing -> pure Nothing
   where
     -- | Catch IO exceptions, log, return Nothing (matches Lean's per-view skip).
