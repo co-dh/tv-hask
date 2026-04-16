@@ -13,7 +13,7 @@ module Tv.Diff
   ) where
 
 import Control.Monad (forM_)
-import Data.IORef (newIORef, readIORef, modifyIORef')
+import Data.Either (partitionEithers)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -133,8 +133,7 @@ buildJoinTbl left right allKeys valCols common = do
 renameDiffCols :: Text -> Vector Text -> IO (Vector Text)
 renameDiffCols tblName valCols = do
   let q = quoted
-  ref <- newIORef (V.empty :: Vector Text)
-  V.forM_ valCols $ \v -> do
+  classified <- V.forM valCols $ \v -> do
     let leftCol  = v <> "_left"
         rightCol = v <> "_right"
     qr_ <- Adbc.query
@@ -142,15 +141,17 @@ renameDiffCols tblName valCols = do
               <> " WHERE NOT (" <> q leftCol
               <> " IS NOT DISTINCT FROM " <> q rightCol <> ")")
     cnt <- Adbc.cellInt qr_ 0 0
-    if cnt == 0
-      then modifyIORef' ref (\a -> a V.++ V.fromList [leftCol, rightCol])
-      else forM_
-             [(leftCol, "Δ" <> v <> "_L"), (rightCol, "Δ" <> v <> "_R")]
-             (\(oldN, renamed) ->
-                () <$ Adbc.query
-                        ("ALTER TABLE " <> tblName
-                         <> " RENAME COLUMN " <> q oldN <> " TO " <> q renamed))
-  readIORef ref
+    pure $ if cnt == 0
+      then Left [leftCol, rightCol]
+      else Right [(leftCol, "Δ" <> v <> "_L"), (rightCol, "Δ" <> v <> "_R")]
+  let (hides, rens) = partitionEithers (V.toList classified)
+      sameHide = V.fromList (concat hides)
+      renames  = concat rens
+  forM_ renames $ \(oldN, renamed) ->
+    () <$ Adbc.query
+            ("ALTER TABLE " <> tblName
+             <> " RENAME COLUMN " <> q oldN <> " TO " <> q renamed)
+  pure sameHide
 
 -- | FULL OUTER JOIN top 2 stack views on shared categorical columns.
 run :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))

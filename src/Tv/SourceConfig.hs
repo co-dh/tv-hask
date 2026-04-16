@@ -604,9 +604,11 @@ configRunEnter cfg name =
                       name
                     nr <- Adbc.nrows qr
                     let n = fromIntegral nr :: Int
-                    forM_ [0 .. n - 1] $ \i -> do
+                    cols <- V.generateM n $ \i -> do
                       colName <- Adbc.cellStr qr (fromIntegral i) 0
                       colType <- Adbc.cellStr qr (fromIntegral i) 1
+                      pure (colName, colType)
+                    V.forM_ cols $ \(colName, colType) -> do
                       let alter = "ALTER TABLE " <> tbl
                                 <> " ALTER COLUMN \"" <> colName <> "\" TYPE "
                                 <> colType <> " USING TRY_CAST(\"" <> colName
