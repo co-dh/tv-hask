@@ -54,7 +54,6 @@ import qualified Tv.Nav as Nav
 import qualified Tv.Plot as Plot
 import qualified Tv.Render as Render
 import Tv.Render (tabLine)
-import qualified Tv.Replay as Replay
 import qualified Tv.Session as Session
 import qualified Tv.Sparkline as Sparkline
 import qualified Tv.Split as Split
@@ -147,7 +146,7 @@ localCmds = V.fromList
                                    (vs a') (Theme.styles (theme a'))
                                    (heatMode a') (sparklines a')
                     writeIORef ref (a' { stk = View.setCur stk' v', vs = vs' })
-                    tabLine (View.tabNames stk') 0 (Replay.opsStr (View.cur stk'))
+                    tabLine (View.tabNames stk') 0 (View.opsStr (View.cur stk'))
                     when (info a') $ do
                       h <- Term.height; w <- Term.width
                       UIInfo.render (fromIntegral h) (fromIntegral w) (View.vkind (View.cur stk'))
@@ -188,7 +187,7 @@ localCmds = V.fromList
                 (vs', v') <- View.doRender (View.cur (stk a')) (vs a') styles_
                                (heatMode a') (sparklines a')
                 writeIORef ref (a' { stk = View.setCur (stk a') v', vs = vs' })
-                tabLine (View.tabNames (stk a')) 0 (Replay.opsStr (View.cur (stk a')))
+                tabLine (View.tabNames (stk a')) 0 (View.opsStr (View.cur (stk a')))
                 when (info a') $ do
                   h <- Term.height; w <- Term.width
                   UIInfo.render (fromIntegral h) (fromIntegral w)
@@ -249,7 +248,7 @@ renderBase a0 = do
   (vs', v') <- View.doRender (View.cur (stk a)) (vs a) (Theme.styles (theme a))
                  (heatMode a) (sparklines a)
   let a' = a & #stk .~ View.setCur (stk a) v' & #vs .~ vs'
-  tabLine (View.tabNames (stk a')) 0 (Replay.opsStr (View.cur (stk a')))
+  tabLine (View.tabNames (stk a')) 0 (View.opsStr (View.cur (stk a')))
   let colName = Nav.colName (View.nav (View.cur (stk a')))
       (cachedPath, cachedCol, _) = statusCache a'
   a'' <- if cachedPath == View.path (View.cur (stk a')) && cachedCol == colName

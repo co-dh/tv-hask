@@ -1,12 +1,9 @@
 {-
   Freq: group by columns, count, pct, bar.
   Pure update returns residual Effect; dispatch executes IO inline.
-
-  Literal port of Tc/Tc/Runner.lean. Lean namespace Tc.Freq lives here so
-  the file name matches the Lean source (Runner.lean).
 -}
 {-# LANGUAGE OverloadedStrings #-}
-module Tv.Runner
+module Tv.Freq
   ( filterIO
   , update
   ) where

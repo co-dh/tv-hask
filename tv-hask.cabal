@@ -53,17 +53,15 @@ library
     Tv.Key
     Tv.Meta
     Tv.Nav
+    Tv.Freq
     Tv.Plot
     Tv.Render
-    Tv.Replay
-    Tv.Runner
     Tv.Session
     Tv.SourceConfig
     Tv.Sparkline
     Tv.Split
     Tv.StatusAgg
     Tv.StrEnum
-    Tv.Stub
     Tv.Term
     Tv.Theme
     Tv.Transpose
