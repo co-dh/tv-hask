@@ -58,12 +58,26 @@ across many call sites justifies the TH splice + import overhead.
 ## Sources are per-module closures
 
 Each remote backend lives under `Tv.Source.*` and exports a `Source`
-value whose `list`/`enter`/`download`/`setup` fields hold its behavior as
-closures. `Tv.Source` does longest-prefix lookup plus thin runner
-wrappers; `Tv.Source.Core` holds shared glue (template expansion, shell
-safety, cache wrapper, once-for-key setup ledger). Adding a backend
-means dropping a new module under `Tv.Source.*` — no central dispatcher
-to extend, no field sentinels.
+value. The record is 5 fields: `pfx`, `parent`, `grpCol`, `list`, and
+`open`. `list` handles listings (noSign, path → table); `open` unifies
+what used to be `enter`/`enterUrl`/`download`/`resolve` — it receives a
+fully-joined path (with trailing `/` if it names a directory) and
+returns an `OpenResult`:
+
+```haskell
+data OpenResult
+  = OpenAsTable AdbcTable  -- open-row-as-table (osquery, pg ATTACH table)
+  | OpenAsFile  FilePath   -- local path / URI ready for FileFormat.openFile
+  | OpenAsDir   Text       -- URI to re-enter as a folder
+  | OpenNothing            -- can't open / source doesn't support it
+```
+
+One-time setup (DuckDB ATTACH, python helper scripts) happens inside
+`list`/`open` via `Core.onceFor` keyed on `pfx`. `Tv.Source` does
+longest-prefix lookup plus thin runner wrappers; `Tv.Source.Core` holds
+shared glue (template expansion, shell safety, cache wrapper, once-for-key
+ledger). Adding a backend means dropping a new module under
+`Tv.Source.*` — no central dispatcher to extend, no field sentinels.
 
 ## Project layout
 

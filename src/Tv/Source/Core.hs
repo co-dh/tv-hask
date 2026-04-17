@@ -10,6 +10,7 @@
 module Tv.Source.Core
   ( -- source interface
     Source (..)
+  , OpenResult (..)
     -- template expansion
   , expand
   , mkVars
@@ -58,26 +59,38 @@ import qualified Tv.Log as Log
 import qualified Tv.Render as Render
 import qualified Tv.Tmp as Tmp
 
--- | A remote directory backend: prefix match + behavior closures.
+-- | A remote directory backend: prefix match + two behavior closures.
 -- Folder and App.Main treat every source uniformly through this record.
 -- Per-source modules (Tv.Source.S3, Tv.Source.Ftp, …) each export a
 -- `Source` value built here; `Tv.Source` just aggregates them.
 --
--- `enter` and `enterUrl` are Maybes so the caller can distinguish "this
--- source handles enter" from "this source wants the default file-open path".
+-- `open` unifies what used to be `enter`/`enterUrl`/`download`/`resolve`:
+-- it takes a fully-joined path (with trailing '/' if the row was a dir)
+-- and returns an `OpenResult` telling the caller how to use it.
+-- One-time setup (e.g. DuckDB ATTACH, python script) happens inside
+-- `list`/`open` via `Core.onceFor` keyed on `pfx`, so the closures
+-- stay idempotent without a separate `setup` field.
 data Source = Source
-  { pfx       :: Text                                         -- URI prefix, e.g. "s3://"
-  , list      :: Bool -> Text -> IO (Maybe AdbcTable)         -- noSign, path → listing
-  , enter     :: Maybe (Text -> IO (Maybe AdbcTable))         -- script enter (Nothing = not supported)
-  , enterUrl  :: Maybe (Text -> Text)                         -- URL enter (Nothing = not supported)
-  , download  :: Bool -> Text -> IO Text                      -- noSign, path → local file path
-  , resolve   :: Bool -> Text -> IO Text                      -- download if needed, else pass-through
-  , setup     :: IO ()                                        -- idempotent one-time setup
-  , parent    :: Text -> Maybe Text                           -- parent URI or Nothing at root
-  , grpCol    :: Text                                         -- default group column (empty if none)
-  , attach    :: Bool                                         -- enter opens attached DuckDB table
-  , dirSuffix :: Bool                                         -- append '/' when joining child dirs
+  { pfx    :: Text                                     -- URI prefix, e.g. "s3://"
+  , parent :: Text -> Maybe Text                       -- parent URI or Nothing at root
+  , grpCol :: Maybe Text                               -- default group column (Nothing = none)
+  , list   :: Bool -> Text -> IO (Maybe AdbcTable)     -- noSign, path → listing
+  , open   :: Bool -> Text -> IO OpenResult            -- noSign, fullPath → what to do
   }
+
+-- | What a source's `open` produced for a path.
+data OpenResult
+  = OpenAsTable AdbcTable       -- open-row-as-table (osquery script, pg ATTACH table)
+  | OpenAsFile  FilePath        -- local path ready for FileFormat.openFile
+  | OpenAsDir   Text            -- URI to re-enter as a folder (e.g. "hf://datasets/foo/")
+  | OpenNothing                 -- can't open / source doesn't support it
+
+-- | AdbcTable has no Show instance, so we summarise the variant only.
+instance Show OpenResult where
+  show (OpenAsTable _) = "OpenAsTable <adbc>"
+  show (OpenAsFile p)  = "OpenAsFile " <> show p
+  show (OpenAsDir u)   = "OpenAsDir "  <> show u
+  show OpenNothing     = "OpenNothing"
 
 -- | Expand template placeholders: {path}, {name}, {tmp}, {extra}, {1}, {2+}, …
 -- For empty values, also removes a preceding "/" so "tree/main/{3+}" with

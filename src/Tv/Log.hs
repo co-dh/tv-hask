@@ -21,8 +21,9 @@ import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Time.LocalTime (getCurrentTimeZone, utcToLocalTime)
 import System.Directory (createDirectoryIfMissing)
 import System.Environment (lookupEnv)
-import System.IO (IOMode(..), hPutStrLn, withFile)
+import System.IO (BufferMode (..), Handle, IOMode (..), hPutStrLn, hSetBuffering, openFile)
 import System.IO.Unsafe (unsafePerformIO)
+import System.Posix.Process (getProcessID)
 import System.Process (readProcessWithExitCode)
 import System.Exit (ExitCode(..))
 
@@ -57,13 +58,30 @@ localTimestamp = do
 timestamp :: IO String
 timestamp = localTimestamp
 
+-- One persistent append-handle per process. GHC's Handle is internally
+-- mutex-protected, so concurrent writes from many threads are safe with
+-- no extra locking on our side. LineBuffering flushes on each newline,
+-- which (with O_APPEND) keeps cross-process writes atomic at the kernel
+-- level — tagging each line with the PID lets us demux the merged stream.
+logHandle :: Handle
+logHandle = unsafePerformIO $ do
+  p <- path
+  h <- openFile p AppendMode
+  hSetBuffering h LineBuffering
+  pure h
+{-# NOINLINE logHandle #-}
+
+-- Cache PID once; it's fixed for the lifetime of the process.
+pidStr :: String
+pidStr = unsafePerformIO $ show <$> getProcessID
+{-# NOINLINE pidStr #-}
+
 -- | Write log entry
 write :: Text -> Text -> IO ()
 write tag msg = do
-  p <- path
   ts <- timestamp
-  withFile p AppendMode $ \h ->
-    hPutStrLn h ("[" ++ ts ++ "] [" ++ T.unpack tag ++ "] " ++ T.unpack msg)
+  hPutStrLn logHandle
+    ("[" ++ ts ++ "] [pid=" ++ pidStr ++ "] [" ++ T.unpack tag ++ "] " ++ T.unpack msg)
 
 errorLog :: Text -> IO ()
 errorLog msg = write "error" msg

@@ -9,14 +9,12 @@
 -}
 module Tv.Source
   ( Source (..)
+  , OpenResult (..)
   , sources
   , findSource
   , runList
-  , runEnter
-  , runDl
-  , runSetup
+  , runOpen
   , configParent
-  , configResolve
   ) where
 
 import Data.Text (Text)
@@ -25,7 +23,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 import Tv.Data.DuckDB.Table (AdbcTable)
-import Tv.Source.Core (Source (..))
+import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
 import qualified Tv.Source.S3 as S3
 import qualified Tv.Source.Ftp as Ftp
@@ -64,23 +62,10 @@ findSource path_ = V.foldl' step Nothing sources
         else best
 
 runList :: Bool -> Source -> Text -> IO (Maybe AdbcTable)
-runList n src p = Core.withCache p (setup src *> list src n p)
+runList n src p = Core.withCache p (list src n p)
 
--- | Run a source's script-based enter. Returns Nothing if the source doesn't
--- have a script enter; triggers one-time setup before calling it.
-runEnter :: Source -> Text -> IO (Maybe AdbcTable)
-runEnter src name = case enter src of
-  Nothing -> pure Nothing
-  Just f  -> setup src *> f name
-
-runDl :: Bool -> Source -> Text -> IO Text
-runDl n src p = download src n p
-
-runSetup :: Source -> IO ()
-runSetup = setup
+runOpen :: Bool -> Source -> Text -> IO OpenResult
+runOpen n src p = open src n p
 
 configParent :: Source -> Text -> Maybe Text
 configParent = parent
-
-configResolve :: Bool -> Source -> Text -> IO Text
-configResolve n src p = resolve src n p

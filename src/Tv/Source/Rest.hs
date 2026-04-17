@@ -9,7 +9,7 @@ import qualified Tv.Data.DuckDB.Conn as Conn
 import Tv.Data.DuckDB.Table (AdbcTable, fromTmp, tmpName)
 import qualified Tv.Remote as Remote
 import qualified Tv.Tmp as Tmp
-import Tv.Source.Core (Source (..))
+import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
 
 pfx_ :: Text
@@ -18,19 +18,19 @@ pfx_ = "rest://"
 cmdTmpl :: Text
 cmdTmpl = "curl -sfL https://{1+}"
 
+-- | REST paths are URIs — no download, just passed to FileFormat / re-entered.
+restOpen :: Bool -> Text -> IO OpenResult
+restOpen _ path_
+  | T.isSuffixOf "/" path_ = pure (OpenAsDir path_)
+  | otherwise              = pure $ OpenAsFile $ T.unpack path_
+
 rest :: Source
 rest = Source
-  { pfx       = pfx_
-  , list      = \_ path_ -> listRest path_
-  , enter     = Nothing
-  , enterUrl  = Nothing
-  , download  = \_ p -> pure p           -- REST URIs aren't downloaded, DuckDB reads them
-  , resolve   = \_ p -> pure p
-  , setup     = pure ()
-  , parent    = \p -> Remote.parent p 1
-  , grpCol    = ""
-  , attach    = False
-  , dirSuffix = False
+  { pfx    = pfx_
+  , parent = \p -> Remote.parent p 1
+  , grpCol = Nothing
+  , list   = \_ p -> listRest p
+  , open   = restOpen
   }
 
 listRest :: Text -> IO (Maybe AdbcTable)

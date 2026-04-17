@@ -186,22 +186,20 @@ dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
   isDir <- doesDirectoryExist (T.unpack path_)
   if T.null path_ || isJust srcCfg || isDir then do
     let p = if T.null path_ then "." else path_
-    -- Source-driven direct entry (e.g. tv osquery://groups)
+    -- Source-driven direct entry (e.g. tv osquery://groups): try `open` for
+    -- paths that name a single thing (no trailing '/') under a source prefix.
     handled <- case srcCfg of
-      Just src
-        | Just _ <- Source.enter src
-        , not (T.null (Source.pfx src)) -> do
-            let rest = T.drop (T.length (Source.pfx src)) p
-            if not (T.null rest) then do
-              m <- Source.runEnter src rest
-              case m of
-                Just adbc ->
-                  case View.fromTbl adbc (Source.pfx src <> rest) 0 V.empty 0 of
-                    Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
-                    Nothing -> TIO.hPutStrLn stderr ("Empty: " <> p)
-                Nothing -> TIO.hPutStrLn stderr ("Cannot open: " <> p)
-              pure True
-            else pure False
+      Just src | not (T.null (Source.pfx src))
+               , not (T.isSuffixOf "/" p)
+               , T.length p > T.length (Source.pfx src) -> do
+          r <- Source.runOpen noSign_ src p
+          case r of
+            Source.OpenAsTable adbc ->
+              case View.fromTbl adbc p 0 V.empty 0 of
+                Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_
+                              pure True
+                Nothing -> do TIO.hPutStrLn stderr ("Empty: " <> p); pure True
+            _ -> pure False  -- fall through to folder listing
       _ -> pure False
     unless handled $ do
       mv <- Folder.mkView noSign_ p 1
