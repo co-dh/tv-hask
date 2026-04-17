@@ -29,6 +29,9 @@ module Tv.Term
   , _setScreenBufSize
   ) where
 
+-- $setup
+-- >>> :set -XOverloadedStrings
+
 import Prelude hiding (init, print)
 import Control.Monad (forM, forM_, unless, when, zipWithM_)
 import Data.Bits ((.&.), (.|.), testBit)
@@ -114,6 +117,40 @@ colorMap =
         [ (T.pack ("gray" ++ show i), fromIntegral (232 + i)) | i <- [0..23 :: Int] ]
   in HM.fromList (ansi ++ cube ++ gray)
 
+-- | Look up an xterm-256 color name, returning its palette index (0 = default/unknown).
+--
+-- >>> parseColor "default"
+-- 0
+-- >>> parseColor "black"
+-- 16
+-- >>> parseColor "red"
+-- 1
+-- >>> parseColor "white"
+-- 7
+-- >>> parseColor "brCyan"
+-- 14
+-- >>> parseColor "brWhite"
+-- 15
+-- >>> parseColor "rgb000"
+-- 16
+-- >>> parseColor "rgb555"
+-- 231
+-- >>> parseColor "rgb520"
+-- 208
+-- >>> parseColor "rgb234"
+-- 110
+-- >>> parseColor "gray0"
+-- 232
+-- >>> parseColor "gray23"
+-- 255
+-- >>> parseColor "gray4"
+-- 236
+-- >>> parseColor "rgb600"
+-- 0
+-- >>> parseColor "gray24"
+-- 0
+-- >>> parseColor "nosuchcolor"
+-- 0
 parseColor :: Text -> Word32
 parseColor s = HM.lookupDefault 0 s colorMap
 

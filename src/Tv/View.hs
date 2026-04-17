@@ -49,6 +49,20 @@ import Tv.Render (ViewState)
 import qualified Tv.Render as Render
 import Tv.Types (Cmd(..), Effect(..), ViewKind(..))
 
+-- $setup
+-- >>> :set -XOverloadedStrings
+-- >>> import qualified Data.Text as Text
+-- >>> import qualified Data.Vector as V
+-- >>> import qualified Tv.Nav as Nav
+-- >>> import Tv.Types (Cmd(..), ColType(..), Effect(..), ViewKind(..))
+-- >>> data MockTable = MockTable { mockRows :: Int, mockNames :: V.Vector Text.Text }
+-- >>> let mockNames53 = V.fromList ["c0","c1","c2"]
+-- >>> let mockTypes53 = V.fromList [ColTypeStr, ColTypeStr, ColTypeStr]
+-- >>> let mock53 = MockTable { mockRows = 5, mockNames = mockNames53 }
+-- >>> let testNav = Nav.new 5 5 mockNames53 mockTypes53 mock53
+-- >>> let testView = new testNav "data/test.csv"
+-- >>> let testStack = ViewStack { hd = testView, tl = [] }
+
 -- | View: wraps NavState for table type t
 data View t = View
   { nRows    :: Int
@@ -88,6 +102,15 @@ curDir v = case v ^. #vkind of
   _           -> "."
 
 -- | Tab display name: custom disp or filename from path
+--
+-- >>> tabName (new testNav "data/sample.parquet")
+-- "sample.parquet"
+-- >>> tabName ((new testNav "/home/user/Tc") { vkind = VkFld "/home/user/Tc" 1, path = "/home/user/Tc" })
+-- "/home/user/Tc"
+-- >>> tabName (testView { vkind = VkColMeta, disp = "meta" })
+-- "meta"
+-- >>> tabName (testView { vkind = VkFreqV (V.singleton "c0") 5, disp = "freq" })
+-- "freq"
 tabName :: View t -> Text
 tabName v = case v ^. #vkind of
   VkFld p _ ->
@@ -144,6 +167,17 @@ rebuild old tbl_ col_ grp_ row_ =
        else Nothing
 
 -- | Pure update by command
+--
+-- >>> fmap snd (update testView CmdSortAsc 1)
+-- Just (EffectSort 0 [] [] True)
+-- >>> fmap snd (update testView CmdSortDesc 1)
+-- Just (EffectSort 0 [] [] False)
+-- >>> fmap (Nav.cur . Nav.row . nav . fst) (update testView CmdRowInc 1)
+-- Just 1
+-- >>> fmap snd (update testView CmdRowInc 1)
+-- Just EffectNone
+-- >>> fmap (Nav.cur . Nav.row . nav . fst) (update testView CmdRowDec 1)
+-- Just 0
 update :: View t -> Cmd -> Int -> Maybe (View t, Effect)
 update v h rowPg =
   case h of
@@ -214,6 +248,23 @@ tabNames :: ViewStack t -> Vector Text
 tabNames s = V.fromList (map tabName (s ^. #hd : s ^. #tl))
 
 -- | Pure update by command. q on empty stack -> quit
+--
+-- >>> fmap (path . hd . fst) (updateStack testStack CmdStkSwap)
+-- Just "data/test.csv"
+-- >>> fmap snd (updateStack testStack CmdStkSwap)
+-- Just EffectNone
+-- >>> fmap (length . tl . fst) (updateStack testStack CmdStkDup)
+-- Just 1
+-- >>> fmap snd (updateStack testStack CmdStkDup)
+-- Just EffectNone
+-- >>> fmap snd (updateStack testStack CmdStkPop)
+-- Just EffectQuit
+-- >>> let twoStack = dup testStack in fmap (length . tl . fst) (updateStack twoStack CmdStkPop)
+-- Just 0
+-- >>> let twoStack = dup testStack in fmap snd (updateStack twoStack CmdStkPop)
+-- Just EffectNone
+-- >>> Data.Maybe.isNothing (updateStack testStack CmdRowInc)
+-- True
 updateStack :: ViewStack t -> Cmd -> Maybe (ViewStack t, Effect)
 updateStack s h = case h of
   CmdStkDup  -> Just (dup s, EffectNone)

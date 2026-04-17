@@ -61,7 +61,17 @@ import Tv.View (ViewStack)
 import qualified Tv.View as View
 import Optics.TH (makeFieldLabelsNoPrefix)
 
+-- $setup
+-- >>> :set -XOverloadedStrings
+-- >>> import qualified Data.Text as T
+-- >>> import Tv.Types (PlotKind(..), ColType(..))
+
 -- | Max data points for plot (more is slow and unreadable)
+--
+-- >>> 100 > maxPoints
+-- False
+-- >>> 3000 > maxPoints
+-- True
 maxPoints :: Int
 maxPoints = 2000
 
@@ -205,6 +215,15 @@ handleKey key
   | otherwise                  = KeyNoop
 
 -- | Generate R script for ggplot2 rendering
+--
+-- >>> "ggtitle('density of Close')" `T.isInfixOf` rScript "d.dat" "p.png" PlotDensity "" "Close" False "" False "" ColTypeOther "density of Close"
+-- True
+-- >>> "hjust = 0.5" `T.isInfixOf` rScript "d.dat" "p.png" PlotDensity "" "Close" False "" False "" ColTypeOther "density of Close"
+-- True
+-- >>> "ggtitle('line: Price vs Date by Ticker')" `T.isInfixOf` rScript "d.dat" "p.png" PlotLine "Date" "Price" True "Ticker" False "" ColTypeOther "line: Price vs Date by Ticker"
+-- True
+-- >>> "ggtitle" `T.isInfixOf` rScript "d.dat" "p.png" PlotLine "Date" "Price" False "" False "" ColTypeOther ""
+-- False
 rScript
   :: Text       -- dataPath
   -> Text       -- pngPath

@@ -20,6 +20,13 @@ import Data.Word (Word16, Word32)
 import qualified Tv.Term as Term
 import Tv.Term (Event(..))
 
+-- $setup
+-- >>> :set -XOverloadedStrings
+-- >>> import qualified Data.Vector as V
+-- >>> import qualified Tv.Term as Term
+-- >>> import Tv.Term (Event(..))
+-- >>> let mkEv = Event { typ = Term.eventKey, mods = 0, keyCode = 0, ch = 0, w = 0, h = 0 }
+
 -- Special key code -> (bare name, modifier name)
 -- Bare: unmodified output. Modifier: used with S-/C-/A- prefixes.
 -- Arrows map to hjkl bare but left/right/up/down when modified.
@@ -40,6 +47,108 @@ modPfx ev =
 
 -- | Normalize terminal event to readable key string.
 -- Regular chars -> "j", " "; special keys -> "<ret>", "<pgdn>"; modifiers -> "<S-left>", "<C-d>", "<A-x>"
+--
+-- Arrow keys (unmodified) map to hjkl:
+--
+-- >>> toKey (mkEv { keyCode = Term.keyArrowDown })
+-- "j"
+-- >>> toKey (mkEv { keyCode = Term.keyArrowUp })
+-- "k"
+-- >>> toKey (mkEv { keyCode = Term.keyArrowRight })
+-- "l"
+-- >>> toKey (mkEv { keyCode = Term.keyArrowLeft })
+-- "h"
+--
+-- Modifier prefixes:
+--
+-- >>> toKey (mkEv { mods = Term.modShift, keyCode = Term.keyArrowLeft })
+-- "<S-left>"
+-- >>> toKey (mkEv { mods = Term.modShift, keyCode = Term.keyArrowRight })
+-- "<S-right>"
+-- >>> toKey (mkEv { mods = Term.modCtrl, keyCode = Term.keyArrowUp })
+-- "<C-up>"
+-- >>> toKey (mkEv { mods = Term.modAlt, keyCode = Term.keyArrowDown })
+-- "<A-down>"
+--
+-- Enter and Backspace (ctrl modifier is stripped for these low-code keys):
+--
+-- >>> toKey (mkEv { mods = Term.modCtrl, keyCode = Term.keyEnter })
+-- "<ret>"
+-- >>> toKey (mkEv { keyCode = Term.keyEnter })
+-- "<ret>"
+-- >>> toKey (mkEv { mods = Term.modCtrl, keyCode = Term.keyBackspace })
+-- "<bs>"
+-- >>> toKey (mkEv { keyCode = Term.keyBackspace2 })
+-- "<bs>"
+--
+-- ASCII control codes via mods=2:
+--
+-- >>> toKey (mkEv { mods = 2, keyCode = 4 })
+-- "<C-d>"
+-- >>> toKey (mkEv { mods = 2, keyCode = 21 })
+-- "<C-u>"
+--
+-- Alt + printable char:
+--
+-- >>> toKey (mkEv { mods = Term.modAlt, ch = 120 })
+-- "<A-x>"
+--
+-- Round-trip through 'Term.toEvent' (pollEvent path):
+--
+-- >>> toKey (Term.toEvent '\r')
+-- "<ret>"
+-- >>> toKey (Term.toEvent '\n')
+-- "<ret>"
+-- >>> toKey (Term.toEvent '\x7F')
+-- "<bs>"
+-- >>> toKey (Term.toEvent '\x08')
+-- "<bs>"
+-- >>> toKey (Term.toEvent '\x1B')
+-- "<esc>"
+-- >>> toKey (Term.toEvent 'j')
+-- "j"
+-- >>> toKey (Term.toEvent ' ')
+-- " "
+--
+-- CSI sequences via 'Term.toEvents':
+--
+-- >>> toKey (Term.toEvents "\x1B[A")
+-- "k"
+-- >>> toKey (Term.toEvents "\x1B[B")
+-- "j"
+-- >>> toKey (Term.toEvents "\x1B[C")
+-- "l"
+-- >>> toKey (Term.toEvents "\x1B[D")
+-- "h"
+--
+-- SS3 sequences:
+--
+-- >>> toKey (Term.toEvents "\x1BOA")
+-- "k"
+-- >>> toKey (Term.toEvents "\x1BOB")
+-- "j"
+-- >>> toKey (Term.toEvents "\x1BOC")
+-- "l"
+-- >>> toKey (Term.toEvents "\x1BOD")
+-- "h"
+--
+-- Home, End, PageUp, PageDown:
+--
+-- >>> toKey (Term.toEvents "\x1B[H")
+-- "<home>"
+-- >>> toKey (Term.toEvents "\x1B[F")
+-- "<end>"
+-- >>> toKey (Term.toEvents "\x1B[5~")
+-- "<pgup>"
+-- >>> toKey (Term.toEvents "\x1B[6~")
+-- "<pgdn>"
+--
+-- Lone ESC and plain char via toEvents:
+--
+-- >>> toKey (Term.toEvents "\x1B")
+-- "<esc>"
+-- >>> toKey (Term.toEvents "j")
+-- "j"
 toKey :: Event -> Text
 toKey ev =
   if typ ev /= Term.eventKey then "" else
@@ -65,9 +174,47 @@ toKey ev =
                   in if T.null pfx then c else "<" <> pfx <> c <> ">"
              else ""
 
--- | Tokenize a `-c` key string into descriptive key tokens.
--- "jj<ret><C-d>" -> #["j", "j", "<ret>", "<C-d>"]
--- Aliases: arrow keys -> hjkl
+-- | Tokenize a @-c@ key string into descriptive key tokens.
+-- @\<angle-bracket\>@ sequences are kept whole; arrow aliases expand to hjkl.
+--
+-- >>> V.toList (tokenizeKeys "abc")
+-- ["a","b","c"]
+-- >>> V.toList (tokenizeKeys "jjj")
+-- ["j","j","j"]
+-- >>> V.toList (tokenizeKeys "<ret>")
+-- ["<ret>"]
+-- >>> V.toList (tokenizeKeys "<C-d>")
+-- ["<C-d>"]
+-- >>> V.toList (tokenizeKeys "<C-u>")
+-- ["<C-u>"]
+-- >>> V.toList (tokenizeKeys "<esc>")
+-- ["<esc>"]
+-- >>> V.toList (tokenizeKeys "<S-left>")
+-- ["<S-left>"]
+-- >>> V.toList (tokenizeKeys "<S-right>")
+-- ["<S-right>"]
+-- >>> V.toList (tokenizeKeys "jjj<ret>")
+-- ["j","j","j","<ret>"]
+-- >>> V.toList (tokenizeKeys "<C-d><C-u>")
+-- ["<C-d>","<C-u>"]
+-- >>> V.toList (tokenizeKeys "!l!<S-left>")
+-- ["!","l","!","<S-left>"]
+-- >>> V.toList (tokenizeKeys "\\")
+-- ["\\"]
+-- >>> V.toList (tokenizeKeys "<wait><wait>")
+-- ["<wait>","<wait>"]
+-- >>> V.toList (tokenizeKeys "<down><up>")
+-- ["j","k"]
+-- >>> V.toList (tokenizeKeys "<right><left>")
+-- ["l","h"]
+-- >>> V.toList (tokenizeKeys "")
+-- []
+-- >>> V.toList (tokenizeKeys "<")
+-- ["<"]
+-- >>> V.toList (tokenizeKeys "a<b")
+-- ["a","<","b"]
+-- >>> V.toList (tokenizeKeys "<>")
+-- ["<",">"]
 tokenizeKeys :: Text -> Vector Text
 tokenizeKeys s = V.fromList (go 0)
   where

@@ -128,6 +128,13 @@ flatItems cc vk =
     in hp <> " | " <> xp <> " | " <> kp <> " | " <> label_) items
 
 -- | Parse flat selection: extract handler name before first |
+--
+-- >>> parseSel "plot.area    | cg |   | Plot: area chart"
+-- Just "plot.area"
+-- >>> parseSel "sort.asc     | c  | [ | Sort ascending"
+-- Just "sort.asc"
+-- >>> parseSel ""
+-- Nothing
 parseSel :: Text -> Maybe Text
 parseSel sel =
   let h = T.stripEnd (headD "" (T.splitOn " | " sel))

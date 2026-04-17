@@ -124,3 +124,13 @@ test-suite tv-hask-test
     process >= 1.6,
     text >= 2.0,
     vector >= 0.13
+
+test-suite doctest
+  import: shared
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Doctest.hs
+  build-depends:
+    base >= 4.16 && < 5,
+    tv-hask,
+    doctest-parallel >= 0.4
