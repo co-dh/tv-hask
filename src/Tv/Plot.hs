@@ -300,7 +300,7 @@ rScript dataPath pngPath kind xName yName hasCat catName hasFacet facetName xTyp
 renderR :: Text -> IO (Maybe Text)
 renderR script = do
   Log.write "plot-R" script
-  rPath <- Tmp.tmpPath "plot.R"
+  rPath <- Tmp.threadPath "plot.R"
   TIO.writeFile rPath script
   (ec, _, se) <- readProcessWithExitCode "Rscript" [rPath] ""
   case ec of
@@ -319,7 +319,7 @@ exportWithHeaders t xName yName catName_ xIsTime step truncLen_ = do
   case mCats of
     Nothing -> pure Nothing
     Just cats -> do
-      datPath <- Tmp.tmpPath "plot.dat"
+      datPath <- Table.plotDatPath
       content <- TIO.readFile datPath
       let header = case catName_ of
             Just cn -> xName <> "\t" <> yName <> "\t" <> cn
@@ -374,7 +374,7 @@ runSingle s kind = do
     else do
       Term.shutdown
       altEnter
-      datPath <- Tmp.tmpPath "plot.dat"
+      datPath <- Table.plotDatPath
       pngPath <- Tmp.tmpPath "plot.png"
       let nr = min (Table.nRows (Nav.tbl n)) maxPoints
       cols <- Ops.getCols (Nav.tbl n) (V.singleton yIdx) 0 nr
@@ -498,7 +498,7 @@ runGroup s kind = do
             Term.shutdown
             altEnter
             setRaw
-            datPath <- Tmp.tmpPath "plot.dat"
+            datPath <- Table.plotDatPath
             pngPath <- Tmp.tmpPath "plot.png"
             let script = rScript (T.pack datPath) (T.pack pngPath) kind
                            xName yName hasCat catName hasFacet facetName xType

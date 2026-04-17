@@ -42,6 +42,7 @@ module Tv.Data.DuckDB.Table
   , excludeCols
   , fetchMore
   , plotExport
+  , plotDatPath
   , fromTsv
   , fromJson
   , fileWith
@@ -358,12 +359,19 @@ plotPrql baseR xName yName catName_ xIsTime truncLen =
                Nothing -> "ds_nth " <> q yName <> " " <> tn
          in baseR <> " | " <> dsFn <> " | select {" <> selCols <> "}"
 
--- | Run COPY (sql) TO tmpdir/plot.dat as TSV. Raises userError on failure so
--- the caller (R ggplot pipeline) fails loudly instead of silently empty-plotting.
+-- | Per-thread plot data path. The path is stable within one thread (so
+-- one plot session writes and reads the same file) but differs across
+-- threads (so parallel test threads don't clobber each other).
+plotDatPath :: IO FilePath
+plotDatPath = Tmp.threadPath "plot.dat"
+
+-- | Run COPY (sql) TO the thread-local plot data file as TSV. Raises
+-- userError on failure so the caller (R ggplot pipeline) fails loudly
+-- instead of silently empty-plotting.
 copyPlot :: Text -> IO ()
 copyPlot sql = do
   let sql' = stripSemi sql
-  datPath <- Tmp.tmpPath "plot.dat"
+  datPath <- plotDatPath
   let copySql = "COPY (" <> sql' <> ") TO '" <> T.pack datPath
              <> "' (FORMAT CSV, DELIMITER '\t', HEADER false)"
   Log.write "plot-sql" copySql
@@ -386,8 +394,10 @@ uniqCats baseR cn = do
       let n = fromIntegral nr :: Int
       V.generateM n $ \i -> Conn.cellStr catQr (fromIntegral i) 0
 
--- | Export plot data to tmpdir/plot.dat via DuckDB COPY (downsample in SQL).
--- truncLen: SUBSTRING length for time truncation; _step: every-Nth-row for non-time.
+-- | Export plot data to the thread-local plot file via DuckDB COPY
+-- (downsample in SQL). truncLen: SUBSTRING length for time truncation;
+-- _step: every-Nth-row for non-time. Callers read back the same path via
+-- 'plotDatPath'.
 plotExport
   :: AdbcTable
   -> Text          -- xName

@@ -816,7 +816,7 @@ test_plot_export_data = do
       case result of
         Just _  -> pure ()
         Nothing -> assertFailure "plotExport should succeed for numeric y"
-      datPath <- Tmp.tmpPath "plot.dat"
+      datPath <- Tbl.plotDatPath
       content <- TIO.readFile datPath
       let ls = filter (not . T.null) (T.splitOn "\n" content)
       assert (length ls > 0) "plot.dat should have data rows"
@@ -845,7 +845,7 @@ test_plot_time_downsample = do
       case result of
         Just _  -> pure ()
         Nothing -> assertFailure "time downsample should succeed"
-      datPath <- Tmp.tmpPath "plot.dat"
+      datPath <- Tbl.plotDatPath
       content <- TIO.readFile datPath
       let ls = filter (not . T.null) (T.splitOn "\n" content)
       assert (length ls >= 4)
@@ -863,7 +863,7 @@ test_plot_downsample_step = do
     Nothing  -> assertFailure "failed to open line.csv"
     Just tbl -> do
       _ <- Tbl.plotExport tbl "x" "y" Nothing False 1 1
-      datPath <- Tmp.tmpPath "plot.dat"
+      datPath <- Tbl.plotDatPath
       c1 <- TIO.readFile datPath
       let n1 = length (filter (not . T.null) (T.splitOn "\n" c1))
       _ <- Tbl.plotExport tbl "x" "y" Nothing False 1 2
@@ -893,7 +893,7 @@ runPlotR :: PlotKind -> Text -> Text -> Text -> Text -> Bool -> Text -> ColType 
 runPlotR kind datPath pngPath xName yName hasCat catName xType = do
   let script = Plot.rScript datPath pngPath kind xName yName hasCat catName False "" xType
                  (Plot.plotTitle kind xName yName hasCat catName)
-  rPath <- Tmp.tmpPath "plot_test.R"
+  rPath <- Tmp.threadPath "plot_test.R"
   TIO.writeFile rPath script
   (ec, _, serr) <- readProcessWithExitCode "Rscript" [rPath] ""
   assert (ec == ExitSuccess)
@@ -912,7 +912,7 @@ prepXY file xName yName mCat = do
     Nothing  -> ioError (userError ("failed to open " ++ T.unpack file))
     Just tbl -> do
       _ <- Tbl.plotExport tbl xName yName mCat False 1 1
-      datPath <- Tmp.tmpPath "plot.dat"
+      datPath <- Tbl.plotDatPath
       content <- TIO.readFile datPath
       let hdr = case mCat of
                   Just cn -> xName <> "\t" <> yName <> "\t" <> cn
@@ -949,7 +949,7 @@ test_plot_render_histogram = do
     then pure ()
     else if not gg then pure ()
     else do
-      datPath <- T.pack <$> Tmp.tmpPath "plot.dat"
+      datPath <- T.pack <$> Tbl.plotDatPath
       TIO.writeFile (T.unpack datPath) "y\n10.5\n20.3\n15.7\n25.1\n30.0\n12.2\n18.9\n"
       pngPath <- T.pack <$> Tmp.tmpPath "plot_test_hist.png"
       runPlotR PlotHist datPath pngPath "" "y" False "" ColTypeOther
@@ -972,7 +972,7 @@ test_plot_render_density = do
     then pure ()
     else if not gg then pure ()
     else do
-      datPath <- T.pack <$> Tmp.tmpPath "plot.dat"
+      datPath <- T.pack <$> Tbl.plotDatPath
       TIO.writeFile (T.unpack datPath)
         "y\n10.5\n20.3\n15.7\n25.1\n30.0\n12.2\n18.9\n22.4\n17.6\n14.3\n"
       pngPath <- T.pack <$> Tmp.tmpPath "plot_test_density.png"
