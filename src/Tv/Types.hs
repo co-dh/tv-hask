@@ -49,6 +49,8 @@ module Tv.Types
   , plotKind
   ) where
 
+import qualified Data.Aeson as A
+import qualified Data.Aeson.Types as A
 import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -287,6 +289,49 @@ data Op
   | OpTake Int
   deriving (Eq)
 
+-- | JSON decoder for Op (kept here so Session.hs stays orphan-free under -Worphans).
+instance A.FromJSON Op where
+  parseJSON = A.withObject "Op" $ \o -> do
+    t <- o A..: "type"
+    case (t :: Text) of
+      "filter"  -> OpFilter <$> o A..: "expr"
+      "sort"    -> OpSort <$> (o A..: "cols" >>= parseSortCols)
+      "sel"     -> OpSel <$> o A..: "cols"
+      "exclude" -> OpExclude <$> o A..: "cols"
+      "derive"  -> OpDerive <$> (o A..: "bindings" >>= parseBindings)
+      "group"   -> do
+        keys    <- o A..: "keys"
+        rawAggs <- o A..: "aggs" :: A.Parser (Vector (Vector A.Value))
+        aggs    <- V.mapM parseAggTriple rawAggs
+        pure $ OpGroup keys aggs
+      "take"    -> OpTake <$> o A..: "n"
+      other     -> fail $ "unknown op type: " ++ T.unpack other
+    where
+      parseAgg :: A.Value -> A.Parser Agg
+      parseAgg v = do
+        s <- A.parseJSON v
+        case ofStringQ s of
+          Just a  -> pure a
+          Nothing -> fail "unknown agg"
+      parseSortCols :: Vector A.Value -> A.Parser (Vector (Text, Bool))
+      parseSortCols = V.mapM $ \v -> case v of
+        A.Array a | V.length a >= 2 ->
+          (,) <$> A.parseJSON (a V.! 0) <*> A.parseJSON (a V.! 1)
+        _ -> fail "sort pair expected"
+      parseBindings :: Vector A.Value -> A.Parser (Vector (Text, Text))
+      parseBindings = V.mapM $ \v -> case v of
+        A.Array a | V.length a >= 2 ->
+          (,) <$> A.parseJSON (a V.! 0) <*> A.parseJSON (a V.! 1)
+        _ -> fail "binding pair expected"
+      parseAggTriple :: Vector A.Value -> A.Parser (Agg, Text, Text)
+      parseAggTriple a
+        | V.length a >= 3 = do
+            fn   <- parseAgg (a V.! 0)
+            name <- A.parseJSON (a V.! 1)
+            col  <- A.parseJSON (a V.! 2)
+            pure (fn, name, col)
+        | otherwise = fail "agg triple expected"
+
 -- | View kind: how to render/interact (used by key mapping for context-sensitive verbs)
 data ViewKind
   = VkTbl                                           -- table view
@@ -294,6 +339,16 @@ data ViewKind
   | VkColMeta                                       -- column metadata
   | VkFld Text Int                                  -- folder browser: path + find depth
   deriving (Eq, Show)
+
+-- | JSON decoder for ViewKind (kept here so Session.hs stays orphan-free under -Worphans).
+instance A.FromJSON ViewKind where
+  parseJSON = A.withObject "ViewKind" $ \o -> do
+    kind <- o A..: "kind" :: A.Parser Text
+    case kind of
+      "freqV"   -> VkFreqV <$> o A..: "cols" <*> o A..: "total"
+      "colMeta" -> pure VkColMeta
+      "fld"     -> VkFld <$> o A..: "path" <*> o A..: "depth"
+      _         -> pure VkTbl
 
 -- | Context string for config lookup (shared by Fzf and App dispatch).
 -- ViewKind carries payloads (cols/depth), so 'ofStringQ' and 'all' aren't

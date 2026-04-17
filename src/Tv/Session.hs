@@ -51,7 +51,7 @@ import Tv.Types
   ( Agg(..)
   , Cmd(..)
   , Op(..)
-  , StrEnum(toString, ofStringQ)
+  , StrEnum(toString)
   , ViewKind(..)
   )
 import Tv.View (View(..), ViewStack(..))
@@ -86,13 +86,6 @@ sessPath name = do
 aggToJ :: Agg -> Value
 aggToJ a = String (toString a)
 
-aggFromJ :: Value -> A.Parser Agg
-aggFromJ v = do
-  s <- A.parseJSON v
-  case ofStringQ s of
-    Just a  -> pure a
-    Nothing -> fail "unknown agg"
-
 opToJ :: Op -> Value
 opToJ op = case op of
   OpFilter e ->
@@ -123,42 +116,6 @@ opToJ op = case op of
     pairArrJson :: Vector (Text, Text) -> Value
     pairArrJson v = Array (V.map (\(a, b) -> Array (V.fromList [String a, String b])) v)
 
-opFromJ :: Value -> A.Parser Op
-opFromJ = A.withObject "Op" $ \o -> do
-  t <- o A..: "type"
-  case (t :: Text) of
-    "filter"  -> OpFilter <$> o A..: "expr"
-    "sort"    -> OpSort <$> (o A..: "cols" >>= parseSortCols)
-    "sel"     -> OpSel <$> o A..: "cols"
-    "exclude" -> OpExclude <$> o A..: "cols"
-    "derive"  -> OpDerive <$> (o A..: "bindings" >>= parseBindings)
-    "group"   -> do
-      keys    <- o A..: "keys"
-      rawAggs <- o A..: "aggs" :: A.Parser (Vector (Vector Value))
-      aggs    <- V.mapM parseAggTriple rawAggs
-      pure (OpGroup keys aggs)
-    "take"    -> OpTake <$> o A..: "n"
-    other     -> fail ("unknown op type: " ++ T.unpack other)
-  where
-    parseSortCols :: Vector Value -> A.Parser (Vector (Text, Bool))
-    parseSortCols = V.mapM $ \v -> case v of
-      Array a | V.length a >= 2 ->
-        (,) <$> A.parseJSON (a V.! 0) <*> A.parseJSON (a V.! 1)
-      _ -> fail "sort pair expected"
-    parseBindings :: Vector Value -> A.Parser (Vector (Text, Text))
-    parseBindings = V.mapM $ \v -> case v of
-      Array a | V.length a >= 2 ->
-        (,) <$> A.parseJSON (a V.! 0) <*> A.parseJSON (a V.! 1)
-      _ -> fail "binding pair expected"
-    parseAggTriple :: Vector Value -> A.Parser (Agg, Text, Text)
-    parseAggTriple a
-      | V.length a >= 3 = do
-          fn   <- aggFromJ (a V.! 0)
-          name <- A.parseJSON (a V.! 1)
-          col  <- A.parseJSON (a V.! 2)
-          pure (fn, name, col)
-      | otherwise = fail "agg triple expected"
-
 vkToJ :: ViewKind -> Value
 vkToJ vk = case vk of
   VkTbl ->
@@ -172,15 +129,6 @@ vkToJ vk = case vk of
   where
     mkObj :: [(Text, Value)] -> Value
     mkObj ps = Object (KM.fromList (map (\(k, v) -> (K.fromText k, v)) ps))
-
-vkFromJ :: Value -> A.Parser ViewKind
-vkFromJ = A.withObject "ViewKind" $ \o -> do
-  kind <- o A..: "kind" :: A.Parser Text
-  case kind of
-    "freqV"   -> VkFreqV <$> o A..: "cols" <*> o A..: "total"
-    "colMeta" -> pure VkColMeta
-    "fld"     -> VkFld <$> o A..: "path" <*> o A..: "depth"
-    _         -> pure VkTbl
 
 -- ## Serialization: View → JSON
 
@@ -407,13 +355,6 @@ saveWith stk name =
 loadWith :: Bool -> Text -> IO (Maybe (ViewStack AdbcTable))
 loadWith noSign_ name =
   if T.null name then pure Nothing else load noSign_ name
-
--- Required FromJSON instances for `Op` and `ViewKind` so `jd` works.
-instance A.FromJSON Op where
-  parseJSON = opFromJ
-
-instance A.FromJSON ViewKind where
-  parseJSON = vkFromJ
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
