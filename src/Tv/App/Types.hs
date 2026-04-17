@@ -51,8 +51,7 @@ import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Theme as Theme
 import qualified Tv.Data.DuckDB.Ops as Ops
 import Tv.Types
-  ( Backend(..)
-  , Cmd(..)
+  ( Cmd(..)
   , ColCache
   , Effect(..)
   , ViewKind(..)
@@ -81,7 +80,6 @@ data AppState = AppState
   , handlers    :: HashMap Cmd HandlerFn
   , testMode    :: Bool
   , noSign      :: Bool
-  , backend     :: Backend
   }
 makeFieldLabelsNoPrefix ''AppState
 
@@ -147,10 +145,7 @@ runViewEffect a ci v' e =
       pure $ View.setCur s (rv & #nav % #hidden .~ hidden')
 
     EffectFreq colNames -> tryStk a ci $ runMaybeT $ do
-      let runBackend = case backend a of
-            BackendDuck -> AdbcTable.freqTable
-            BackendDf   -> Freq.execFreq
-      (adbc, totalGroups) <- MaybeT (runBackend (View.tbl s) colNames)
+      (adbc, totalGroups) <- MaybeT (Freq.execFreq (View.tbl s) colNames)
       fv <- hoistMaybe (View.fromTbl adbc (View.path (View.cur s)) 0 colNames 0)
       pure $ View.push s (fv
         { View.vkind = VkFreqV colNames totalGroups

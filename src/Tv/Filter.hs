@@ -16,7 +16,6 @@ module Tv.Filter
   , rowFilter
   , jumpCol
   , filterWith
-  , filterWithDf
   , searchWith
     -- Tc.Filter namespace
   , commands
@@ -41,14 +40,9 @@ import Tv.App.Types (AppState(..), HandlerFn, onStk, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
-import Tv.Types (Backend (..), Cmd(..), isNumeric, toString, filterPrql, filterPrompt, headD)
+import Tv.Types (Cmd(..), isNumeric, toString, filterPrql, filterPrompt, headD)
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Table as Table
-
-import qualified Tv.Df as Df
-import qualified Tv.Df.Bridge as Bridge
-import qualified Tv.Df.Elab as DfElab
-import qualified Tv.Df.Parse as DfParse
 import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.View (View(..), ViewStack, cur, setCur, push, tbl)
 import qualified Tv.View as View
@@ -270,33 +264,6 @@ filterWith s expr = orKeep s $ do
   v' <- hoistMaybe $ View.rebuild v tbl' curCol grp' 0
   pure $ push s (v' & #disp .~ ("\\" <> expr))
 
--- | Filter via the dataframe backend. Parses and elaborates the user's
--- expression against the table's schema, runs 'Df.filterWhere', and
--- bridges the result back to an AdbcTable so the View stack keeps its
--- existing type. On any parse or elaboration failure, falls back to
--- the DuckDB path ('filterWith'): worst case we degrade cleanly
--- instead of blocking a valid PRQL expression that our subset can't
--- yet model.
-filterWithDf :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
-filterWithDf s expr
-  | T.null expr = pure s
-  | otherwise = case DfParse.parseExpr expr of
-      Left  _  -> filterWith s expr
-      Right pe -> do
-        src <- Bridge.fromAdbc (tbl s)
-        case DfElab.elabFilter src pe of
-          Left  _    -> filterWith s expr
-          Right boolE -> do
-            let result = Df.filterWhere boolE src
-            mAdbc <- Bridge.toAdbc result
-            case mAdbc of
-              Nothing   -> pure s
-              Just tbl' -> orKeep s $ do
-                let v      = cur s
-                    curCol = Nav.colIdx (v ^. #nav)
-                    grp'   = v ^. #nav % #grp
-                v' <- hoistMaybe $ View.rebuild v tbl' curCol grp' 0
-                pure $ push s (v' & #disp .~ ("\\" <> expr))
 
 -- | Search for value directly (no fzf). Called by socket/dispatch.
 searchWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
@@ -312,10 +279,7 @@ commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
   [ hdl (mkEntry CmdRowFilter     "a"  "\\" "Filter rows by PRQL expression"    True  "")
         (\a _ arg -> stackIO a $
-           let fw = case backend a of
-                     BackendDuck -> filterWith
-                     BackendDf   -> filterWithDf
-           in if T.null arg then rowFilter (testMode a) (stk a) else fw (stk a) arg)
+           if T.null arg then rowFilter (testMode a) (stk a) else filterWith (stk a) arg)
   , hdl (mkEntry CmdRowSearchNext "rc" "n"  "Jump to next search match"         False "") (onStk (fmap Just . (`searchDir` True)))
   , hdl (mkEntry CmdRowSearchPrev "rc" "N"  "Jump to previous search match"     False "") (onStk (fmap Just . (`searchDir` False)))
   , hdl (mkEntry CmdColSearch     "a"  "g"  "Jump to column by name"            True  "")
