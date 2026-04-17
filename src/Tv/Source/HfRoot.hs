@@ -56,8 +56,8 @@ hfRoot :: Source
 hfRoot = Source
   { pfx       = pfx_
   , list      = hfRootList
-  , enter     = \_ -> pure Nothing
-  , enterUrl  = \name -> Just ("hf://datasets/" <> name <> "/")
+  , enter     = Nothing
+  , enterUrl  = Just (\name -> "hf://datasets/" <> name <> "/")
   , download  = \_ p -> pure p
   , resolve   = \_ p -> pure p
   , setup     = hfSetup

@@ -36,7 +36,7 @@ import qualified Tv.Folder as Folder
 import qualified Tv.Key as Key
 import qualified Tv.Render as Render
 import qualified Tv.Session as Session
-import qualified Tv.SourceConfig as SourceConfig
+import qualified Tv.Source as Source
 import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
@@ -179,23 +179,24 @@ runSession sessName theme testMode noSign_ keys_ = do
       pure ()
     Nothing -> TIO.hPutStrLn stderr ("Session not found: " <> sessName)
 
--- | Dispatch folder / source config / file by path shape.
+-- | Dispatch folder / source / file by path shape.
 dispatchPath :: Text -> Vector Text -> Bool -> Bool -> Bool -> Theme.State -> IO ()
 dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
-  srcCfg <- SourceConfig.findSource path_
-  isDir  <- doesDirectoryExist (T.unpack path_)
+  let srcCfg = Source.findSource path_
+  isDir <- doesDirectoryExist (T.unpack path_)
   if T.null path_ || isJust srcCfg || isDir then do
     let p = if T.null path_ then "." else path_
-    -- Config-driven direct entry (e.g. tv osquery://groups)
+    -- Source-driven direct entry (e.g. tv osquery://groups)
     handled <- case srcCfg of
-      Just cfg
-        | not (T.null (SourceConfig.script cfg)) && not (T.null (SourceConfig.pfx cfg)) -> do
-            let rest = T.drop (T.length (SourceConfig.pfx cfg)) p
+      Just src
+        | Just _ <- Source.enter src
+        , not (T.null (Source.pfx src)) -> do
+            let rest = T.drop (T.length (Source.pfx src)) p
             if not (T.null rest) then do
-              m <- SourceConfig.runEnter cfg rest
+              m <- Source.runEnter src rest
               case m of
                 Just adbc ->
-                  case View.fromTbl adbc (SourceConfig.pfx cfg <> rest) 0 V.empty 0 of
+                  case View.fromTbl adbc (Source.pfx src <> rest) 0 V.empty 0 of
                     Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
                     Nothing -> TIO.hPutStrLn stderr ("Empty: " <> p)
                 Nothing -> TIO.hPutStrLn stderr ("Cannot open: " <> p)

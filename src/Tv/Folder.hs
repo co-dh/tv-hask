@@ -44,8 +44,8 @@ import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Table as Table
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.FileFormat as FileFormat
-import qualified Tv.SourceConfig as SourceConfig
-import Tv.SourceConfig (Config)
+import qualified Tv.Source as Source
+import Tv.Source (Source)
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import Tv.Types
@@ -163,18 +163,16 @@ fldView adbc path_ depth disp grp =
 
 -- | Create folder view — config-driven listing, local fallback
 mkView :: Bool -> Text -> Int -> IO (Maybe (View AdbcTable))
-mkView noSign_ path_ depth = do
-  msrc <- SourceConfig.findSource path_
-  case msrc of
-    Just cfg -> do
-      m <- SourceConfig.runList noSign_ cfg path_
-      case m of
-        Nothing -> pure Nothing
-        Just adbc -> do
-          let grp = if T.null (SourceConfig.grp cfg) then V.empty
-                    else V.singleton (SourceConfig.grp cfg)
-          pure (fldView adbc path_ depth (Remote.dispName path_) grp)
-    Nothing -> do
+mkView noSign_ path_ depth = case Source.findSource path_ of
+  Just src -> do
+    m <- Source.runList noSign_ src path_
+    case m of
+      Nothing -> pure Nothing
+      Just adbc -> do
+        let grp = if T.null (Source.grpCol src) then V.empty
+                  else V.singleton (Source.grpCol src)
+        pure $ fldView adbc path_ depth (Remote.dispName path_) grp
+  Nothing -> do
       (ec, rpOut, _) <- readProcessWithExitCode "realpath" [T.unpack path_] ""
       let absPath = if ec == ExitSuccess then T.strip (T.pack rpOut) else path_
           disp = case reverse (T.splitOn "/" absPath) of
@@ -224,9 +222,8 @@ curDepth s = case View.vkind (View.cur s) of
 goParent :: Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 goParent noSign_ s = do
   let dir_ = View.curDir (View.cur s)
-  msrc <- SourceConfig.findSource dir_
-  case msrc of
-    Just c -> case SourceConfig.configParent c dir_ of
+  case Source.findSource dir_ of
+    Just src -> case Source.configParent src dir_ of
       Just par -> tryView noSign_ s par 1 False
       Nothing  -> pure (Just s)
     Nothing -> case View.pop s of
@@ -234,26 +231,26 @@ goParent noSign_ s = do
       Nothing -> tryView noSign_ s (dir_ <> "/..") (curDepth s) False
 
 -- | Try to open a file as data, fall back to viewer
-openFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Config
+openFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Source
          -> IO (Maybe (ViewStack AdbcTable))
-openFile tm noSign_ s curDir_ p cfg = do
+openFile tm noSign_ s curDir_ p src = do
   let fullPath = joinPath curDir_ p
   if FileFormat.isData p
     then do
-      openPath <- case cfg of
-        Just c  -> SourceConfig.configResolve noSign_ c fullPath
+      openPath <- case src of
+        Just c  -> Source.configResolve noSign_ c fullPath
         Nothing -> pure fullPath
       m <- FileFormat.openFile openPath
       case m of
         Just v  -> pure (Just (View.push s v))
         Nothing -> do
-          case cfg of
+          case src of
             Nothing -> FileFormat.viewFile tm fullPath
             _       -> pure ()
           pure (Just s)
     else do
-      viewPath <- case cfg of
-        Just c  -> SourceConfig.runDl noSign_ c fullPath
+      viewPath <- case src of
+        Just c  -> Source.runDl noSign_ c fullPath
         Nothing -> pure fullPath
       done <-
         if T.isSuffixOf ".gz" p
@@ -284,33 +281,31 @@ enterAttach s curDir_ = do
             Nothing -> pure (Just s)
             Just v  -> pure (Just (View.push s v))
 
--- | Config-driven file enter: runs `script` → JSON, or follows `enterUrl` redirect,
+-- | Source-driven file enter: script enter → JSON, or enterUrl redirect,
 --   else falls back to openFile.
-enterFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Config
+enterFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Source
           -> IO (Maybe (ViewStack AdbcTable))
-enterFile tm noSign_ s curDir_ p cfg = case cfg of
-  Just c | not (T.null (SourceConfig.script c)) -> do
-    mAdbc <- SourceConfig.runEnter c p
+enterFile tm noSign_ s curDir_ p src = case src of
+  Just c | Just _ <- Source.enter c -> do
+    mAdbc <- Source.runEnter c p
     case mAdbc of
       Just adbc ->
-        case View.fromTbl adbc (SourceConfig.pfx c <> p) 0 V.empty 0 of
+        case View.fromTbl adbc (Source.pfx c <> p) 0 V.empty 0 of
           Just v  -> pure (Just (View.push s v))
           Nothing -> pure (Just s)
       Nothing -> pure (Just s)
-  Just c | not (T.null (SourceConfig.enterUrl c)) -> do
-    let url = SourceConfig.expand (SourceConfig.enterUrl c) (V.singleton ("name", p))
-    tryView noSign_ s url (curDepth s) True
-  _ -> openFile tm noSign_ s curDir_ p cfg
+  Just c | Just mkUrl <- Source.enterUrl c -> tryView noSign_ s (mkUrl p) (curDepth s) True
+  _ -> openFile tm noSign_ s curDir_ p src
 
 -- | Enter directory or view file based on current row
 enter :: Bool -> Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 enter tm noSign_ s = do
   let curDir_ = View.curDir (View.cur s)
-  cfg <- SourceConfig.findSource curDir_
-  -- Attach-based: FileFormat or config-driven (e.g. pg://)
+      src = Source.findSource curDir_
+  -- Attach-based: FileFormat or source-driven (e.g. pg://)
   let isAttach =
         maybe False FileFormat.attach (FileFormat.find curDir_)
-        || maybe False SourceConfig.attach cfg
+        || maybe False Source.attach src
   if isAttach
     then enterAttach s curDir_
     else do
@@ -321,14 +316,14 @@ enter tm noSign_ s = do
           if p == ".." || T.isSuffixOf "/.." p
             then goParent noSign_ s
             else
-              let fullPath = case cfg of
+              let fullPath = case src of
                     Just c  -> joinPath curDir_
-                                 (if SourceConfig.dirSuffix c then p <> "/" else p)
+                                 (if Source.dirSuffix c then p <> "/" else p)
                     Nothing -> joinPath curDir_ p
               in tryView noSign_ s fullPath (curDepth s) True
-        (Just 'f', Just p) -> enterFile tm noSign_ s curDir_ p cfg
+        (Just 'f', Just p) -> enterFile tm noSign_ s curDir_ p src
         (Just 's', Just p) ->
-          case cfg of
+          case src of
             Just _  -> pure (Just s)
             Nothing -> do
               let fullPath = joinPath curDir_ p
@@ -472,34 +467,30 @@ refreshView noSign_ s path_ depth = do
 
 del :: Bool -> Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 del tm noSign_ s = case View.vkind (View.cur s) of
-  VkFld path_ depth -> do
-    msrc <- SourceConfig.findSource path_
-    case msrc of
-      Just _  -> pure (Just s)
-      Nothing -> do
-        paths <- selPaths (View.cur s)
-        if V.null paths
-          then pure Nothing
-          else do
-            ok <- confirmDel tm paths
-            if not ok
-              then pure (Just s)
-              else do
-                _ <- trashFiles paths
-                refreshView noSign_ s path_ depth
+  VkFld path_ depth -> case Source.findSource path_ of
+    Just _  -> pure (Just s)
+    Nothing -> do
+      paths <- selPaths (View.cur s)
+      if V.null paths
+        then pure Nothing
+        else do
+          ok <- confirmDel tm paths
+          if not ok
+            then pure (Just s)
+            else do
+              _ <- trashFiles paths
+              refreshView noSign_ s path_ depth
   _ -> pure Nothing
 
 setDepth :: Bool -> ViewStack AdbcTable -> Int -> IO (Maybe (ViewStack AdbcTable))
 setDepth noSign_ s delta = case View.vkind (View.cur s) of
-  VkFld path_ depth -> do
-    msrc <- SourceConfig.findSource path_
-    case msrc of
-      Just _  -> pure (Just s)
-      Nothing -> do
-        let newDepth = max 1 (depth + delta)
-        if newDepth == depth
-          then pure (Just s)
-          else refreshView noSign_ s path_ newDepth
+  VkFld path_ depth -> case Source.findSource path_ of
+    Just _  -> pure (Just s)
+    Nothing -> do
+      let newDepth = max 1 (depth + delta)
+      if newDepth == depth
+        then pure (Just s)
+        else refreshView noSign_ s path_ newDepth
   _ -> pure Nothing
 
 commands :: V.Vector (Entry, Maybe HandlerFn)

@@ -116,8 +116,8 @@ hfDataset :: Source
 hfDataset = Source
   { pfx       = pfx_
   , list      = hfList
-  , enter     = \_ -> pure Nothing
-  , enterUrl  = \_ -> Nothing
+  , enter     = Nothing
+  , enterUrl  = Nothing
   , download  = hfDl
   , resolve   = \_ p -> pure p        -- DuckDB reads hf:// URLs natively (httpfs)
   , setup     = pure ()

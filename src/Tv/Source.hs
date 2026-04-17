@@ -17,8 +17,6 @@ module Tv.Source
   , runSetup
   , configParent
   , configResolve
-    -- re-exported from Core for callers that need template expansion
-  , Core.expand
   ) where
 
 import Data.Text (Text)
@@ -68,8 +66,12 @@ findSource path_ = V.foldl' step Nothing sources
 runList :: Bool -> Source -> Text -> IO (Maybe AdbcTable)
 runList n src p = Core.withCache p (setup src *> list src n p)
 
+-- | Run a source's script-based enter. Returns Nothing if the source doesn't
+-- have a script enter; triggers one-time setup before calling it.
 runEnter :: Source -> Text -> IO (Maybe AdbcTable)
-runEnter src name = setup src *> enter src name
+runEnter src name = case enter src of
+  Nothing -> pure Nothing
+  Just f  -> setup src *> f name
 
 runDl :: Bool -> Source -> Text -> IO Text
 runDl n src p = download src n p

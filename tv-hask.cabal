@@ -55,7 +55,6 @@ library
     Tv.Plot
     Tv.Render
     Tv.Session
-    Tv.SourceConfig
     Tv.Source
     Tv.Source.Core
     Tv.Source.S3

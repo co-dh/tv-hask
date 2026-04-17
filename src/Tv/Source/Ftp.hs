@@ -80,8 +80,8 @@ ftp :: Source
 ftp = Source
   { pfx       = pfx_
   , list      = ftpList
-  , enter     = \_ -> pure Nothing
-  , enterUrl  = \_ -> Nothing
+  , enter     = Nothing
+  , enterUrl  = Nothing
   , download  = ftpDl
   , resolve   = ftpDl                  -- FTP needs download — DuckDB can't read ftp:// URLs directly
   , setup     = pure ()

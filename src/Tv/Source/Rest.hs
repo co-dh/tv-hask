@@ -22,8 +22,8 @@ rest :: Source
 rest = Source
   { pfx       = pfx_
   , list      = \_ path_ -> listRest path_
-  , enter     = \_ -> pure Nothing
-  , enterUrl  = \_ -> Nothing
+  , enter     = Nothing
+  , enterUrl  = Nothing
   , download  = \_ p -> pure p           -- REST URIs aren't downloaded, DuckDB reads them
   , resolve   = \_ p -> pure p
   , setup     = pure ()

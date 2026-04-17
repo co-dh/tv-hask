@@ -116,7 +116,7 @@ no module imports downward. Every module has an explicit export list.
 │   Tv.StatusAgg  — per-column sum/avg/count (status bar)                  │
 │   Tv.Sparkline  — per-column Unicode block distribution                  │
 │   Tv.FileFormat — file-ext → reader dispatch                             │
-│   Tv.SourceConfig — config-driven remote sources (S3, HF, osquery…)      │
+│   Tv.Source     — per-module remote sources (S3, HF, osquery, …)         │
 │   Tv.Ftp        — FTP `ls -l` parse helper                               │
 └──────────────────────────────────────────────────────────────────────────┘
                                     │

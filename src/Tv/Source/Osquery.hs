@@ -78,8 +78,8 @@ osquery :: Source
 osquery = Source
   { pfx       = pfx_
   , list      = osqList
-  , enter     = osqEnter
-  , enterUrl  = \_ -> Nothing
+  , enter     = Just osqEnter
+  , enterUrl  = Nothing
   , download  = \_ p -> pure p
   , resolve   = \_ p -> pure p
   , setup     = osqSetup

@@ -83,8 +83,8 @@ s3 :: Source
 s3 = Source
   { pfx       = pfx_
   , list      = s3List
-  , enter     = \_ -> pure Nothing
-  , enterUrl  = \_ -> Nothing
+  , enter     = Nothing
+  , enterUrl  = Nothing
   , download  = s3Dl
   , resolve   = s3Dl                 -- S3 requires local download (DuckDB can't read s3:// directly here)
   , setup     = pure ()

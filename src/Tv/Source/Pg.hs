@@ -48,8 +48,8 @@ pg :: Source
 pg = Source
   { pfx       = pfx_
   , list      = pgList
-  , enter     = \_ -> pure Nothing    -- enter dispatches via Folder.enterAttach when attach=True
-  , enterUrl  = \_ -> Nothing
+  , enter     = Nothing               -- enter dispatches via Folder.enterAttach when attach=True
+  , enterUrl  = Nothing
   , download  = \_ p -> pure p
   , resolve   = \_ p -> pure p
   , setup     = loadExt "postgres"

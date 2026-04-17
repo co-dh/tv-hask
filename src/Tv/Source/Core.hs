@@ -62,18 +62,21 @@ import qualified Tv.Tmp as Tmp
 -- Folder and App.Main treat every source uniformly through this record.
 -- Per-source modules (Tv.Source.S3, Tv.Source.Ftp, …) each export a
 -- `Source` value built here; `Tv.Source` just aggregates them.
+--
+-- `enter` and `enterUrl` are Maybes so the caller can distinguish "this
+-- source handles enter" from "this source wants the default file-open path".
 data Source = Source
-  { pfx       :: Text                                 -- URI prefix, e.g. "s3://"
-  , list      :: Bool -> Text -> IO (Maybe AdbcTable) -- noSign, path → listing
-  , enter     :: Text -> IO (Maybe AdbcTable)         -- script enter (Nothing = not supported)
-  , enterUrl  :: Text -> Maybe Text                   -- URL enter: name → full URL
-  , download  :: Bool -> Text -> IO Text              -- noSign, path → local file path
-  , resolve   :: Bool -> Text -> IO Text              -- download if needed, else pass-through
-  , setup     :: IO ()                                -- idempotent one-time setup
-  , parent    :: Text -> Maybe Text                   -- parent URI or Nothing at root
-  , grpCol    :: Text                                 -- default group column (empty if none)
-  , attach    :: Bool                                 -- enter opens attached DuckDB table
-  , dirSuffix :: Bool                                 -- append '/' when joining child dirs
+  { pfx       :: Text                                         -- URI prefix, e.g. "s3://"
+  , list      :: Bool -> Text -> IO (Maybe AdbcTable)         -- noSign, path → listing
+  , enter     :: Maybe (Text -> IO (Maybe AdbcTable))         -- script enter (Nothing = not supported)
+  , enterUrl  :: Maybe (Text -> Text)                         -- URL enter (Nothing = not supported)
+  , download  :: Bool -> Text -> IO Text                      -- noSign, path → local file path
+  , resolve   :: Bool -> Text -> IO Text                      -- download if needed, else pass-through
+  , setup     :: IO ()                                        -- idempotent one-time setup
+  , parent    :: Text -> Maybe Text                           -- parent URI or Nothing at root
+  , grpCol    :: Text                                         -- default group column (empty if none)
+  , attach    :: Bool                                         -- enter opens attached DuckDB table
+  , dirSuffix :: Bool                                         -- append '/' when joining child dirs
   }
 
 -- | Expand template placeholders: {path}, {name}, {tmp}, {extra}, {1}, {2+}, …
