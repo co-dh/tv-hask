@@ -58,7 +58,7 @@ pushQuery :: ViewStack AdbcTable -> DfQ.Query -> Text -> (AdbcTable -> Int)
           -> IO (ViewStack AdbcTable)
 pushQuery s q label colIdxFn = do
   Log.write "ops" (DfQ.compile q)
-  mTbl <- Table.fromPrqlText (DfQ.compile q)
+  mTbl <- Table.fromPrqlInline (DfQ.compile q)
   case mTbl of
     Nothing -> pure s
     Just tbl' ->
@@ -167,7 +167,7 @@ deriveRunWith s input = case parseDerive input of
         q = DfQ.fromBase baseRend
               DfQ.|> DfQ.rawStage
                        ("derive {" <> Prql.quote name <> " = " <> expr <> "}")
-    mTbl <- Table.fromPrqlText (DfQ.compile q)
+    mTbl <- Table.fromPrqlInline (DfQ.compile q)
     case mTbl of
       Nothing   -> pure s
       Just tbl' ->
@@ -252,7 +252,10 @@ execJoin s op leftGrp = do
       createTempView lName lSql
       createTempView rName rSql
       let q = joinQuery lName rName leftGrp op
-      mAdbc <- Table.fromPrqlText (DfQ.compile q)
+      -- Materialize: join results are the shape users scroll and re-
+      -- filter; paying the CREATE TEMP TABLE once beats re-running
+      -- the join on every fetchMore.
+      mAdbc <- Table.fromPrqlMaterialized "join" (DfQ.compile q)
       case mAdbc of
         Nothing -> pure Nothing
         Just adbc -> case View.pop s of

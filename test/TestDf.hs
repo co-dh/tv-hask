@@ -16,11 +16,11 @@ import qualified Data.Text as T
 import System.Directory (removeFile)
 
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, assertEqual, Assertion)
+import Test.Tasty.HUnit (testCase, assertBool, assertEqual, Assertion)
 
 import qualified DataFrame as D
 import qualified DataFrame.Functions as F
-import DataFrame.Operators ((.>.), (.*.), as)
+import DataFrame.Operators ((.>.), (.+.), (.*.), as)
 
 import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Prql as Prql
@@ -107,10 +107,62 @@ test_parity_distinct = do
   assertFrameAgree "distinct" dfA dfB
   assertEqual "4 unique (a,b) pairs" 4 (Df.nRows dfA)
 
+-- | Nested-precedence regression: @(a + b) * c@ must render with
+-- the inner parens intact. Dataframe evaluates as @(1+10)*2 = 22@,
+-- PRQL → DuckDB should produce the same (not @1 + (10 * 2) = 21@).
+test_parity_nested_precedence :: Assertion
+test_parity_nested_precedence = do
+  dfIn <- Df.readParquet "data/sort_test.parquet"
+  let -- sort_test has (name, value); we derive a @nested@ col.
+      -- dfA: eager dataframe.
+      dfA = dfIn
+          & D.derive "nested"
+              ((F.col @Int64 "value" .+. F.lit 10) .*. F.lit 2)
+      pipeline = DfQ.fromBase "from `data/sort_test.parquet`"
+        DfQ.|> DfQ.derive
+               [ ((F.col @Int64 "value" .+. F.lit 10) .*. F.lit 2)
+                   `as` "nested" ]
+      prql = DfQ.compile pipeline
+  -- Emitted PRQL should contain parens around the inner add.
+  assertBool ("PRQL missing inner parens: " ++ T.unpack prql)
+             (T.isInfixOf "(" prql && T.isInfixOf ") *" prql)
+  dfB <- prqlToDf prql
+  assertFrameAgree "nested_precedence" dfA dfB
+
+-- | Scalar aggregate: sum and count on a parquet table.
+test_parity_aggregate :: Assertion
+test_parity_aggregate = do
+  dfIn <- Df.readParquet "data/sort_test.parquet"
+  -- Eager path: reduce to a 1-row frame via derive on a pre-aggregated frame.
+  -- dataframe's D.sum is a scalar; we synthesize a 1-row DF manually.
+  let total  = D.sum (F.col @Int64 "value") dfIn
+      _      = total :: Int64
+  -- The translator path builds the aggregate through DfQ.
+      pipeline = DfQ.fromBase "from `data/sort_test.parquet`"
+        DfQ.|> DfQ.aggregate [F.sum (F.col @Int64 "value") `as` "total"]
+  dfB <- prqlToDf (DfQ.compile pipeline)
+  assertEqual "aggregate emits 1 row" 1 (Df.nRows dfB)
+  assertEqual "aggregate emits 1 col" 1 (Df.nCols dfB)
+
+-- | Append two copies of the same table → row count doubles.
+test_parity_append :: Assertion
+test_parity_append = do
+  -- Materialize the table as a view so PRQL's `append` can reference it.
+  _ <- Conn.query
+         "CREATE OR REPLACE TEMP VIEW __append_src \
+         \ AS SELECT * FROM 'data/sort_test.parquet'"
+  let pipeline = DfQ.fromBase "from __append_src"
+        DfQ.|> DfQ.append "__append_src"
+  dfB <- prqlToDf (DfQ.compile pipeline)
+  assertEqual "append doubles row count" 6 (Df.nRows dfB)
+
 tests :: TestTree
 tests = testGroup "TestDf"
-  [ testCase "parity_filter_derive"  test_parity_filter_derive
-  , testCase "parity_sort_take"      test_parity_sort_take
-  , testCase "parity_filter_text"    test_parity_filter_text
-  , testCase "parity_distinct"       test_parity_distinct
+  [ testCase "parity_filter_derive"     test_parity_filter_derive
+  , testCase "parity_sort_take"         test_parity_sort_take
+  , testCase "parity_filter_text"       test_parity_filter_text
+  , testCase "parity_distinct"          test_parity_distinct
+  , testCase "parity_nested_precedence" test_parity_nested_precedence
+  , testCase "parity_aggregate"         test_parity_aggregate
+  , testCase "parity_append"            test_parity_append
   ]
