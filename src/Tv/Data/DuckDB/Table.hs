@@ -44,8 +44,10 @@ module Tv.Data.DuckDB.Table
   , plotExport
   , plotDatPath
   , fromTsv
+  , fromCsv
   , fromJson
   , fileWith
+  , copyToParquet
     -- second AdbcTable block in Lean
   , freqTable
   , filter
@@ -447,8 +449,32 @@ fromIngest content label reader
 fromTsv :: Text -> IO (Maybe AdbcTable)
 fromTsv content = fromIngest content "tsv" "read_csv_auto"
 
+-- | CSV variant used by the dataframe bridge (Tv.Df.Bridge.toAdbc):
+-- writes content to a tmp file, ingests via read_csv_auto into a TEMP
+-- TABLE, returns an AdbcTable backed by it.
+fromCsv :: Text -> IO (Maybe AdbcTable)
+fromCsv content = fromIngest content "csv" "read_csv_auto"
+
 fromJson :: Text -> IO (Maybe AdbcTable)
 fromJson content = fromIngest content "json" "read_json_auto"
+
+-- | COPY an AdbcTable's result set to a Parquet file. Used by the
+-- dataframe bridge to hand off AdbcTable rows to the dataframe engine
+-- with type fidelity (CSV would widen numerics to strings).
+copyToParquet :: AdbcTable -> FilePath -> IO ()
+copyToParquet t path = do
+  let baseR = Prql.queryRender (query t)
+  sqlM <- Prql.compile baseR
+  case sqlM of
+    Nothing  -> ioError (userError "copyToParquet: failed to compile PRQL")
+    Just sql -> do
+      let sql'    = stripSemi sql
+          copySql = "COPY (" <> sql' <> ") TO '" <> T.pack path
+                 <> "' (FORMAT PARQUET)"
+      r <- try (Conn.query copySql) :: IO (Either SomeException Conn.QueryResult)
+      case r of
+        Left e  -> ioError (userError ("copyToParquet failed: " <> show e))
+        Right _ -> pure ()
 
 -- | Create from file path with optional setup SQL and reader function.
 --   reader: DuckDB reader function (e.g. "read_arrow"). Empty = auto-detect via backtick.

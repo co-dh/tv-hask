@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 -- | Tests for the dataframe-based computation layer (@Tv.Df.*@).
--- These are parity / correctness tests that don't need the TUI or DuckDB.
+-- Mix of pure parser/verb tests and full-TUI integration checks
+-- exercised with @-b df@.
 module TestDf (tests) where
 
 import qualified Data.Text as T
@@ -12,6 +13,8 @@ import Test.Tasty.HUnit (testCase, assertBool, assertEqual, Assertion)
 import qualified DataFrame as D
 import DataFrame.Internal.Column (Columnable)
 import DataFrame.Internal.DataFrame (unsafeGetColumn)
+
+import TestUtil (runHask, contains, footer)
 
 import qualified Tv.Df as Df
 import qualified Tv.Df.Freq as Freq
@@ -125,6 +128,46 @@ test_parse_rejects_trailing = case P.parseExpr "x == 1 garbage" of
   Left _  -> pure ()
   Right e -> assertBool ("expected parse failure, got " <> show e) False
 
+-- ----------------------------------------------------------------------------
+-- -b df integration tests — exercise the live dataframe freq path end-to-end
+-- ----------------------------------------------------------------------------
+
+runDf :: T.Text -> FilePath -> IO T.Text
+runDf keys file = runHask keys file ["-b", "df"]
+
+-- @F@ on a CSV with numeric group key — the basic smoke test.
+test_df_freq_smoke :: Assertion
+test_df_freq_smoke = do
+  out <- runDf "F" "data/multi_freq.csv"
+  let (tab, status) = footer out
+  assertBool "freq tab marker"        (contains tab "[freq a]")
+  assertBool "2 groups (a=1, a=2)"    (contains status "r0/2")
+
+-- Derived Cnt/Pct/Bar columns are present (the view's header row
+-- contains their names with the format suffixes).
+test_df_freq_columns :: Assertion
+test_df_freq_columns = do
+  out <- runDf "F" "data/multi_freq.csv"
+  assertBool "Cnt column"  (contains out "Cnt")
+  assertBool "Pct column"  (contains out "Pct")
+  assertBool "Bar column"  (contains out "Bar")
+
+-- Composite group (a, b) — same input as TestDf's pure test. Four
+-- distinct (a, b) combinations.
+test_df_freq_composite :: Assertion
+test_df_freq_composite = do
+  out <- runDf "l!F" "data/multi_freq.csv"   -- move to b, add as 2nd key, freq
+  let (_, status) = footer out
+  assertBool "4 groups for (a, b)" (contains status "r0/4")
+
+-- F<ret> exits freq view (same invariant as the DuckDB path).
+test_df_freq_enter_pops :: Assertion
+test_df_freq_enter_pops = do
+  out <- runDf "F<ret>" "data/multi_freq.csv"
+  let (tab, _) = footer out
+  assertBool "exits freq view"        (not (contains tab "[freq"))
+  assertBool "back on source tab"     (contains tab "multi_freq")
+
 tests :: TestTree
 tests = testGroup "TestDf"
   [ testCase "readcsv_smoke"            test_readcsv_smoke
@@ -139,4 +182,8 @@ tests = testGroup "TestDf"
   , testCase "parse_double_lit"         test_parse_double_lit
   , testCase "parse_double_quoted"      test_parse_double_quoted
   , testCase "parse_rejects_trailing"   test_parse_rejects_trailing
+  , testCase "df_freq_smoke"            test_df_freq_smoke
+  , testCase "df_freq_columns"          test_df_freq_columns
+  , testCase "df_freq_composite"        test_df_freq_composite
+  , testCase "df_freq_enter_pops"       test_df_freq_enter_pops
   ]

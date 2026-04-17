@@ -49,6 +49,10 @@ module Tv.Df
   , join
     -- * I/O
   , writeCsv
+  , toCsv
+    -- * Metadata
+  , nRows
+  , nCols
   ) where
 
 import Prelude hiding (take)
@@ -67,4 +71,14 @@ import DataFrame
   , groupBy, aggregate, distinct, frequencies
   , innerJoin, leftJoin, rightJoin, fullOuterJoin, join
   , writeCsv
+  , toCsv
   )
+import qualified DataFrame.Internal.DataFrame as Internal
+
+-- | Row count.
+nRows :: DataFrame -> Int
+nRows = fst . Internal.dataframeDimensions
+
+-- | Column count.
+nCols :: DataFrame -> Int
+nCols = snd . Internal.dataframeDimensions

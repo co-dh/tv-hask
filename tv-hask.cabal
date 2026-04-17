@@ -75,6 +75,7 @@ library
     Tv.UI.Info
     Tv.UI.Preview
     Tv.Df
+    Tv.Df.Bridge
     Tv.Df.Freq
     Tv.Df.Parse
     Tv.Log

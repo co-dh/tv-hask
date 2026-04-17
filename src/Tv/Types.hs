@@ -47,6 +47,9 @@ module Tv.Types
     -- * Cmd
   , Cmd(..)
   , plotKind
+    -- * Backend selector
+  , Backend(..)
+  , parseBackend
   ) where
 
 import qualified Data.Aeson as A
@@ -613,3 +616,20 @@ plotKind CmdPlotHist    = Just PlotHist
 plotKind CmdPlotDensity = Just PlotDensity
 plotKind CmdPlotViolin  = Just PlotViolin
 plotKind _              = Nothing
+
+-- | Which compute backend a feature's effect should route through.
+-- Default is 'BackendDuck' (PRQL compiled to SQL, run inside DuckDB).
+-- 'BackendDf' routes through the dataframe package — currently an
+-- opt-in testbed reachable via the @-b df@ CLI flag.
+data Backend = BackendDuck | BackendDf
+  deriving (Eq, Show)
+
+-- | Parse the CLI argument for @-b@. Unknown strings return 'Nothing'
+-- so the caller can fall back to the default.
+parseBackend :: Text -> Maybe Backend
+parseBackend t = case T.toLower t of
+  "duck"      -> Just BackendDuck
+  "duckdb"    -> Just BackendDuck
+  "df"        -> Just BackendDf
+  "dataframe" -> Just BackendDf
+  _           -> Nothing
