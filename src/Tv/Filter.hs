@@ -21,6 +21,8 @@ module Tv.Filter
   , commands
   ) where
 
+import Control.Monad (guard)
+import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT, hoistMaybe)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef)
 import qualified Data.HashMap.Strict as HM
 import Data.HashMap.Strict (HashMap)
@@ -48,6 +50,12 @@ import qualified Tv.Fzf as Fzf
 import qualified Tv.Socket as Socket
 import qualified Tv.Tmp as Tmp
 
+-- | Run a MaybeT IO pipeline; on Nothing (cancel/no-match), keep the
+-- original stack. The Filter family all have this shape:
+-- "chain several IO-Maybe stages; if any stage bails, leave s alone."
+orKeep :: ViewStack AdbcTable -> MaybeT IO (ViewStack AdbcTable) -> IO (ViewStack AdbcTable)
+orKeep s = fmap (fromMaybe s) . runMaybeT
+
 -- | Move row cursor to target index (pure helper)
 moveRowTo
   :: ViewStack AdbcTable -> Int -> Maybe (Int, Text) -> ViewStack AdbcTable
@@ -72,11 +80,10 @@ moveTo s colIdx =
 
 -- | col search: fzf jump to column by name (IO version for backward compat)
 colSearch :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-colSearch tm s = do
-  mi <- Fzf.fzfIdx tm (V.fromList ["--prompt=Column: "]) (Nav.dispNames (nav (cur s)))
-  case mi of
-    Nothing  -> pure s
-    Just idx -> pure (moveTo s idx)
+colSearch tm s = orKeep s $ do
+  idx <- MaybeT $ Fzf.fzfIdx tm (V.fromList ["--prompt=Column: "])
+                    (Nav.dispNames (nav (cur s)))
+  pure $ moveTo s idx
 
 -- | Shared: resolve current column, fetch sorted distinct values
 withDistinct
@@ -93,17 +100,12 @@ withDistinct s f = do
 
 -- | row search (/): find value in current column, jump to matching row (IO)
 rowSearch :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-rowSearch tm s = withDistinct s $ \curCol curName vals -> do
-  mr <- Fzf.fzf tm (V.fromList ["--prompt=/" <> curName <> ": "])
-                (T.intercalate "\n" (V.toList vals))
-  case mr of
-    Nothing     -> pure s
-    Just result -> do
-      let start = cur s ^. #nav % #row % #cur + 1
-      mri <- Table.findRow (tbl s) curCol result start True
-      case mri of
-        Nothing     -> pure s
-        Just rowIdx -> pure (moveRowTo s rowIdx (Just (curCol, result)))
+rowSearch tm s = withDistinct s $ \curCol curName vals -> orKeep s $ do
+  result <- MaybeT $ Fzf.fzf tm (V.fromList ["--prompt=/" <> curName <> ": "])
+              (T.intercalate "\n" (V.toList vals))
+  let start = cur s ^. #nav % #row % #cur + 1
+  rowIdx <- MaybeT $ Table.findRow (tbl s) curCol result start True
+  pure $ moveRowTo s rowIdx (Just (curCol, result))
 
 -- | findRow with cache: fzf fires focus on every arrow key, so without caching
 -- each fires a SQL query causing visible lag.
@@ -206,91 +208,63 @@ rowSearchLive tm s preview = withDistinct s $ \curCol curName vals -> do
 
 -- | search in direction: fwd=true (n), bwd=false (N)
 searchDir :: ViewStack AdbcTable -> Bool -> IO (ViewStack AdbcTable)
-searchDir s fwd = do
+searchDir s fwd = orKeep s $ do
   let v = cur s
-  case v ^. #search of
-    Nothing         -> pure s
-    Just (col, val) -> do
-      let rowCur = v ^. #nav % #row % #cur
-          start  = if fwd then rowCur + 1 else rowCur
-      mri <- Table.findRow (v ^. #nav % #tbl) col val start fwd
-      case mri of
-        Nothing     -> pure s
-        Just rowIdx -> pure (moveRowTo s rowIdx Nothing)
+  (col, val) <- hoistMaybe (v ^. #search)
+  let rc    = v ^. #nav % #row % #cur
+      start = if fwd then rc + 1 else rc
+  rowIdx <- MaybeT $ Table.findRow (v ^. #nav % #tbl) col val start fwd
+  pure $ moveRowTo s rowIdx Nothing
 
 -- | row filter (\): filter rows by expression, push filtered view (IO)
 rowFilter :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-rowFilter tm s = withDistinct s $ \_curCol curName vals -> do
+rowFilter tm s = withDistinct s $ \_curCol curName vals -> orKeep s $ do
   let typ    = Ops.colType (tbl s) _curCol
-      typStr = toString typ
-      header = filterPrompt curName typStr
-  mr <- Fzf.fzf tm
-          (V.fromList ["--print-query", "--header=" <> header, "--prompt=filter > "])
-          (T.intercalate "\n" (V.toList vals))
-  case mr of
-    Nothing     -> pure s
-    Just result -> do
-      let expr = filterPrql curName vals result (isNumeric typ)
-      if T.null expr
-        then pure s
-        else do
-          mt <- Table.filter (tbl s) expr
-          case mt of
-            Nothing   -> pure s
-            Just tbl' ->
-              -- Preserve cursor column across filter (matches Lean's
-              -- `rebuild tbl' (row := 0)` default). Resetting col=0 would
-              -- snap the cursor back to the first column.
-              let v      = cur s
-                  curCol = Nav.colIdx (v ^. #nav)
-                  grp'   = v ^. #nav % #grp
-              in case View.rebuild v tbl' curCol grp' 0 of
-                   Nothing -> pure s
-                   Just v' -> pure (push s (v' & #disp .~ ("\\" <> curName)))
+      header = filterPrompt curName (toString typ)
+  result <- MaybeT $ Fzf.fzf tm
+              (V.fromList ["--print-query", "--header=" <> header, "--prompt=filter > "])
+              (T.intercalate "\n" (V.toList vals))
+  let expr = filterPrql curName vals result (isNumeric typ)
+  guard $ not $ T.null expr
+  tbl' <- MaybeT $ Table.filter (tbl s) expr
+  -- Preserve cursor column across filter (matches Lean's `rebuild tbl' (row := 0)`
+  -- default). Resetting col=0 would snap the cursor back to the first column.
+  let v      = cur s
+      curCol = Nav.colIdx (v ^. #nav)
+      grp'   = v ^. #nav % #grp
+  v' <- hoistMaybe $ View.rebuild v tbl' curCol grp' 0
+  pure $ push s (v' & #disp .~ ("\\" <> curName))
 
 -- | Jump to column by name directly (no fzf). Called by socket/dispatch.
 jumpCol :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
-jumpCol s name = do
-  if T.null name
-    then pure s
-    else case V.findIndex (== name) (Nav.dispNames (cur s ^. #nav)) of
-      Just idx -> pure (moveTo s idx)
-      Nothing  -> pure s
+jumpCol s name = orKeep s $ do
+  guard $ not $ T.null name
+  idx <- hoistMaybe $ V.findIndex (== name) (Nav.dispNames (cur s ^. #nav))
+  pure $ moveTo s idx
 
 -- | Filter by expression directly (no fzf). Called by socket/dispatch.
 filterWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
-filterWith s expr = do
-  if T.null expr
-    then pure s
-    else do
-      mt <- Table.filter (tbl s) expr
-      case mt of
-        Nothing   -> pure s
-        Just tbl' ->
-          -- Match Lean's `rebuild tbl' (row := 0)` — col defaults to the
-          -- old cursor column, grp to the old grp. Resetting col to 0
-          -- would jump the cursor home, which the filter demo explicitly
-          -- asserts should NOT happen (cursor stays on the filtered col).
-          let v      = cur s
-              curCol = Nav.colIdx (v ^. #nav)
-              grp'   = v ^. #nav % #grp
-          in case View.rebuild v tbl' curCol grp' 0 of
-               Nothing -> pure s
-               Just v' -> pure (push s (v' & #disp .~ ("\\" <> expr)))
+filterWith s expr = orKeep s $ do
+  guard $ not $ T.null expr
+  tbl' <- MaybeT $ Table.filter (tbl s) expr
+  -- Match Lean's `rebuild tbl' (row := 0)` — col defaults to the old cursor
+  -- column, grp to the old grp. Resetting col to 0 would jump the cursor
+  -- home, which the filter demo explicitly asserts should NOT happen.
+  let v      = cur s
+      curCol = Nav.colIdx (v ^. #nav)
+      grp'   = v ^. #nav % #grp
+  v' <- hoistMaybe $ View.rebuild v tbl' curCol grp' 0
+  pure $ push s (v' & #disp .~ ("\\" <> expr))
 
 -- | Search for value directly (no fzf). Called by socket/dispatch.
 searchWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
-searchWith s val = do
-  if T.null val
-    then pure s
-    else do
-      let v      = cur s
-          curCol = Nav.colIdx (v ^. #nav)
-          start  = v ^. #nav % #row % #cur + 1
-      mri <- Table.findRow (tbl s) curCol val start True
-      case mri of
-        Nothing     -> pure s
-        Just rowIdx -> pure (moveRowTo s rowIdx (Just (curCol, val)))
+searchWith s val = orKeep s $ do
+  guard $ not $ T.null val
+  let v      = cur s
+      curCol = Nav.colIdx (v ^. #nav)
+      start  = v ^. #nav % #row % #cur + 1
+  rowIdx <- MaybeT $ Table.findRow (tbl s) curCol val start True
+  pure $ moveRowTo s rowIdx (Just (curCol, val))
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
