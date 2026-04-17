@@ -15,6 +15,11 @@ Haskell tree is free to diverge in structure, abstraction, and idiom.
   `Prql.pipe` / `requery`.
 - **Don't disable tests to make them pass.** If a test fails, fix the code
   or the test — don't mark it `pending`.
+- **Short names.** Identifiers we define (functions, types, fields,
+  modules) should be at most 2 words — `queryMeta`, not `queryMetadataFromTable`.
+  Stdlib/library names like `readProcessWithExitCode` are out of our
+  control; alias them (`import qualified ... as Proc`) if a call site reads
+  poorly.
 
 ## Field access: OverloadedLabels + optics-core
 

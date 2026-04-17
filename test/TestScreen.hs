@@ -5,7 +5,6 @@
 --   buffer). Literal port of Tc/test/TestScreen.lean.
 module TestScreen (tests) where
 
-import Prelude hiding (log)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertBool)
 import qualified Data.Text as T
@@ -14,7 +13,6 @@ import System.Exit (ExitCode (..))
 
 import TestUtil
   ( tvHaskBin
-  , log
   , runHask
   , runPty
   , contains
@@ -29,25 +27,21 @@ import TestUtil
 
 test_nav_down :: IO ()
 test_nav_down = do
-  log "nav_down"
   out <- runHask "j" "data/basic.csv" []
   assertBool "j moves to row 1" (contains (snd (footer out)) "r1/")
 
 test_nav_right :: IO ()
 test_nav_right = do
-  log "nav_right"
   out <- runHask "l" "data/basic.csv" []
   assertBool "l moves to col 1" (contains (snd (footer out)) "c1/")
 
 test_nav_up :: IO ()
 test_nav_up = do
-  log "nav_up"
   out <- runHask "jk" "data/basic.csv" []
   assertBool "jk returns to row 0" (contains (snd (footer out)) "r0/")
 
 test_nav_left :: IO ()
 test_nav_left = do
-  log "nav_left"
   out <- runHask "lh" "data/basic.csv" []
   assertBool "lh returns to col 0" (contains (snd (footer out)) "c0/")
 
@@ -56,13 +50,11 @@ test_nav_left = do
 -- real cbreak-mode tty input + escape-sequence decoding path.
 test_arrow_down_pty :: IO ()
 test_arrow_down_pty = do
-  log "arrow_down_pty"
   out <- runPty "\\e[B" "data/basic.csv"
   assertBool "CSI down moves to row 1" (contains (snd (footer out)) "r1/")
 
 test_arrow_right_pty :: IO ()
 test_arrow_right_pty = do
-  log "arrow_right_pty"
   out <- runPty "\\e[C" "data/basic.csv"
   assertBool "CSI right moves to col 1" (contains (snd (footer out)) "c1/")
 
@@ -75,19 +67,16 @@ test_arrow_right_pty = do
 
 test_key_toggle :: IO ()
 test_key_toggle = do
-  log "key_col"
   out <- runHask "!" "data/basic.csv" []
   assertBool "! adds key separator" (contains (header out) "\x2551")
 
 test_key_remove :: IO ()
 test_key_remove = do
-  log "key_remove"
   out <- runHask "!!" "data/basic.csv" []
   assertBool "!! removes key separator" (not (contains (header out) "\x2551"))
 
 test_key_reorder :: IO ()
 test_key_reorder = do
-  log "key_reorder"
   out <- runHask "l!" "data/basic.csv" []
   assertBool "Key col moves to front" (T.any (== 'b') (T.take 5 (header out)))
 
@@ -101,13 +90,11 @@ test_key_reorder = do
 
 test_row_select :: IO ()
 test_row_select = do
-  log "row_select"
   out <- runHask "T" "data/basic.csv" []
   assertBool "T selects row" (contains (snd (footer out)) "sel=1")
 
 test_multi_select :: IO ()
 test_multi_select = do
-  log "multi_row_select"
   out <- runHask "TjT" "data/full.csv" []
   assertBool "TjT selects 2 rows" (contains (snd (footer out)) "sel=2")
 
@@ -118,19 +105,16 @@ test_multi_select = do
 
 test_stack_swap :: IO ()
 test_stack_swap = do
-  log "stack_swap"
   out <- runHask "S" "data/basic.csv" []
   assertBool "S swaps/dups view" (contains (fst (footer out)) "basic.csv")
 
 test_meta_quit :: IO ()
 test_meta_quit = do
-  log "meta_quit"
   out <- runHask "Mq" "data/basic.csv" []
   assertBool "Mq returns from meta" (not (contains (fst (footer out)) "meta"))
 
 test_freq_quit :: IO ()
 test_freq_quit = do
-  log "freq_quit"
   out <- runHask "Fq" "data/basic.csv" []
   assertBool "Fq returns from freq" (not (contains (fst (footer out)) "freq"))
 
@@ -141,7 +125,6 @@ test_freq_quit = do
 -- Info overlay hidden by default; I toggles it on
 test_info :: IO ()
 test_info = do
-  log "info"
   out <- runHask "I" "data/basic.csv" []
   assertBool "Info overlay shown after I toggle"
     (contains out "group by" || contains out "command menu")
@@ -151,7 +134,6 @@ test_info = do
 
 test_key_cursor :: IO ()
 test_key_cursor = do
-  log "key_cursor"
   out <- runHask "l!" "data/basic.csv" []
   assertBool "Cursor tracks after key toggle" (contains (snd (footer out)) "c0/")
 
@@ -160,7 +142,6 @@ test_key_cursor = do
 
 test_q_quit :: IO ()
 test_q_quit = do
-  log "q_quit_empty_stack"
   (code, _, _) <- readProcessWithExitCode tvHaskBin ["data/basic.csv", "-c", "q"] ""
   assertBool "q on empty stack exits cleanly" (code == ExitSuccess)
 

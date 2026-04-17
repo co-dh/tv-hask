@@ -26,6 +26,7 @@ module Tv.Term
     -- screen
   , width, height, clear, present, pollEvent, toEvent, toEvents, bufferStr
   , padC, renderTable, print
+  , _setScreenBufSize
   ) where
 
 import Prelude hiding (init, print)
@@ -236,12 +237,9 @@ init = do
     (w, h) <- if isTty
                 then termSize
                 else pure (80, 24)
-    buf <- VSM.replicate (w * h) emptyCell
-    writeIORef screenBuf (w, h, buf)
     -- Front buffer starts at all-default; termbox2's tb_init does the same,
     -- so the first `present` frame emits every non-default cell.
-    front <- VSM.replicate (w * h) emptyCell
-    writeIORef frontBuf front
+    allocBufs w h
     writeIORef initedRef True
     writeIORef headlessRef (not isTty)
     when isTty $ do
@@ -303,8 +301,27 @@ height = do
   (_, h, _) <- readIORef screenBuf
   pure (fromIntegral h)
 
+allocBufs :: Int -> Int -> IO ()
+allocBufs w h = do
+  buf   <- VSM.replicate (w * h) emptyCell
+  front <- VSM.replicate (w * h) emptyCell
+  writeIORef screenBuf (w, h, buf)
+  writeIORef frontBuf front
+
+_setScreenBufSize :: Int -> Int -> IO ()
+_setScreenBufSize = allocBufs
+
+-- | Front buffer also resets on dim change — the diff in `present` indexes
+-- by (w, h) that'd be invalid otherwise, forcing a full repaint.
+syncSize :: IO ()
+syncSize = do
+  (curW, curH, _) <- readIORef screenBuf
+  (newW, newH) <- termSize
+  when (newW /= curW || newH /= curH) (allocBufs newW newH)
+
 clear :: IO ()
 clear = do
+  syncSize
   (_, _, buf) <- readIORef screenBuf
   VSM.set buf emptyCell
 

@@ -316,6 +316,19 @@ tokenizeKeysTests = testGroup "tokenizeKeys"
       Key.tokenizeKeys "<>" @?= V.fromList ["<", ">"]
   ]
 
+-- Regression: width/height were only written in Term.init, so resizes
+-- left every caller on pre-resize dims until restart.
+resizeTests :: TestTree
+resizeTests = testGroup "Term.clear resize"
+  [ testCase "clear resyncs buffer dims after simulated resize" $ do
+      _ <- Term.init
+      Term._setScreenBufSize 40 10
+      Term.clear
+      w <- Term.width
+      h <- Term.height
+      (fromIntegral w, fromIntegral h) @?= (80 :: Int, 24 :: Int)
+  ]
+
 -- ## Term.parseColor Tests
 parseColorTests :: TestTree
 parseColorTests = testGroup "Term.parseColor"
@@ -348,4 +361,5 @@ tests = testGroup "TestPure"
   , tabNameTests
   , tokenizeKeysTests
   , parseColorTests
+  , resizeTests
   ]

@@ -5,7 +5,6 @@
 --   Tests shell out to the cabal-built `tv` binary and check screen output.
 module Test (tests) where
 
-import Prelude hiding (log)
 import Control.Exception (try, SomeException, catch)
 import Data.Char (isDigit, chr)
 import Data.IORef (IORef, newIORef)
@@ -28,7 +27,6 @@ import Test.Tasty.HUnit (testCase, assertBool, Assertion, assertFailure)
 
 import TestUtil
   ( tvHaskBin
-  , log
   , runHask
   , contains
   , footer
@@ -74,14 +72,12 @@ sleepMs ms = threadDelay (ms * 1000)
 
 test_sort_asc :: Assertion
 test_sort_asc = do
-  log "sort_asc"
   ls <- dataLines <$> run "[" "data/unsorted.csv"
   let first = case ls of { [] -> ""; (x:_) -> x }
   assert (T.isPrefixOf "1 " first || contains first " 1 ") "[ sorts asc, first=1"
 
 test_sort_desc :: Assertion
 test_sort_desc = do
-  log "sort_desc"
   ls <- dataLines <$> run "]" "data/unsorted.csv"
   let first = case ls of { [] -> ""; (x:_) -> x }
   assert (T.isPrefixOf "3 " first || contains first " 3 ") "] sorts desc, first=3"
@@ -92,19 +88,16 @@ test_sort_desc = do
 
 test_meta_shows :: Assertion
 test_meta_shows = do
-  log "meta"
   out <- run "M" "data/basic.csv"
   assert (contains (fst (footer out)) "meta") "M shows meta in tab"
 
 test_meta_col_info :: Assertion
 test_meta_col_info = do
-  log "meta_col_info"
   out <- run "M" "data/basic.csv"
   assert (contains out "column" || contains out "name") "Meta shows column info"
 
 test_meta_no_garbage :: Assertion
 test_meta_no_garbage = do
-  log "meta_tab_no_garbage"
   out <- run "M" "data/basic.csv"
   assert (not (contains (fst (footer out)) "\xE2")) "Meta tab has no garbage chars"
 
@@ -114,31 +107,26 @@ test_meta_no_garbage = do
 
 test_freq_shows :: Assertion
 test_freq_shows = do
-  log "freq"
   out <- run "F" "data/basic.csv"
   assert (contains (fst (footer out)) "freq") "F shows freq in tab"
 
 test_freq_after_meta :: Assertion
 test_freq_after_meta = do
-  log "freq_after_meta"
   out <- run "MqF" "data/basic.csv"
   assert (contains (fst (footer out)) "freq") "MqF shows freq"
 
 test_freq_by_key :: Assertion
 test_freq_by_key = do
-  log "freq_by_key"
   out <- run "l!F" "data/full.csv"
   assert (contains (fst (footer out)) "freq") "l!F shows freq by key"
 
 test_freq_multi_key :: Assertion
 test_freq_multi_key = do
-  log "freq_multi_key"
   out <- run "!l!F" "data/multi_freq.csv"
   assert (contains (fst (footer out)) "freq") "!l!F shows multi-key freq"
 
 test_freq_keeps_grp :: Assertion
 test_freq_keeps_grp = do
-  log "freq_keeps_grp"
   out <- run "!F" "data/basic.csv"
   assert (contains (snd (footer out)) "grp=1") "Freq view keeps grp columns"
 
@@ -148,27 +136,23 @@ test_freq_keeps_grp = do
 
 test_meta_0 :: Assertion
 test_meta_0 = do
-  log "meta_0"
   out <- run "M0" "data/null_col.csv"
   let status = snd (footer out)
   assert (contains status "sel=1" || contains status "rows=1") "M0 selects null columns"
 
 test_meta_1 :: Assertion
 test_meta_1 = do
-  log "meta_1"
   out <- run "M1" "data/single_val.csv"
   let status = snd (footer out)
   assert (contains status "sel=1" || contains status "rows=1") "M1 selects single-value columns"
 
 test_meta_0_enter :: Assertion
 test_meta_0_enter = do
-  log "meta_0_enter"
   hdr <- header <$> run "M0<ret>" "data/null_col.csv"
   assert (contains hdr "\x2551" || contains hdr "|") "M0<ret> sets key cols"
 
 test_meta_1_enter :: Assertion
 test_meta_1_enter = do
-  log "meta_1_enter"
   hdr <- header <$> run "M1<ret>" "data/single_val.csv"
   assert (contains hdr "\x2551" || contains hdr "|") "M1<ret> sets key cols"
 
@@ -178,7 +162,6 @@ test_meta_1_enter = do
 
 test_spaced_header :: Assertion
 test_spaced_header = do
-  log "spaced_header"
   out <- run "" "data/spaced_header.txt"
   assert (contains (snd (footer out)) "c0/3") "Spaced header: 3 columns"
 
@@ -188,7 +171,6 @@ test_spaced_header = do
 
 test_freq_enter :: Assertion
 test_freq_enter = do
-  log "freq_enter"
   out <- run "F<ret>" "data/multi_freq.csv"
   let (tab, status) = footer out
   assert (contains tab "multi_freq") "F<ret> pops to parent"
@@ -200,7 +182,6 @@ test_freq_enter = do
 
 test_no_stderr :: Assertion
 test_no_stderr = do
-  log "no_stderr"
   -- search for eprintln-equivalent Haskell emissions in src/ (excluding app/)
   -- Lean checks `eprintln` in Tc/ except App.lean; our equivalent is hPutStrLn stderr / TIO.hPutStrLn stderr
   (_, out, _) <- readProcessWithExitCode "grep"
@@ -213,37 +194,31 @@ test_no_stderr = do
 
 test_search_jump :: Assertion
 test_search_jump = do
-  log "search_jump"
   out <- run "l/x<ret>" "data/basic.csv"
   assert (contains (snd (footer out)) "r2/") "/ search finds x at row 2"
 
 test_search_next :: Assertion
 test_search_next = do
-  log "search_next"
   out <- run "l/x<ret>n" "data/basic.csv"
   assert (contains (snd (footer out)) "r4/") "n finds next x at row 4"
 
 test_search_prev :: Assertion
 test_search_prev = do
-  log "search_prev"
   out <- run "l/x<ret>N" "data/basic.csv"
   assert (contains (snd (footer out)) "r0/") "N finds prev x (wraps to row 0)"
 
 test_search_after_sort :: Assertion
 test_search_after_sort = do
-  log "search_after_sort"
   out <- run "]l/x<ret>" "data/basic.csv"
   assert (contains (snd (footer out)) "r2/") "/ search after sort finds row 2"
 
 test_col_search :: Assertion
 test_col_search = do
-  log "col_search"
   out <- run "s" "data/basic.csv"
   assert (contains (snd (footer out)) "c0/") "s col search jumps to column"
 
 test_folder_sort_type :: Assertion
 test_folder_sort_type = do
-  log "folder_sort_type"
   output <- run "lll[" "data/"
   let ls = dataLines output
       (_, status) = footer output
@@ -269,19 +244,16 @@ findIdx p = go 0
 
 test_folder_no_args :: Assertion
 test_folder_no_args = do
-  log "folder_no_args"
   out <- run "" ""
   assert (contains out "[/") "No-args shows folder view with absolute path"
 
 test_folder_D :: Assertion
 test_folder_D = do
-  log "folder_D_key"
   out <- run "D" "data/basic.csv"
   assert (contains out "[/") "D pushes folder view with absolute path"
 
 test_folder_tab :: Assertion
 test_folder_tab = do
-  log "folder_tab_path"
   out <- run "" ""
   let (tab, _) = footer out
   assert (contains tab "[/") "Folder tab shows absolute path (starts with /)"
@@ -294,40 +266,34 @@ test_folder_tab = do
 
 test_folder_enter :: Assertion
 test_folder_enter = do
-  log "folder_enter_dir"
   out <- run "<ret>" "data/test_folder"
   let (_, status) = footer out
   assert (contains status "r0/") "Entered directory has rows"
 
 test_folder_relative :: Assertion
 test_folder_relative = do
-  log "folder_path_relative"
   out <- run "" ""
   assert (contains out "..") "Path shows entry name"
   assert (not (contains out "/home/dh/repo/Tc/..")) "Path column is relative"
 
 test_folder_pop :: Assertion
 test_folder_pop = do
-  log "folder_pop"
   out <- run "[jjj<ret>q" "data/test_folder"
   assert (contains out "[/") "q pops back to parent folder"
 
 test_folder_backspace :: Assertion
 test_folder_backspace = do
-  log "folder_backspace"
   out <- run "[jjj<ret><bs>" "data/test_folder"
   assert (contains out "test_folder") "backspace returns to parent folder"
 
 test_folder_backspace_twice :: Assertion
 test_folder_backspace_twice = do
-  log "folder_backspace_twice"
   out <- run "[jjj<ret><bs><bs>" "data/test_folder"
   let (path, _) = footer out
   assert (T.isSuffixOf "data]" path) "double backspace navigates to grandparent (data/)"
 
 test_folder_enter_symlink :: Assertion
 test_folder_enter_symlink = do
-  log "folder_enter_symlink"
   out <- run "[jj<ret>" "data/test_folder"
   assert (contains out "file2") "Enter on symlink dir shows its contents"
   let (_, status) = footer out
@@ -339,7 +305,6 @@ test_folder_enter_symlink = do
 
 test_duckdb_list :: Assertion
 test_duckdb_list = do
-  log "duckdb_list"
   out <- run "" "data/nu_help.duckdb"
   assert (contains out "commands") "DuckDB file lists tables"
   assert (contains out "params") "DuckDB file lists params table"
@@ -348,7 +313,6 @@ test_duckdb_list = do
 
 test_duckdb_enter :: Assertion
 test_duckdb_enter = do
-  log "duckdb_enter"
   out <- run "<ret>" "data/nu_help.duckdb"
   let (_, status) = footer out
   assert (contains status "r0/") "Enter on DuckDB table opens it"
@@ -356,14 +320,12 @@ test_duckdb_enter = do
 
 test_duckdb_primary_key :: Assertion
 test_duckdb_primary_key = do
-  log "duckdb_primary_key"
   out <- run "<ret>" "data/nu_help.duckdb"
   let (_, status) = footer out
   assert (contains status "grp=1") "DuckDB primary key is keyed (grp=1)"
 
 test_folder_prefix :: Assertion
 test_folder_prefix = do
-  log "folder_prefix"
   out1 <- run "" ""
   out2 <- run "," ""
   let s1 = snd (footer out1)
@@ -383,14 +345,12 @@ test_folder_prefix = do
 -- Sort by non-first column
 test_sort_excludes_key :: Assertion
 test_sort_excludes_key = do
-  log "sort_excludes_key"
   ls <- dataLines <$> run "l[" "data/grp_sort.csv"
   let first = case ls of { [] -> ""; (x:_) -> x }
   assert (contains first " 1 ") "sort by val: val=1 first"
 
 test_sort_selected_not_key :: Assertion
 test_sort_selected_not_key = do
-  log "sort_on_key_noop"
   ls <- dataLines <$> run "![" "data/grp_sort.csv"
   let first = case ls of { [] -> ""; (x:_) -> x }
   assert (contains first " 3 " || contains first " 6 ") "sort on key col is no-op"
@@ -401,7 +361,6 @@ test_sort_selected_not_key = do
 
 test_delete_col :: Assertion
 test_delete_col = do
-  log "delete_col"
   out <- run "x" "data/grp_sort.csv"
   let hdr = header out
   assert (not (contains hdr "grp")) "x removes grp column from header"
@@ -410,7 +369,6 @@ test_delete_col = do
 
 test_delete_hidden_cols :: Assertion
 test_delete_hidden_cols = do
-  log "delete_hidden_cols"
   out <- run "Hlx" "data/grp_sort.csv"
   let hdr = header out
   assert (not (contains hdr "grp")) "hidden col grp removed"
@@ -423,7 +381,6 @@ test_delete_hidden_cols = do
 
 test_filter_parquet_full_db :: Assertion
 test_filter_parquet_full_db = do
-  log "filter_parquet_full_db"
   out <- run "\\" "data/filtered_test.parquet"
   let (tab, status) = footer out
   assert (contains tab "\\sym") "\\ filter shows \\sym in tab"
@@ -442,13 +399,11 @@ test_filter_parquet_full_db = do
 
 test_sqlite_list :: Assertion
 test_sqlite_list = do
-  log "sqlite_list"
   out <- run "" "data/test.sqlite"
   assert (contains out "items") "SQLite file lists 'items' table"
 
 test_sqlite_enter :: Assertion
 test_sqlite_enter = do
-  log "sqlite_enter"
   out <- run "<ret>" "data/test.sqlite"
   assert (contains out "alpha") "SQLite table shows 'alpha' row"
   assert (contains out "gamma") "SQLite table shows 'gamma' row"
@@ -461,7 +416,6 @@ test_sqlite_enter = do
 
 test_csv_open :: Assertion
 test_csv_open = do
-  log "csv_open"
   out <- run "" "data/basic.csv"
   let (_, status) = footer out
   assert (contains status "r0/5") "CSV has 5 rows"
@@ -472,7 +426,6 @@ test_csv_open = do
 
 test_json_open :: Assertion
 test_json_open = do
-  log "json_open"
   out <- run "" "data/test.json"
   assert (contains out "alpha") "JSON shows 'alpha' row"
   let (_, status) = footer out
@@ -480,7 +433,6 @@ test_json_open = do
 
 test_ndjson_open :: Assertion
 test_ndjson_open = do
-  log "ndjson_open"
   out <- run "" "data/test.ndjson"
   assert (contains out "beta") "NDJSON shows 'beta' row"
   let (_, status) = footer out
@@ -492,7 +444,6 @@ test_ndjson_open = do
 
 test_jsonl_open :: Assertion
 test_jsonl_open = do
-  log "jsonl_open"
   out <- run "" "data/test.jsonl"
   assert (contains out "alpha") "JSONL shows 'alpha' row"
   assert (contains out "beta") "JSONL shows 'beta' row"
@@ -501,7 +452,6 @@ test_jsonl_open = do
 
 test_jsonl_sort :: Assertion
 test_jsonl_sort = do
-  log "jsonl_sort"
   ls <- dataLines <$> run "[" "data/test.jsonl"
   let first = case ls of { [] -> ""; (x:_) -> x }
   assert (contains first "alpha") "JSONL sort asc: first row is alpha"
@@ -512,7 +462,6 @@ test_jsonl_sort = do
 
 test_xlsx_open :: Assertion
 test_xlsx_open = do
-  log "xlsx_open"
   out <- run "" "data/test.xlsx"
   assert (contains out "alpha") "Excel shows 'alpha' value"
   assert (contains out "gamma") "Excel shows 'gamma' value"
@@ -525,7 +474,6 @@ test_xlsx_open = do
 
 test_avro_open :: Assertion
 test_avro_open = do
-  log "avro_open"
   out <- run "" "data/test.avro"
   assert (contains out "alpha") "Avro shows 'alpha' row"
   assert (contains out "gamma") "Avro shows 'gamma' row"
@@ -538,7 +486,6 @@ test_avro_open = do
 
 test_last_col_no_stretch :: Assertion
 test_last_col_no_stretch = do
-  log "last_col_no_stretch"
   out <- run "" "data/basic.csv"
   let hdr = header out
   assert (T.length hdr < 30)
@@ -547,7 +494,6 @@ test_last_col_no_stretch = do
 
 test_width_grows_on_scroll :: Assertion
 test_width_grows_on_scroll = do
-  log "width_grows_on_scroll"
   let keys = T.replicate 26 "j"
   out <- run keys "data/wide_scroll.csv"
   let ls = dataLines out
@@ -559,7 +505,6 @@ test_width_grows_on_scroll = do
 
 test_derive :: Assertion
 test_derive = do
-  log "derive"
   out <- run "=" "data/basic.csv"
   let hdr = header out
   assert (contains hdr "a") "derive: original columns should remain"
@@ -571,7 +516,6 @@ test_derive = do
 
 test_split :: Assertion
 test_split = do
-  log "split"
   out <- run ":" "data/split_test.csv"
   let (tab, status) = footer out
   assert (contains status "c2/6") "split: 6 columns after split"
@@ -582,14 +526,12 @@ test_split = do
 
 test_split_noop :: Assertion
 test_split_noop = do
-  log "split_noop"
   out <- run "l:" "data/split_test.csv"
   let (_, status) = footer out
   assert (contains status "c1/2") "split: no split on int column"
 
 test_split_arg :: Assertion
 test_split_arg = do
-  log "split_arg"
   out <- run ":-<ret>llll" "data/split_test.csv"
   let (tab, status) = footer out
   assert (contains status "c5/6") "split_arg: cursor at tag_4 (c5/6)"
@@ -599,7 +541,6 @@ test_split_arg = do
 
 test_derive_arg :: Assertion
 test_derive_arg = do
-  log "derive_arg"
   out <- run "=double = x * 2<ret>lll" "data/numeric.csv"
   let (tab, status) = footer out
   assert (contains status "c3/4") "derive_arg: cursor at double (c3/4)"
@@ -609,14 +550,12 @@ test_derive_arg = do
 
 test_filter_arg :: Assertion
 test_filter_arg = do
-  log "filter_arg"
   out <- run "\\Exchange == 'P'<ret>" "data/nyse10k.parquet"
   let (_, status) = footer out
   assert (contains status "r0/528") "filter_arg: 528 rows after filter"
 
 test_export_arg :: Assertion
 test_export_arg = do
-  log "export_arg"
   d <- Log.dir
   let path = d ++ "/tv_export_sort_test.csv"
   _ <- try (removeFile path) :: IO (Either SomeException ())
@@ -628,7 +567,6 @@ test_export_arg = do
 
 test_col_jump_arg :: Assertion
 test_col_jump_arg = do
-  log "col_jump_arg"
   out <- run "gExchange<ret>" "data/nyse10k.parquet"
   let (_, status) = footer out
   assert (contains status "c1/") "col_jump_arg: cursor moved to Exchange column"
@@ -639,7 +577,6 @@ test_col_jump_arg = do
 
 test_export_csv :: Assertion
 test_export_csv = do
-  log "export_csv"
   d <- Log.dir
   let path = d ++ "/tv_export_sort_test.csv"
   _ <- try (removeFile path) :: IO (Either SomeException ())
@@ -656,7 +593,6 @@ test_export_csv = do
 
 test_transpose :: Assertion
 test_transpose = do
-  log "transpose"
   out <- run "X" "data/basic.csv"
   assert (contains out "column") "transpose shows 'column' header"
   let ls = dataLines out
@@ -667,7 +603,6 @@ test_transpose = do
 
 test_transpose_pop :: Assertion
 test_transpose_pop = do
-  log "transpose_pop"
   out <- run "Xq" "data/basic.csv"
   let (_, status) = footer out
   assert (contains status "r0/5") "q pops back to original 5-row view"
@@ -678,7 +613,6 @@ test_transpose_pop = do
 
 test_join_inner :: Assertion
 test_join_inner = do
-  log "join_inner"
   out <- run "[j<ret>!Sj<ret>!SqJ" "data/join_test"
   assert (contains out "alice") "J shows alice from left table"
   assert (contains out "90") "J shows score=90 from right table"
@@ -687,7 +621,6 @@ test_join_inner = do
 
 test_join_union :: Assertion
 test_join_union = do
-  log "join_union"
   out <- run "[j<ret>S<ret>SqJ" "data/join_test"
   assert (contains out "name") "Union shows name column"
   let (_, status) = footer out
@@ -699,7 +632,6 @@ test_join_union = do
 
 test_sparkline_on :: Assertion
 test_sparkline_on = do
-  log "sparkline_on"
   out <- run "" "data/basic.csv"
   let hasBlock = T.any (\c -> let n = fromEnum c in n >= 0x2581 && n <= 0x2588) out
   assert hasBlock "sparklines always on (block chars visible)"
@@ -710,14 +642,12 @@ test_sparkline_on = do
 
 test_statusagg_numeric :: Assertion
 test_statusagg_numeric = do
-  log "statusagg_numeric"
   out <- run "" "data/basic.csv"
   assert (contains out "\x03A3") "Numeric column shows sum (\x03A3)"
   assert (contains out "#5") "Numeric column shows count (#5)"
 
 test_statusagg_string :: Assertion
 test_statusagg_string = do
-  log "statusagg_string"
   out <- run "l" "data/basic.csv"
   assert (contains out "#5") "String column shows count"
   assert (not (contains out "\x03A3")) "String column has no sum"
@@ -728,7 +658,6 @@ test_statusagg_string = do
 
 test_key_shift :: Assertion
 test_key_shift = do
-  log "key_shift"
   hdr <- header <$> run "!l!<S-left>" "data/basic.csv"
   let bPos = case T.splitOn "b" hdr of
                (x:_:_) -> T.length x
@@ -745,10 +674,9 @@ test_key_shift = do
 
 test_heat_mode :: Assertion
 test_heat_mode = do
-  log "heat_mode"
   socat <- hasCmd "socat"
   if not socat
-    then log "  skip (no socat)"
+    then pure ()
     else do
       tmpdir <- fromMaybe "/tmp" <$> lookupEnv "TMPDIR"
       (ph, mOut) <- spawnTv ["data/basic.csv", "-c", "<wait><wait><wait>"]
@@ -759,11 +687,9 @@ test_heat_mode = do
       case mOut of
         Just h  -> do _ <- hGetContents h; pure ()
         Nothing -> pure ()
-      log "  skip (cannot obtain child pid)"
 
 test_flat_menu :: Assertion
 test_flat_menu = do
-  log "flat_menu"
   out1 <- run " " "data/basic.csv"
   assert (contains out1 "a") "flat menu: table renders after first menu item"
   out2 <- run "  " "data/basic.csv"
@@ -771,19 +697,17 @@ test_flat_menu = do
 
 test_socket :: Assertion
 test_socket = do
-  log "socket"
   socat <- hasCmd "socat"
   if not socat
-    then log "  skip (no socat)"
-    else log "  skip (socket IPC not wired in Haskell port)"
+    then pure ()
+    else pure ()
 
 test_socket_dispatch :: Assertion
 test_socket_dispatch = do
-  log "socket_dispatch"
   socat <- hasCmd "socat"
   if not socat
-    then log "  skip (no socat)"
-    else log "  skip (socket IPC not wired in Haskell port)"
+    then pure ()
+    else pure ()
 
 -- ============================================================================
 -- === Arrow navigation ===
@@ -791,7 +715,6 @@ test_socket_dispatch = do
 
 test_arrow_nav :: Assertion
 test_arrow_nav = do
-  log "arrow_nav"
   s1 <- snd . footer <$> run "<down>" "data/basic.csv"
   assert (contains s1 "r1/") "arrow down moves to r1"
   s2 <- snd . footer <$> run "j" "data/basic.csv"
@@ -806,7 +729,6 @@ test_arrow_nav = do
 
 test_session_load :: Assertion
 test_session_load = do
-  log "session_load"
   home <- fromMaybe "." <$> lookupEnv "HOME"
   let dir = home ++ "/.cache/tv/sessions"
   createDirectoryIfMissing True dir
@@ -828,7 +750,6 @@ test_session_load = do
 
 test_session_save_load :: Assertion
 test_session_save_load = do
-  log "session_save_load"
   home <- fromMaybe "." <$> lookupEnv "HOME"
   let dir = home ++ "/.cache/tv/sessions"
       sessionPath = dir ++ "/basic.json"
@@ -849,7 +770,6 @@ test_session_save_load = do
 
 test_session_missing :: Assertion
 test_session_missing = do
-  log "session_missing"
   (ec, _, serr) <- readProcessWithExitCode tvHaskBin ["-s", "nonexistent_session_xyz"] ""
   let err = T.pack serr
   assert (ec == ExitSuccess || contains err "not found" || contains err "Session")
@@ -861,7 +781,6 @@ test_session_missing = do
 
 test_diff :: Assertion
 test_diff = do
-  log "diff"
   out <- run "[j<ret>Sjj<ret>Sqd" "data/diff_test"
   let (tab, status) = footer out
   assert (contains tab "diff") "d shows diff in tab"
@@ -872,7 +791,6 @@ test_diff = do
 
 test_diff_show_same :: Assertion
 test_diff_show_same = do
-  log "diff_show_same"
   out <- run "[j<ret>Sjj<ret>Sqdd" "data/diff_test"
   assert (contains out "cos") "dd reveals same-value cost columns"
 
@@ -882,7 +800,6 @@ test_diff_show_same = do
 
 test_plot_key_dispatch :: Assertion
 test_plot_key_dispatch = do
-  log "plot_key_dispatch"
   assert (Plot.handleKey 'q' == KeyQuit) "q should quit"
   assert (Plot.handleKey '.' == KeyInterval 1) ". should increase interval"
   assert (Plot.handleKey ',' == KeyInterval (-1)) ", should decrease interval"
@@ -891,7 +808,6 @@ test_plot_key_dispatch = do
 
 test_plot_export_string_col :: Assertion
 test_plot_export_string_col = do
-  log "plot_export_string_col"
   mTbl <- Tbl.fromFile "data/plot/mixed.csv"
   case mTbl of
     Nothing  -> assertFailure "failed to open mixed.csv"
@@ -903,7 +819,6 @@ test_plot_export_string_col = do
 
 test_plot_export_data :: Assertion
 test_plot_export_data = do
-  log "plot_export_data"
   mTbl <- Tbl.fromFile "data/plot/mixed.csv"
   case mTbl of
     Nothing  -> assertFailure "failed to open mixed.csv"
@@ -921,7 +836,6 @@ test_plot_export_data = do
 
 test_plot_export_cat :: Assertion
 test_plot_export_cat = do
-  log "plot_export_cat"
   mTbl <- Tbl.fromFile "data/plot/mixed.csv"
   case mTbl of
     Nothing  -> assertFailure "failed to open mixed.csv"
@@ -934,7 +848,6 @@ test_plot_export_cat = do
 
 test_plot_time_downsample :: Assertion
 test_plot_time_downsample = do
-  log "plot_time_downsample"
   mTbl <- Tbl.fromFile "data/plot/time_wide.csv"
   case mTbl of
     Nothing  -> assertFailure "failed to open time_wide.csv"
@@ -956,7 +869,6 @@ test_plot_time_downsample = do
 
 test_plot_downsample_step :: Assertion
 test_plot_downsample_step = do
-  log "plot_downsample_step"
   mTbl <- Tbl.fromFile "data/plot/line.csv"
   case mTbl of
     Nothing  -> assertFailure "failed to open line.csv"
@@ -981,10 +893,9 @@ hasGgplot2 = do
 
 test_plot_r_installed :: Assertion
 test_plot_r_installed = do
-  log "plot_r_installed"
   r <- hasRscript
   if not r
-    then log "  skip (no Rscript)"
+    then pure ()
     else do
       gg <- hasGgplot2
       assert gg "ggplot2 not installed"
@@ -1022,11 +933,10 @@ prepXY file xName yName mCat = do
 
 test_plot_render_line :: Assertion
 test_plot_render_line = do
-  log "plot_render_line"
   r <- hasRscript; gg <- hasGgplot2
   if not r
-    then log "  skip (no Rscript)"
-    else if not gg then log "  skip (no ggplot2)"
+    then pure ()
+    else if not gg then pure ()
     else do
       datPath <- prepXY "data/plot/line.csv" "x" "y" Nothing
       pngPath <- T.pack <$> Tmp.tmpPath "plot_test.png"
@@ -1034,11 +944,10 @@ test_plot_render_line = do
 
 test_plot_render_scatter_cat :: Assertion
 test_plot_render_scatter_cat = do
-  log "plot_render_scatter_cat"
   r <- hasRscript; gg <- hasGgplot2
   if not r
-    then log "  skip (no Rscript)"
-    else if not gg then log "  skip (no ggplot2)"
+    then pure ()
+    else if not gg then pure ()
     else do
       datPath <- prepXY "data/plot/mixed.csv" "x" "y" (Just "cat")
       pngPath <- T.pack <$> Tmp.tmpPath "plot_test_cat.png"
@@ -1046,11 +955,10 @@ test_plot_render_scatter_cat = do
 
 test_plot_render_histogram :: Assertion
 test_plot_render_histogram = do
-  log "plot_render_histogram"
   r <- hasRscript; gg <- hasGgplot2
   if not r
-    then log "  skip (no Rscript)"
-    else if not gg then log "  skip (no ggplot2)"
+    then pure ()
+    else if not gg then pure ()
     else do
       datPath <- T.pack <$> Tmp.tmpPath "plot.dat"
       TIO.writeFile (T.unpack datPath) "y\n10.5\n20.3\n15.7\n25.1\n30.0\n12.2\n18.9\n"
@@ -1059,11 +967,10 @@ test_plot_render_histogram = do
 
 test_plot_render_area :: Assertion
 test_plot_render_area = do
-  log "plot_render_area"
   r <- hasRscript; gg <- hasGgplot2
   if not r
-    then log "  skip (no Rscript)"
-    else if not gg then log "  skip (no ggplot2)"
+    then pure ()
+    else if not gg then pure ()
     else do
       datPath <- prepXY "data/plot/line.csv" "x" "y" Nothing
       pngPath <- T.pack <$> Tmp.tmpPath "plot_test_area.png"
@@ -1071,11 +978,10 @@ test_plot_render_area = do
 
 test_plot_render_density :: Assertion
 test_plot_render_density = do
-  log "plot_render_density"
   r <- hasRscript; gg <- hasGgplot2
   if not r
-    then log "  skip (no Rscript)"
-    else if not gg then log "  skip (no ggplot2)"
+    then pure ()
+    else if not gg then pure ()
     else do
       datPath <- T.pack <$> Tmp.tmpPath "plot.dat"
       TIO.writeFile (T.unpack datPath)
@@ -1085,11 +991,10 @@ test_plot_render_density = do
 
 test_plot_render_step :: Assertion
 test_plot_render_step = do
-  log "plot_render_step"
   r <- hasRscript; gg <- hasGgplot2
   if not r
-    then log "  skip (no Rscript)"
-    else if not gg then log "  skip (no ggplot2)"
+    then pure ()
+    else if not gg then pure ()
     else do
       datPath <- prepXY "data/plot/line.csv" "x" "y" Nothing
       pngPath <- T.pack <$> Tmp.tmpPath "plot_test_step.png"
@@ -1097,11 +1002,10 @@ test_plot_render_step = do
 
 test_plot_render_violin :: Assertion
 test_plot_render_violin = do
-  log "plot_render_violin"
   r <- hasRscript; gg <- hasGgplot2
   if not r
-    then log "  skip (no Rscript)"
-    else if not gg then log "  skip (no ggplot2)"
+    then pure ()
+    else if not gg then pure ()
     else do
       datPath <- prepXY "data/plot/mixed.csv" "x" "y" (Just "cat")
       pngPath <- T.pack <$> Tmp.tmpPath "plot_test_violin.png"
@@ -1109,11 +1013,10 @@ test_plot_render_violin = do
 
 test_plot_render_time :: Assertion
 test_plot_render_time = do
-  log "plot_render_time"
   r <- hasRscript; gg <- hasGgplot2
   if not r
-    then log "  skip (no Rscript)"
-    else if not gg then log "  skip (no ggplot2)"
+    then pure ()
+    else if not gg then pure ()
     else do
       datPath <- T.pack <$> Tmp.tmpPath "plot_time.dat"
       TIO.writeFile (T.unpack datPath)
@@ -1127,14 +1030,12 @@ test_plot_render_time = do
 
 test_replay_sort :: Assertion
 test_replay_sort = do
-  log "replay_sort"
   out <- run "[" "data/unsorted.csv"
   let (tab, _) = footer out
   assert (contains tab "sort") "replay: sort op shown on tab line after ["
 
 test_replay_empty :: Assertion
 test_replay_empty = do
-  log "replay_empty"
   out <- run "" "data/basic.csv"
   let (tab, _) = footer out
   assert (not (contains tab "sort")) "replay: no sort on fresh view"
@@ -1142,7 +1043,6 @@ test_replay_empty = do
 
 test_theme :: Assertion
 test_theme = do
-  log "theme"
   out <- run "" "data/basic.csv"
   assert (contains out "a") "theme: basic render still works after theme init"
 
@@ -1152,13 +1052,11 @@ test_theme = do
 
 test_gz_viewfile :: Assertion
 test_gz_viewfile = do
-  log "gz_viewfile"
   out <- run "" "data/test.txt.gz"
   assert (contains out "hello gz world") "gz viewfile shows decompressed text"
 
 test_gz_csv_ingest :: Assertion
 test_gz_csv_ingest = do
-  log "gz_csv_ingest"
   out <- run "" "data/csv_data.txt.gz"
   let (_, status) = footer out
   assert (contains out "name") "gz csv ingest: has name column"
@@ -1167,7 +1065,6 @@ test_gz_csv_ingest = do
 
 test_gz_txt_fallback :: Assertion
 test_gz_txt_fallback = do
-  log "gz_txt_fallback"
   out <- run "" "data/test.txt.gz"
   assert (contains out "hello gz world") "gz txt fallback: shows text content"
   let (_, status) = footer out
@@ -1185,10 +1082,9 @@ hasPgTest = do
 
 test_pg_list :: Assertion
 test_pg_list = do
-  log "pg_list"
   ok <- hasPgTest
   if not ok
-    then log "  skip (no pg on /tmp/claude-1000:5433)"
+    then pure ()
     else do
       out <- run "" "pg://host=/tmp/claude-1000 port=5433 dbname=pagila"
       assert (contains out "film") "pg:// lists 'film' table"
@@ -1196,10 +1092,9 @@ test_pg_list = do
 
 test_pg_enter :: Assertion
 test_pg_enter = do
-  log "pg_enter"
   ok <- hasPgTest
   if not ok
-    then log "  skip (no pg on /tmp/claude-1000:5433)"
+    then pure ()
     else do
       out <- run "jjjjj<ret>" "pg://host=/tmp/claude-1000 port=5433 dbname=pagila"
       let (_, status) = footer out
@@ -1210,10 +1105,9 @@ hasOsquery = hasCmd "osqueryi"
 
 test_osquery_list :: Assertion
 test_osquery_list = do
-  log "osquery_list"
   ok <- hasOsquery
   if not ok
-    then log "  skip (no osqueryi)"
+    then pure ()
     else do
       out <- run "" "osquery://"
       assert (contains out "name") "osquery:// shows name column"
@@ -1221,10 +1115,9 @@ test_osquery_list = do
 
 test_osquery_enter :: Assertion
 test_osquery_enter = do
-  log "osquery_enter"
   ok <- hasOsquery
   if not ok
-    then log "  skip (no osqueryi)"
+    then pure ()
     else do
       out <- run "<ret>" "osquery://"
       let (tab, _) = footer out
@@ -1232,10 +1125,9 @@ test_osquery_enter = do
 
 test_osquery_scroll_no_hide :: Assertion
 test_osquery_scroll_no_hide = do
-  log "osquery_scroll_no_hide"
   ok <- hasOsquery
   if not ok
-    then log "  skip (no osqueryi)"
+    then pure ()
     else do
       o0 <- run "" "osquery://"
       assert (contains o0 "name") "col 0: name visible"
@@ -1244,30 +1136,27 @@ test_osquery_scroll_no_hide = do
 
 test_osquery_back :: Assertion
 test_osquery_back = do
-  log "osquery_back"
   ok <- hasOsquery
   if not ok
-    then log "  skip (no osqueryi)"
+    then pure ()
     else do
       out <- run "<ret>q" "osquery://"
       assert (contains out "name") "q pops back to osquery table list"
 
 test_osquery_meta_description :: Assertion
 test_osquery_meta_description = do
-  log "osquery_meta_description"
   ok <- hasOsquery
   if not ok
-    then log "  skip (no osqueryi)"
+    then pure ()
     else do
       out <- run "<ret>M" "osquery://"
       assert (contains out "description") "Meta view on osquery table shows description column"
 
 test_osquery_direct_table :: Assertion
 test_osquery_direct_table = do
-  log "osquery_direct_table"
   ok <- hasOsquery
   if not ok
-    then log "  skip (no osqueryi)"
+    then pure ()
     else do
       out <- run "" "osquery://groups"
       assert (contains out "gid") "osquery://groups shows gid column"
@@ -1275,10 +1164,9 @@ test_osquery_direct_table = do
 
 test_osquery_typed_columns :: Assertion
 test_osquery_typed_columns = do
-  log "osquery_typed_columns"
   ok <- hasOsquery
   if not ok
-    then log "  skip (no osqueryi)"
+    then pure ()
     else do
       out <- run "" "osquery://groups"
       assert (contains out "gid") "osquery://groups has gid column"
@@ -1288,10 +1176,9 @@ test_osquery_typed_columns = do
 
 test_osquery_sort_enter :: Assertion
 test_osquery_sort_enter = do
-  log "osquery_sort_enter"
   ok <- hasOsquery
   if not ok
-    then log "  skip (no osqueryi)"
+    then pure ()
     else do
       out <- run "lll]<ret>" "osquery://"
       let (tab, _) = footer out
@@ -1313,10 +1200,9 @@ hasHfAccess = cachedCurlCheck hfAccessCache "https://huggingface.co/api/datasets
 
 test_hf_readme :: Assertion
 test_hf_readme = do
-  log "hf_readme"
   ok <- hasHfAccess
   if not ok
-    then log "  skip (no HF access)"
+    then pure ()
     else do
       out <- run "jjjjj<ret>" "hf://datasets/openai/gsm8k"
       assert (contains out "GSM8K") "HF README shows dataset name"
@@ -1325,10 +1211,9 @@ test_hf_readme = do
 
 test_hf_enter_parquet :: Assertion
 test_hf_enter_parquet = do
-  log "hf_enter_parquet"
   ok <- hasHfAccess
   if not ok
-    then log "  skip (no HF access)"
+    then pure ()
     else do
       out <- run "jj<ret>j<ret>" "hf://datasets/openai/gsm8k"
       assert (contains out "question") "HF parquet has question column"
@@ -1336,20 +1221,18 @@ test_hf_enter_parquet = do
 
 test_hf_backspace :: Assertion
 test_hf_backspace = do
-  log "hf_backspace"
   ok <- hasHfAccess
   if not ok
-    then log "  skip (no HF access)"
+    then pure ()
     else do
       out <- run "jj<ret><bs>" "hf://datasets/openai/gsm8k"
       assert (contains out "gsm8k") "backspace returns to HF repo root"
 
 test_hf_org_list :: Assertion
 test_hf_org_list = do
-  log "hf_org_list"
   ok <- hasHfAccess
   if not ok
-    then log "  skip (no HF access)"
+    then pure ()
     else do
       out <- run "" "hf://datasets/tablegpt/"
       assert (contains out "AppleStockData") "HF org lists datasets"
@@ -1379,40 +1262,36 @@ s3run keys = runE keys s3path ["+n"]
 
 test_s3_list :: Assertion
 test_s3_list = do
-  log "s3_list"
   ok <- hasS3Access
   if not ok
-    then log "  skip (no S3 access)"
+    then pure ()
     else do
       out <- s3run ""
       assert (contains out "dir") "S3 listing shows dir type"
 
 test_s3_enter_dir :: Assertion
 test_s3_enter_dir = do
-  log "s3_enter_dir"
   ok <- hasS3Access
   if not ok
-    then log "  skip (no S3 access)"
+    then pure ()
     else do
       out <- s3run "j<ret>"
       assert (contains out "dir" || contains out "file") "S3 enter dir shows contents"
 
 test_s3_backspace :: Assertion
 test_s3_backspace = do
-  log "s3_backspace"
   ok <- hasS3Access
   if not ok
-    then log "  skip (no S3 access)"
+    then pure ()
     else do
       out <- s3run "j<ret><bs>"
       assert (contains out "release") "S3 backspace returns to parent"
 
 test_s3_sort :: Assertion
 test_s3_sort = do
-  log "s3_sort"
   ok <- hasS3Access
   if not ok
-    then log "  skip (no S3 access)"
+    then pure ()
     else do
       out <- s3run "["
       assert (contains out "dir") "S3 sort doesn't break listing"
@@ -1426,10 +1305,9 @@ hasFtpAccess = cachedCurlCheck ftpAccessCache "ftp://ftp.nyse.com/"
 
 test_ftp_list :: Assertion
 test_ftp_list = do
-  log "ftp_list"
   ok <- hasFtpAccess
   if not ok
-    then log "  skip (no FTP access)"
+    then pure ()
     else do
       out <- run "" "ftp://ftp.nyse.com/"
       assert (contains out "dir") "FTP listing shows dir type"
@@ -1437,10 +1315,9 @@ test_ftp_list = do
 
 test_ftp_enter_dir :: Assertion
 test_ftp_enter_dir = do
-  log "ftp_enter_dir"
   ok <- hasFtpAccess
   if not ok
-    then log "  skip (no FTP access)"
+    then pure ()
     else do
       out <- run "j<ret>" "ftp://ftp.nyse.com/"
       assert (contains out "dir" || contains out "file")
@@ -1448,10 +1325,9 @@ test_ftp_enter_dir = do
 
 test_ftp_backspace :: Assertion
 test_ftp_backspace = do
-  log "ftp_backspace"
   ok <- hasFtpAccess
   if not ok
-    then log "  skip (no FTP access)"
+    then pure ()
     else do
       out <- run "j<ret><bs>" "ftp://ftp.nyse.com/"
       assert (contains out "ftp.nyse.com") "FTP backspace returns to parent"
