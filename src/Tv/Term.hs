@@ -735,304 +735,364 @@ renderTable
   _prec widthAdj heatMode sparklines heatDoubles
   = do
   (screenW, screenH, buf) <- readIORef screenBuf
-  let nCols = V.length names  -- total column count
-      nRows = if r1 > r0 then fromIntegral $ r1 - r0 else 0 :: Int
-
-  -- sparkline: active if any non-empty string
-  let sparkOn = V.any (not . T.null) sparklines
-
-  let stFg si = fromMaybe 0 $ styles V.!? (si * 2)
+  let nRows = if r1 > r0 then fromIntegral $ r1 - r0 else 0 :: Int
+      sparkOn = V.any (not . T.null) sparklines
+      stFg si = fromMaybe 0 $ styles V.!? (si * 2)
       stBg si = fromMaybe 0 $ styles V.!? (si * 2 + 1)
-
-  -- build selection bitsets
-  let toIS v = V.foldl' (\acc x -> IS.insert (fromIntegral x) acc) IS.empty v
+      toIS v = V.foldl' (\acc x -> IS.insert (fromIntegral x) acc) IS.empty v
       colBits = toIS selCols
       rowBits = toIS selRows
       hidBits = toIS hiddenCols
+      nKeysI  = fromIntegral nKeys :: Int
+      nCols   = V.length names
+      (layoutV2, visKeys, baseWidthsV) =
+        layoutCols screenW nCols texts inWidths colIdxs nKeysI hidBits
+                   curCol colOff0 widthAdj
+      heatCols = scanHeat heatMode layoutV2 colIdxs fmts colTypes texts heatDoubles
+      yFoot    = screenH - 3
+      dataY0   = if sparkOn then 2 else 1
 
-  -- Compute base / rendered widths for ALL columns
-  let computeDataWidth :: Int -> Int
-      computeDataWidth c =
-        let col = if c < V.length texts then texts V.! c else V.empty
-        in V.foldl' (\acc t -> max acc (T.length t)) 1 col
+  drawHeader buf screenW screenH yFoot layoutV2 visKeys colIdxs nKeysI
+             names fmts colTypes colBits curCol stFg stBg
+  when sparkOn $
+    drawSpark buf screenW screenH layoutV2 visKeys colIdxs sparklines stFg stBg
+  drawData buf screenW screenH dataY0 nRows r0 curRow curCol rowBits colBits
+           layoutV2 visKeys colIdxs nKeysI texts colTypes heatMode heatCols
+           heatDoubles stFg stBg
+  drawTip buf screenW screenH layoutV2 colIdxs curCol moveDir names stFg stBg
 
-      baseWidthsV = V.generate nCols $ \c ->
-        if IS.member c hidBits then 0
-        else let cached = if c < V.length inWidths
-                          then fromIntegral $ inWidths V.! c else 0 :: Int
-                 dw = computeDataWidth c
-                 base = (max dw _MIN_HDR_WIDTH) + 2
-             in max base cached
+  pure $ V.map fromIntegral baseWidthsV
 
-      allWidthsV = V.generate nCols $ \c ->
-        if IS.member c hidBits then 3
-        else let base = baseWidthsV V.! c
-                 disp = min base _MAX_DISP_WIDTH
-                 w = disp + fromIntegral widthAdj
-             in max w 3
+-- | Compute per-column layout: pin key columns at the left, lay out the
+-- remaining display columns starting at `colOff0`, and expand the cursor
+-- column to absorb trailing slack. Returns `(layout, visKeys, baseWidths)`
+-- where `layout` is `(displayIdx, xPos, width)` per visible column and
+-- `baseWidths` is the pre-widthAdj width for every original column
+-- (returned so `renderTable` can hand it back as the widths cache).
+layoutCols
+  :: Int                    -- screenW
+  -> Int                    -- nCols (= V.length names, for widths cache size)
+  -> Vector (Vector Text)   -- texts
+  -> Vector Word64          -- inWidths
+  -> Vector Word64          -- colIdxs
+  -> Int                    -- nKeysI
+  -> IS.IntSet              -- hidBits
+  -> Word64                 -- curCol
+  -> Word64                 -- colOff0
+  -> Int64                  -- widthAdj
+  -> (Vector (Int, Int, Int), Int, Vector Int)
+layoutCols screenW nCols texts inWidths colIdxs nKeysI hidBits curCol colOff0 widthAdj =
+  (layoutV2, visKeys, baseWidthsV)
+  where
+    nDispCols = V.length colIdxs
+    dataWidth c =
+      let col = if c < V.length texts then texts V.! c else V.empty
+      in V.foldl' (\acc t -> max acc (T.length t)) 1 col
+    baseWidthsV = V.generate nCols $ \c ->
+      if IS.member c hidBits then 0
+      else let cached = if c < V.length inWidths
+                        then fromIntegral $ inWidths V.! c else 0 :: Int
+               dw   = dataWidth c
+               base = max dw _MIN_HDR_WIDTH + 2
+           in max base cached
+    allWidthsV = V.generate nCols $ \c ->
+      if IS.member c hidBits then 3
+      else let base = baseWidthsV V.! c
+               disp = min base _MAX_DISP_WIDTH
+               w    = disp + fromIntegral widthAdj
+           in max w 3
+    -- width of the pinned key prefix (keys are never scrolled)
+    keyWidth = sum [ (allWidthsV V.! fromIntegral (colIdxs V.! c)) + 1
+                   | c <- [0 .. min nKeysI nDispCols - 1] ]
+    -- cursor's index among the non-key display slots; 0 if not found
+    curDispIdx0 = head $
+      [ c - nKeysI | c <- [nKeysI .. nDispCols - 1]
+                   , fromIntegral (colIdxs V.! c) == curCol ] ++ [0]
+    scrollW = max 1 (screenW - keyWidth)
+    -- scroll the non-key window right until the cursor is on-screen
+    adjColOff = go (fromIntegral colOff0) curDispIdx0 scrollW
+      where
+        go co curDI sw
+          | curDI < co = go curDI curDI sw
+          | otherwise  =
+              let cumX = sum [ (allWidthsV V.! fromIntegral (colIdxs V.! (nKeysI + c'))) + 1
+                             | c' <- [co .. curDI], nKeysI + c' < nDispCols ]
+              in if cumX <= sw || co >= curDI then co else go (co + 1) curDI sw
+    -- initial layout: key prefix first, then non-key columns from adjColOff
+    layoutV =
+      let goKey c x acc
+            | c >= nKeysI || c >= nDispCols || x >= screenW = (acc, x)
+            | otherwise =
+                let origIdx = fromIntegral $ colIdxs V.! c
+                    cw = min (allWidthsV V.! origIdx) $ screenW - x
+                in goKey (c + 1) (x + cw + 1) ((c, x, cw) : acc)
+          (keyList, x1) = goKey 0 0 []
+          goNonKey c x acc
+            | c >= nDispCols || x >= screenW = acc
+            | otherwise =
+                let origIdx = fromIntegral $ colIdxs V.! c
+                    cw = min (allWidthsV V.! origIdx) $ screenW - x
+                in goNonKey (c + 1) (x + cw + 1) ((c, x, cw) : acc)
+          nonKeyList = goNonKey (nKeysI + adjColOff) x1 []
+      in V.fromList $ reverse keyList ++ reverse nonKeyList
+    visKeys = length $ V.toList $ V.takeWhile (\(d, _, _) -> d < nKeysI) layoutV
+    nVisCols = V.length layoutV
+    -- if there's leftover horizontal slack, give it to the cursor column
+    layoutV2
+      | nVisCols == 0 = layoutV
+      | slack <= 0    = layoutV
+      | otherwise = case curVisIdx of
+          Nothing  -> layoutV
+          Just cvi ->
+            let (_, _, cw) = layoutV V.! cvi
+                origIdx    = fromIntegral $ colIdxs V.! (fst3 $ layoutV V.! cvi)
+                base       = max 3 $ baseWidthsV V.! origIdx + fromIntegral widthAdj
+                expand     = min slack $ max 0 $ base - cw
+            in if expand <= 0 then layoutV
+               else V.imap (\i (d, xx, ww) ->
+                      if      i == cvi then (d, xx, ww + expand)
+                      else if i >  cvi then (d, xx + expand, ww)
+                      else                  (d, xx, ww)
+                    ) layoutV
+      where
+        (_, lastX, lastW) = layoutV V.! (nVisCols - 1)
+        slack = screenW - (lastX + lastW + 1)
+        curVisIdx = V.findIndex
+          (\(di, _, _) -> fromIntegral (colIdxs V.! di) == curCol) layoutV
+        fst3 (a, _, _) = a
 
-  -- compute x positions: key columns pinned left, then scrollable
-  let nKeysI = fromIntegral nKeys :: Int
-      nDispCols = V.length colIdxs
+-- | Heat scan: for each visible column, determine whether it's numeric,
+-- date-like, or categorical string, and compute the min/max needed for
+-- colorization. Skipped (empty) when heatMode is 0 or too many columns
+-- are visible (>256), matching the C renderer's upper bound.
+scanHeat
+  :: Word8
+  -> Vector (Int, Int, Int)      -- layoutV2
+  -> Vector Word64               -- colIdxs
+  -> Vector Char                 -- fmts
+  -> Vector ColType              -- colTypes
+  -> Vector (Vector Text)        -- texts
+  -> Vector (Vector Double)      -- heatDoubles
+  -> Vector HeatCol
+scanHeat heatMode layoutV2 colIdxs fmts colTypes texts heatDoubles
+  | heatMode == 0 || nVisCols > 256 = V.empty
+  | otherwise = V.generate nVisCols $ \c ->
+      let (dispIdx, _, _) = layoutV2 V.! c
+          origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
+          fmt = if origIdx < V.length fmts then fmts V.! origIdx else '\0'
+          typ = fromMaybe ColTypeOther $ colTypes V.!? origIdx
+          textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
+          hdCol = if origIdx < V.length heatDoubles then heatDoubles V.! origIdx else V.empty
+      in if isNumeric typ then
+           let (mn, mx) = V.foldl' (\(lo, hi) v ->
+                  if isNaN v then (lo, hi)
+                  else (min lo v, max hi v)) (1e308, -1e308) hdCol
+           in if mx > mn then HeatCol HeatNum mn mx False else heatColNone
+         else if isDateFmt fmt then
+           let (mn, mx) = V.foldl' (\(lo, hi) t ->
+                  if T.null t then (lo, hi)
+                  else let v = heatDateToNum t in (min lo v, max hi v))
+                  (1e308, -1e308) textCol
+           in if mx > mn then HeatCol HeatNum mn mx True else heatColNone
+         else -- string heat is active iff the column has 2+ distinct values
+           case V.find (not . T.null) textCol of
+             Nothing -> heatColNone
+             Just f
+               | V.any (\t -> not (T.null t) && t /= f) textCol
+                   -> HeatCol HeatStr 0 0 False
+               | otherwise -> heatColNone
+  where nVisCols = V.length layoutV2
 
-  -- pinned key width
-  let keyWidth = sum [ (allWidthsV V.! fromIntegral (colIdxs V.! c)) + 1
-                     | c <- [0 .. min nKeysI nDispCols - 1] ]
-
-  -- find cursor's display index relative to non-key columns
-  let curDispIdx0 = head $ [ c - nKeysI | c <- [nKeysI .. nDispCols - 1]
-                            , fromIntegral (colIdxs V.! c) == curCol ] ++ [0]
-
-  -- adjust colOff so cursor column is visible
-  let scrollW = max 1 (screenW - keyWidth)
-      adjColOff = adjustColOff (fromIntegral colOff0) curDispIdx0 scrollW
-      adjustColOff co curDI sw
-        | curDI < co = adjustColOff curDI curDI sw
-        | otherwise  =
-            let cumX = sum [ (allWidthsV V.! fromIntegral (colIdxs V.! (nKeysI + c'))) + 1
-                           | c' <- [co .. curDI], nKeysI + c' < nDispCols ]
-            in if cumX <= sw || co >= curDI then co
-               else adjustColOff (co + 1) curDI sw
-
-  let buildLayout =
-        let goKey c x acc
-              | c >= nKeysI || c >= nDispCols || x >= screenW = (acc, c, x)
-              | otherwise =
-                  let origIdx = fromIntegral $ colIdxs V.! c
-                      cw = min (allWidthsV V.! origIdx) $ screenW - x
-                  in goKey (c + 1) (x + cw + 1) ((c, x, cw) : acc)
-            (keyList, _visKeyCount, x1) = goKey 0 0 []
-            visKeys = length keyList
-            nonKeyStart = nKeysI + adjColOff
-            goNonKey c x acc
-              | c >= nDispCols || x >= screenW = acc
-              | otherwise =
-                  let origIdx = fromIntegral $ colIdxs V.! c
-                      cw = min (allWidthsV V.! origIdx) $ screenW - x
-                  in goNonKey (c + 1) (x + cw + 1) ((c, x, cw) : acc)
-            nonKeyList = goNonKey nonKeyStart x1 []
-        in (V.fromList $ reverse keyList ++ reverse nonKeyList, visKeys)
-      (layoutV, visKeys) = buildLayout
-
-  let nVisCols = V.length layoutV
-
-  -- expand cursor column to absorb trailing screen whitespace
-  let layoutV2 =
-        if nVisCols == 0 then layoutV
-        else
-          let (_, lastX, lastW) = layoutV V.! (nVisCols - 1)
-              usedW = lastX + lastW + 1
-              slack = screenW - usedW
-          in if slack <= 0 then layoutV
-             else
-               -- find cursor's position in visible columns
-               let curVisIdx = V.findIndex (\(di, _, _) ->
-                     fromIntegral (colIdxs V.! di) == curCol) layoutV
-               in case curVisIdx of
-                    Nothing -> layoutV
-                    Just cvi ->
-                      let (di, _, cw) = layoutV V.! cvi
-                          origIdx = fromIntegral $ colIdxs V.! di
-                          base = max 3 $ baseWidthsV V.! origIdx + fromIntegral widthAdj
-                          expand = min slack $ max 0 $ base - cw
-                      in if expand <= 0 then layoutV
-                         else V.imap (\i (d, xx, ww) ->
-                                if i == cvi then (d, xx, ww + expand)
-                                else if i > cvi then (d, xx + expand, ww)
-                                else (d, xx, ww)
-                              ) layoutV
-
-  -- ---- header + footer with separators and type chars ----
-  let yFoot = screenH - 3
-
+-- | Paint the header row (y=0) and footer row (y=screenH-3). Both rows
+-- carry column names, a trailing type char, and a key/non-key separator.
+-- Footer mirrors the header so scroll position is visible top and bottom.
+drawHeader
+  :: VSM.IOVector Cell -> Int -> Int -> Int
+  -> Vector (Int, Int, Int) -> Int
+  -> Vector Word64 -> Int
+  -> Vector Text -> Vector Char -> Vector ColType
+  -> IS.IntSet -> Word64
+  -> (Int -> Word32) -> (Int -> Word32)
+  -> IO ()
+drawHeader buf screenW screenH yFoot layoutV2 visKeys colIdxs nKeysI
+           names fmts colTypes colBits curCol stFg stBg =
   forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
     let (dispIdx, xPos, cw) = layoutV2 V.! c
         origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
-        name = fromMaybe "" $ names V.!? origIdx
+        name  = fromMaybe "" $ names V.!? origIdx
         isSel = IS.member origIdx colBits
         isCur = origIdx == fromIntegral curCol
         isGrp = dispIdx < nKeysI
-        si = if isCur then _STYLE_CURSOR
-             else if isSel then _STYLE_SEL_COL
-             else if isGrp then _STYLE_GROUP
-             else _STYLE_HEADER
+        si
+          | isCur = _STYLE_CURSOR
+          | isSel = _STYLE_SEL_COL
+          | isGrp = _STYLE_GROUP
+          | otherwise = _STYLE_HEADER
         fg = stFg si .|. _TB_BOLD .|. _TB_UNDERLINE
         bg = if isGrp then stBg _STYLE_GROUP else stBg si
-
-    -- leading space
-    setCell buf screenW screenH xPos 0 (fromIntegral $ fromEnum ' ') fg bg
-    setCell buf screenW screenH xPos yFoot (fromIntegral $ fromEnum ' ') fg bg
-
-    -- column name
-    let hw = max 0 (cw - 2)
-    when (hw > 0) $ do
-      printPadBuf buf screenW screenH (xPos + 1) 0 hw fg bg name False
-      printPadBuf buf screenW screenH (xPos + 1) yFoot hw fg bg name False
-
-    -- type char
-    let tc = if origIdx < V.length fmts
+        sp = fromIntegral $ fromEnum ' '
+        tc = fromIntegral . fromEnum $
+             if origIdx < V.length fmts
              then typeCharFmt (fmts V.! origIdx)
              else typeCharColType (fromMaybe ColTypeOther $ colTypes V.!? origIdx)
-    setCell buf screenW screenH (xPos + cw - 1) 0 (fromIntegral $ fromEnum tc) fg bg
-    setCell buf screenW screenH (xPos + cw - 1) yFoot (fromIntegral $ fromEnum tc) fg bg
+        hw = max 0 (cw - 2)
+    setCell buf screenW screenH xPos 0     sp fg bg
+    setCell buf screenW screenH xPos yFoot sp fg bg
+    when (hw > 0) $ do
+      printPadBuf buf screenW screenH (xPos + 1) 0     hw fg bg name False
+      printPadBuf buf screenW screenH (xPos + 1) yFoot hw fg bg name False
+    setCell buf screenW screenH (xPos + cw - 1) 0     tc fg bg
+    setCell buf screenW screenH (xPos + cw - 1) yFoot tc fg bg
+    drawSep buf screenW screenH 0     (xPos + cw) (c + 1 == visKeys) stFg stBg
+    drawSep buf screenW screenH yFoot (xPos + cw) (c + 1 == visKeys) stFg stBg
 
-    -- separator after column
-    let sX = xPos + cw
-    when (sX < screenW) $ do
-      let isKey = c + 1 == visKeys
-          sc = if isKey then 0x2551 else 0x2502  -- double or single vertical
-          sf = if isKey then stFg _STYLE_GROUP else _SEP_FG
-      setCell buf screenW screenH sX 0 sc sf (stBg _STYLE_DEFAULT)
-      setCell buf screenW screenH sX yFoot sc sf (stBg _STYLE_DEFAULT)
+-- | Paint one vertical separator cell at (x, y). `isKey=True` draws the
+-- heavier `║` between the pinned-key block and the scrollable section;
+-- otherwise a thin `│` between adjacent columns.
+drawSep
+  :: VSM.IOVector Cell -> Int -> Int -> Int -> Int -> Bool
+  -> (Int -> Word32) -> (Int -> Word32) -> IO ()
+drawSep buf screenW screenH y sX isKey stFg stBg =
+  when (sX < screenW) $
+    setCell buf screenW screenH sX y sc sf (stBg _STYLE_DEFAULT)
+  where
+    sc = if isKey then 0x2551 else 0x2502
+    sf = if isKey then stFg _STYLE_GROUP else _SEP_FG
 
-  -- ---- sparkline row (y=1) ----
-  when sparkOn $ do
-    let spFg = stFg _STYLE_HEADER
-        spBg = stBg _STYLE_DEFAULT
-    forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
-      let (dispIdx, xPos, cw) = layoutV2 V.! c
-          origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
-          sp = fromMaybe "" $ sparklines V.!? origIdx
-      printPadBuf buf screenW screenH xPos 1 cw spFg spBg sp False
-      let sX = xPos + cw
-      when (sX < screenW) $ do
-        let isKey = c + 1 == visKeys
-            sc = if isKey then 0x2551 else 0x2502
-            sf = if isKey then stFg _STYLE_GROUP else _SEP_FG
-        setCell buf screenW screenH sX 1 sc sf (stBg _STYLE_DEFAULT)
+-- | Paint the sparkline row at y=1. Always uses the header style so it
+-- reads as metadata, not data. Column separators follow the same
+-- key/non-key rule as the header above.
+drawSpark
+  :: VSM.IOVector Cell -> Int -> Int
+  -> Vector (Int, Int, Int) -> Int
+  -> Vector Word64 -> Vector Text
+  -> (Int -> Word32) -> (Int -> Word32)
+  -> IO ()
+drawSpark buf screenW screenH layoutV2 visKeys colIdxs sparklines stFg stBg = do
+  let spFg = stFg _STYLE_HEADER
+      spBg = stBg _STYLE_DEFAULT
+  forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
+    let (dispIdx, xPos, cw) = layoutV2 V.! c
+        origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
+        sp = fromMaybe "" $ sparklines V.!? origIdx
+    printPadBuf buf screenW screenH xPos 1 cw spFg spBg sp False
+    drawSep buf screenW screenH 1 (xPos + cw) (c + 1 == visKeys) stFg stBg
 
-  let dataY0 = if sparkOn then 2 else 1
-
-  -- ---- heat scan ----
-  let heatCols = if heatMode == 0 || nVisCols > 256 then V.empty
-        else V.generate nVisCols $ \c ->
-          let (dispIdx, _, _) = layoutV2 V.! c
-              origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
-              fmt = if origIdx < V.length fmts then fmts V.! origIdx else '\0'
-              typ = fromMaybe ColTypeOther $ colTypes V.!? origIdx
-              -- Get text column for this origIdx
-              textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
-              -- Get heat doubles column for this origIdx
-              hdCol = if origIdx < V.length heatDoubles then heatDoubles V.! origIdx else V.empty
-          in if isNumeric typ
-             then -- numeric heat: scan heatDoubles
-               let (mn, mx) = V.foldl' (\(lo, hi) v ->
-                      if isNaN v then (lo, hi)
-                      else (min lo v, max hi v)) (1e308, -1e308) hdCol
-               in if mx > mn then HeatCol HeatNum mn mx False
-                  else heatColNone
-             else if isDateFmt fmt
-             then -- date heat: extract digits from text
-               let (mn, mx) = V.foldl' (\(lo, hi) t ->
-                      if T.null t then (lo, hi)
-                      else let v = heatDateToNum t in (min lo v, max hi v))
-                      (1e308, -1e308) textCol
-               in if mx > mn then HeatCol HeatNum mn mx True
-                  else heatColNone
-             else -- string heat: check diversity
-               let first = V.find (not . T.null) textCol
-               in case first of
-                    Nothing -> heatColNone
-                    Just f  -> if V.any (\t -> not (T.null t) && t /= f) textCol
-                               then HeatCol HeatStr 0 0 False
-                               else heatColNone
-
-  -- ---- data rows ----
+-- | Paint every data row. Each cell picks its style from cursor/selection
+-- state, optionally overlaid by heat coloring, then draws leading space,
+-- content, trailing space, and separator — matching the C renderer's
+-- cell layout exactly.
+drawData
+  :: VSM.IOVector Cell -> Int -> Int -> Int -> Int
+  -> Word64 -> Word64 -> Word64
+  -> IS.IntSet -> IS.IntSet
+  -> Vector (Int, Int, Int) -> Int
+  -> Vector Word64 -> Int
+  -> Vector (Vector Text) -> Vector ColType
+  -> Word8 -> Vector HeatCol -> Vector (Vector Double)
+  -> (Int -> Word32) -> (Int -> Word32)
+  -> IO ()
+drawData buf screenW screenH dataY0 nRows r0 curRow curCol rowBits colBits
+         layoutV2 visKeys colIdxs nKeysI texts colTypes heatMode heatCols
+         heatDoubles stFg stBg =
   forM_ [0 .. nRows - 1] $ \ri -> do
-    let row = fromIntegral r0 + ri
-        y = ri + dataY0
+    let row      = fromIntegral r0 + ri
+        y        = ri + dataY0
         isSelRow = IS.member (fromIntegral row) rowBits
         isCurRow = fromIntegral row == curRow
-
     forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
       let (dispIdx, xPos, cw) = layoutV2 V.! c
           origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
-          isSel = IS.member origIdx colBits
+          isSel   = IS.member origIdx colBits
           isCurCol = origIdx == fromIntegral curCol
-          isGrp = dispIdx < nKeysI
-          si = getStyleIdx (isCurRow && isCurCol) isSelRow isSel isCurRow isCurCol
-          bgBase = if isGrp then stBg _STYLE_GROUP else stBg si
-          fgBase = stFg si
-
-      -- heat mode
-      let (fg, bg) =
-            if heatMode == 0 || V.null heatCols then (fgBase, bgBase)
-            else if si == _STYLE_CURSOR || si == _STYLE_SEL_ROW || si == _STYLE_SEL_CUR
-            then (fgBase, bgBase)
-            else case heatCols V.!? c of
-              Nothing -> (fgBase, bgBase)
-              Just hc ->
-                if hkKind hc == HeatNone then (fgBase, bgBase)
-                else if hkKind hc == HeatNum && not (testBit heatMode 0) then (fgBase, bgBase)
-                else if hkKind hc == HeatStr && not (testBit heatMode 1) then (fgBase, bgBase)
-                else
-                  let textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
-                      cellText = fromMaybe "" $ textCol V.!? ri
-                  in if hkKind hc == HeatNum
-                     then if hkDate hc
-                          then if T.null cellText then (fgBase, bgBase)
-                               else let v = heatDateToNum cellText
-                                        t = (v - hkMn hc) / (hkMx hc - hkMn hc)
-                                    in (_HEAT_FG, heatColor t)
-                          else -- numeric: use heatDoubles
-                            let hdCol = if origIdx < V.length heatDoubles
-                                        then heatDoubles V.! origIdx else V.empty
-                                val = fromMaybe (0/0) $ hdCol V.!? ri
-                            in if isNaN val then (fgBase, bgBase)
-                               else let t = (val - hkMn hc) / (hkMx hc - hkMn hc)
-                                    in (_HEAT_FG, heatColor t)
-                     else -- string hash
-                       if T.null cellText then (fgBase, bgBase)
-                       else (_HEAT_FG, heatColor $ heatStrHash01 cellText)
-
-      -- get cell text
-      let textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
+          isGrp   = dispIdx < nKeysI
+          si      = getStyleIdx (isCurRow && isCurCol) isSelRow isSel isCurRow isCurCol
+          bgBase  = if isGrp then stBg _STYLE_GROUP else stBg si
+          fgBase  = stFg si
+          (fg, bg) = pickHeat heatMode heatCols c si origIdx ri
+                              texts heatDoubles fgBase bgBase
+          textCol  = if origIdx < V.length texts then texts V.! origIdx else V.empty
           cellText = fromMaybe "" $ textCol V.!? ri
-          isNum = maybe False isNumeric $ colTypes V.!? origIdx
-
-      -- leading space
-      setCell buf screenW screenH xPos y (fromIntegral $ fromEnum ' ') fg bg
-      let contentW = max 0 (cw - 2)
+          isNum    = maybe False isNumeric $ colTypes V.!? origIdx
+          sp       = fromIntegral $ fromEnum ' '
+          contentW = max 0 (cw - 2)
+      setCell buf screenW screenH xPos y sp fg bg
       when (contentW > 0) $
         printPadBuf buf screenW screenH (xPos + 1) y contentW fg bg cellText isNum
-      -- trailing space
-      setCell buf screenW screenH (xPos + cw - 1) y (fromIntegral $ fromEnum ' ') fg bg
+      setCell buf screenW screenH (xPos + cw - 1) y sp fg bg
+      drawSep buf screenW screenH y (xPos + cw) (c + 1 == visKeys) stFg stBg
 
-      -- separator
-      let sX = xPos + cw
-      when (sX < screenW) $ do
-        let isKey = c + 1 == visKeys
-            sc = if isKey then 0x2551 else 0x2502
-            sf = if isKey then stFg _STYLE_GROUP else _SEP_FG
-        setCell buf screenW screenH sX y sc sf (stBg _STYLE_DEFAULT)
+-- | Decide whether to override a cell's (fg, bg) with a heat color.
+-- Cursor / selected rows keep their base style so the selection overlay
+-- stays readable on top of heat. Returns the base pair otherwise.
+pickHeat
+  :: Word8 -> Vector HeatCol -> Int -> Int -> Int -> Int
+  -> Vector (Vector Text) -> Vector (Vector Double)
+  -> Word32 -> Word32
+  -> (Word32, Word32)
+pickHeat heatMode heatCols c si origIdx ri texts heatDoubles fgBase bgBase
+  | heatMode == 0 || V.null heatCols           = base
+  | si == _STYLE_CURSOR
+    || si == _STYLE_SEL_ROW
+    || si == _STYLE_SEL_CUR                    = base
+  | otherwise = case heatCols V.!? c of
+      Nothing -> base
+      Just hc
+        | hkKind hc == HeatNone                        -> base
+        | hkKind hc == HeatNum && not (testBit heatMode 0) -> base
+        | hkKind hc == HeatStr && not (testBit heatMode 1) -> base
+        | hkKind hc == HeatNum && hkDate hc ->
+            if T.null cellText then base
+            else let v = heatDateToNum cellText
+                     t = (v - hkMn hc) / (hkMx hc - hkMn hc)
+                 in (_HEAT_FG, heatColor t)
+        | hkKind hc == HeatNum ->
+            let hdCol = if origIdx < V.length heatDoubles
+                        then heatDoubles V.! origIdx else V.empty
+                val   = fromMaybe (0/0) $ hdCol V.!? ri
+            in if isNaN val then base
+               else let t = (val - hkMn hc) / (hkMx hc - hkMn hc)
+                    in (_HEAT_FG, heatColor t)
+        | otherwise ->  -- HeatStr
+            if T.null cellText then base
+            else (_HEAT_FG, heatColor $ heatStrHash01 cellText)
+  where
+    base = (fgBase, bgBase)
+    textCol  = if origIdx < V.length texts then texts V.! origIdx else V.empty
+    cellText = fromMaybe "" $ textCol V.!? ri
 
-  -- ---- tooltip: full header name if truncated ----
+-- | Paint the truncated-header tooltip for the cursor column. When moveDir
+-- is positive (cursor moved right) the tip is anchored to the right edge
+-- of the column, otherwise to the left — so the reveal scrolls in the
+-- direction the user is navigating.
+drawTip
+  :: VSM.IOVector Cell -> Int -> Int
+  -> Vector (Int, Int, Int) -> Vector Word64
+  -> Word64 -> Int64 -> Vector Text
+  -> (Int -> Word32) -> (Int -> Word32)
+  -> IO ()
+drawTip buf screenW screenH layoutV2 colIdxs curCol moveDir names stFg stBg =
   forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
     let (dispIdx, xPos, cw) = layoutV2 V.! c
         origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
     when (origIdx == fromIntegral curCol) $ do
-      let name = fromMaybe "" $ names V.!? origIdx
+      let name    = fromMaybe "" $ names V.!? origIdx
           nameLen = T.length name
-          colW = cw - 2
+          colW    = cw - 2
       when (nameLen > colW) $ do
-        let fg = stFg _STYLE_CURSOR .|. _TB_BOLD .|. _TB_UNDERLINE
+        let fg    = stFg _STYLE_CURSOR .|. _TB_BOLD .|. _TB_UNDERLINE
+            cbg   = stBg _STYLE_CURSOR
             chars = T.unpack name
-        if moveDir > 0
-          then do
-            let endX = xPos + cw - 1
-                startX = max 0 $ endX - nameLen
-                tipW = endX - startX
-                skip = nameLen - tipW
-                visChars = drop skip chars
-            forM_ (zip [0..] (take tipW visChars)) $ \(i, ch) ->
-              setCell buf screenW screenH (startX + i) 0
-                (fromIntegral $ fromEnum ch) fg (stBg _STYLE_CURSOR)
-          else do
-            let maxW = screenW - xPos - 1
-                tipW = min nameLen maxW
-            forM_ (zip [0..] (take tipW chars)) $ \(i, ch) ->
-              setCell buf screenW screenH (xPos + 1 + i) 0
-                (fromIntegral $ fromEnum ch) fg (stBg _STYLE_CURSOR)
-
-  -- output widths (base widths, no widthAdj, 0 for hidden)
-  pure (V.map fromIntegral baseWidthsV)
+        if moveDir > 0 then
+          let endX    = xPos + cw - 1
+              startX  = max 0 $ endX - nameLen
+              tipW    = endX - startX
+              skip    = nameLen - tipW
+          in forM_ (zip [0..] (take tipW (drop skip chars))) $ \(i, ch) ->
+               setCell buf screenW screenH (startX + i) 0
+                 (fromIntegral $ fromEnum ch) fg cbg
+        else
+          let tipW = min nameLen $ screenW - xPos - 1
+          in forM_ (zip [0..] (take tipW chars)) $ \(i, ch) ->
+               setCell buf screenW screenH (xPos + 1 + i) 0
+                 (fromIntegral $ fromEnum ch) fg cbg
