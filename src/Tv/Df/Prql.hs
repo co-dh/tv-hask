@@ -26,6 +26,7 @@ module Tv.Df.Prql
     -- * Stage smart constructors
   , filter_
   , derive
+  , aggregate
   , groupAgg
   , sortAsc
   , sortDesc
@@ -206,9 +207,10 @@ data SortDir = Asc | Desc deriving (Eq, Show)
 data JoinKind = JInner | JLeft | JRight | JFull deriving (Eq, Show)
 
 data Stage
-  = StFilter   (Expr Bool)
-  | StDerive   [NamedExpr]
-  | StGroupAgg [Text] [NamedExpr]
+  = StFilter    (Expr Bool)
+  | StDerive    [NamedExpr]
+  | StAggregate [NamedExpr]   -- scalar aggregate (one row out, no group keys)
+  | StGroupAgg  [Text] [NamedExpr]
   | StSort     [(Text, SortDir)]
   | StTake     Int
   | StSelect   [Text]
@@ -234,6 +236,7 @@ renderStage :: Stage -> Text
 renderStage = \case
   StFilter e      -> "filter " <> renderExpr e
   StDerive bs     -> "derive {" <> commaMap renderBind bs <> "}"
+  StAggregate bs  -> "aggregate {" <> commaMap renderBind bs <> "}"
   StGroupAgg ks aggs ->
     "group {" <> commaMap quoteCol ks <> "} " <>
     "(aggregate {" <> commaMap renderBind aggs <> "})"
@@ -273,6 +276,11 @@ filter_ e q = q { qStages = qStages q ++ [StFilter e] }
 
 derive :: [NamedExpr] -> Query -> Query
 derive bs q = q { qStages = qStages q ++ [StDerive bs] }
+
+-- | Scalar aggregate: @aggregate { … }@ with no group keys. Produces
+-- a single output row with the listed bindings.
+aggregate :: [NamedExpr] -> Query -> Query
+aggregate bs q = q { qStages = qStages q ++ [StAggregate bs] }
 
 groupAgg :: [Text] -> [NamedExpr] -> Query -> Query
 groupAgg ks aggs q = q { qStages = qStages q ++ [StGroupAgg ks aggs] }
