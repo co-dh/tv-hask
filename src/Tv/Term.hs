@@ -784,7 +784,21 @@ layoutCols
 layoutCols screenW nCols texts inWidths colIdxs nKeysI hidBits curCol colOff0 widthAdj =
   (layoutV2, visKeys, baseWidthsV)
   where
-    nDispCols = V.length colIdxs
+    (baseWidthsV, allWidthsV) = colWidths nCols texts inWidths hidBits widthAdj
+    adjColOff = scrollOff screenW allWidthsV colIdxs nKeysI curCol colOff0
+    layoutV   = placeCols screenW allWidthsV colIdxs nKeysI adjColOff
+    layoutV2  = expandCur screenW layoutV baseWidthsV colIdxs curCol widthAdj
+    visKeys   = V.length $ V.takeWhile (\(d, _, _) -> d < nKeysI) layoutV
+
+-- | Phase 1 of layout: compute base (data-driven) and display (clamped +
+-- `widthAdj`) widths for every original column. Hidden columns collapse
+-- to 0 base / 3 display. `baseWidthsV` is returned so renderTable can
+-- cache it; `allWidthsV` feeds scroll/placement.
+colWidths
+  :: Int -> Vector (Vector Text) -> Vector Word64 -> IS.IntSet -> Int64
+  -> (Vector Int, Vector Int)
+colWidths nCols texts inWidths hidBits widthAdj = (baseWidthsV, allWidthsV)
+  where
     dataWidth c =
       let col = if c < V.length texts then texts V.! c else V.empty
       in V.foldl' (\acc t -> max acc (T.length t)) 1 col
@@ -801,7 +815,15 @@ layoutCols screenW nCols texts inWidths colIdxs nKeysI hidBits curCol colOff0 wi
                disp = min base _MAX_DISP_WIDTH
                w    = disp + fromIntegral widthAdj
            in max w 3
-    -- width of the pinned key prefix (keys are never scrolled)
+
+-- | Phase 2: scroll the non-key window right until the cursor column fits
+-- on screen. Key columns are pinned at the left and never scrolled.
+scrollOff
+  :: Int -> Vector Int -> Vector Word64 -> Int -> Word64 -> Word64 -> Int
+scrollOff screenW allWidthsV colIdxs nKeysI curCol colOff0 =
+  go (fromIntegral colOff0) curDispIdx0 scrollW
+  where
+    nDispCols = V.length colIdxs
     keyWidth = sum [ (allWidthsV V.! fromIntegral (colIdxs V.! c)) + 1
                    | c <- [0 .. min nKeysI nDispCols - 1] ]
     -- cursor's index among the non-key display slots; 0 if not found
@@ -809,57 +831,60 @@ layoutCols screenW nCols texts inWidths colIdxs nKeysI hidBits curCol colOff0 wi
       [ c - nKeysI | c <- [nKeysI .. nDispCols - 1]
                    , fromIntegral (colIdxs V.! c) == curCol ] ++ [0]
     scrollW = max 1 (screenW - keyWidth)
-    -- scroll the non-key window right until the cursor is on-screen
-    adjColOff = go (fromIntegral colOff0) curDispIdx0 scrollW
-      where
-        go co curDI sw
-          | curDI < co = go curDI curDI sw
-          | otherwise  =
-              let cumX = sum [ (allWidthsV V.! fromIntegral (colIdxs V.! (nKeysI + c'))) + 1
-                             | c' <- [co .. curDI], nKeysI + c' < nDispCols ]
-              in if cumX <= sw || co >= curDI then co else go (co + 1) curDI sw
-    -- initial layout: key prefix first, then non-key columns from adjColOff
-    layoutV =
-      let goKey c x acc
-            | c >= nKeysI || c >= nDispCols || x >= screenW = (acc, x)
-            | otherwise =
-                let origIdx = fromIntegral $ colIdxs V.! c
-                    cw = min (allWidthsV V.! origIdx) $ screenW - x
-                in goKey (c + 1) (x + cw + 1) ((c, x, cw) : acc)
-          (keyList, x1) = goKey 0 0 []
-          goNonKey c x acc
-            | c >= nDispCols || x >= screenW = acc
-            | otherwise =
-                let origIdx = fromIntegral $ colIdxs V.! c
-                    cw = min (allWidthsV V.! origIdx) $ screenW - x
-                in goNonKey (c + 1) (x + cw + 1) ((c, x, cw) : acc)
-          nonKeyList = goNonKey (nKeysI + adjColOff) x1 []
-      in V.fromList $ reverse keyList ++ reverse nonKeyList
-    visKeys = length $ V.toList $ V.takeWhile (\(d, _, _) -> d < nKeysI) layoutV
+    go co curDI sw
+      | curDI < co = go curDI curDI sw
+      | otherwise  =
+          let cumX = sum [ (allWidthsV V.! fromIntegral (colIdxs V.! (nKeysI + c'))) + 1
+                         | c' <- [co .. curDI], nKeysI + c' < nDispCols ]
+          in if cumX <= sw || co >= curDI then co else go (co + 1) curDI sw
+
+-- | Phase 3: place key prefix at x=0, then non-key columns starting from
+-- `adjColOff`. Returns `(displayIdx, xPos, width)` per visible column.
+placeCols
+  :: Int -> Vector Int -> Vector Word64 -> Int -> Int
+  -> Vector (Int, Int, Int)
+placeCols screenW allWidthsV colIdxs nKeysI adjColOff =
+  V.fromList $ reverse keyList ++ reverse nonKeyList
+  where
+    nDispCols = V.length colIdxs
+    -- shared column-placement step; terminates on display-index bound
+    place limit c x acc
+      | c >= limit || c >= nDispCols || x >= screenW = (acc, x)
+      | otherwise =
+          let origIdx = fromIntegral $ colIdxs V.! c
+              cw = min (allWidthsV V.! origIdx) $ screenW - x
+          in place limit (c + 1) (x + cw + 1) ((c, x, cw) : acc)
+    (keyList, x1)   = place nKeysI 0 0 []
+    (nonKeyList, _) = place nDispCols (nKeysI + adjColOff) x1 []
+
+-- | Phase 4: if there's trailing horizontal slack, grow the cursor column
+-- toward its base width and shift everything to its right by that delta.
+expandCur
+  :: Int -> Vector (Int, Int, Int) -> Vector Int -> Vector Word64
+  -> Word64 -> Int64 -> Vector (Int, Int, Int)
+expandCur screenW layoutV baseWidthsV colIdxs curCol widthAdj
+  | nVisCols == 0 = layoutV
+  | slack <= 0    = layoutV
+  | otherwise = case curVisIdx of
+      Nothing  -> layoutV
+      Just cvi ->
+        let (_, _, cw) = layoutV V.! cvi
+            origIdx    = fromIntegral $ colIdxs V.! (fst3 $ layoutV V.! cvi)
+            base       = max 3 $ baseWidthsV V.! origIdx + fromIntegral widthAdj
+            expand     = min slack $ max 0 $ base - cw
+        in if expand <= 0 then layoutV
+           else V.imap (\i (d, xx, ww) ->
+                  if      i == cvi then (d, xx, ww + expand)
+                  else if i >  cvi then (d, xx + expand, ww)
+                  else                  (d, xx, ww)
+                ) layoutV
+  where
     nVisCols = V.length layoutV
-    -- if there's leftover horizontal slack, give it to the cursor column
-    layoutV2
-      | nVisCols == 0 = layoutV
-      | slack <= 0    = layoutV
-      | otherwise = case curVisIdx of
-          Nothing  -> layoutV
-          Just cvi ->
-            let (_, _, cw) = layoutV V.! cvi
-                origIdx    = fromIntegral $ colIdxs V.! (fst3 $ layoutV V.! cvi)
-                base       = max 3 $ baseWidthsV V.! origIdx + fromIntegral widthAdj
-                expand     = min slack $ max 0 $ base - cw
-            in if expand <= 0 then layoutV
-               else V.imap (\i (d, xx, ww) ->
-                      if      i == cvi then (d, xx, ww + expand)
-                      else if i >  cvi then (d, xx + expand, ww)
-                      else                  (d, xx, ww)
-                    ) layoutV
-      where
-        (_, lastX, lastW) = layoutV V.! (nVisCols - 1)
-        slack = screenW - (lastX + lastW + 1)
-        curVisIdx = V.findIndex
-          (\(di, _, _) -> fromIntegral (colIdxs V.! di) == curCol) layoutV
-        fst3 (a, _, _) = a
+    (_, lastX, lastW) = layoutV V.! (nVisCols - 1)
+    slack = screenW - (lastX + lastW + 1)
+    curVisIdx = V.findIndex
+      (\(di, _, _) -> fromIntegral (colIdxs V.! di) == curCol) layoutV
+    fst3 (a, _, _) = a
 
 -- | Heat scan: for each visible column, determine whether it's numeric,
 -- date-like, or categorical string, and compute the min/max needed for

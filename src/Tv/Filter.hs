@@ -164,47 +164,55 @@ searchPoll tbl_ curCol vals sRef preview = do
 -- fzf focus -> shell script -> socat -> socket -> poll -> findRow -> re-render.
 rowSearchLive
   :: Bool -> ViewStack AdbcTable -> (ViewStack AdbcTable -> IO ()) -> IO (ViewStack AdbcTable)
-rowSearchLive tm s preview = withDistinct s $ \curCol curName vals -> do
+rowSearchLive tm s preview = withDistinct s $ \curCol curName vals ->
   if tm
-    then do
-      let result = fromMaybe "" (vals V.!? 0)
-      if T.null result
-        then pure s
-        else do
-          mri <- Table.findRow (tbl s) curCol result 0 True
-          case mri of
-            Nothing     -> pure s
-            Just rowIdx -> pure (moveRowTo s rowIdx (Just (curCol, result)))
-    else do
-      -- setup: socat script for fzf execute-silent, indexed items for shell-safe args
-      sockPath <- Socket.getPath
-      script   <- Tmp.tmpPath "search-preview.sh"
-      TIO.writeFile script
-        (T.pack ("#!/bin/sh\necho \"search.preview $1\" | socat - UNIX-CONNECT:" ++ sockPath))
-      let items = V.imap (\i v -> T.pack (show i) <> "\t" <> v) vals
-      sRef <- newIORef s
-      (cache, poll) <- searchPoll (tbl s) curCol vals sRef preview
-      -- run fzf with live preview polling
-      let opts = V.fromList
-            [ "--prompt=/" <> curName <> ": "
-            , "--with-nth=2..", "--delimiter=\t"
-            , T.pack ("--bind=focus:execute-silent(sh " ++ script ++ " {1})")
-            ]
-      out <- Fzf.fzfCore False opts (T.intercalate "\n" (V.toList items)) poll
-      if T.null out
-        then readIORef sRef  -- cancelled: keep preview position
-        else do
-          -- apply final selection (reuse cache from preview)
-          let parts = T.splitOn "\t" out
-              hd = case parts of { (x:_) -> x; _ -> "" }
-          case readMaybe (T.unpack hd) :: Maybe Int of
-            Nothing  -> pure s
-            Just idx -> do
-              let result = fromMaybe "" (vals V.!? idx)
-              mri <- cachedFindRow cache (tbl s) curCol idx result
-              case mri of
-                Nothing     -> pure s
-                Just rowIdx -> pure (moveRowTo s rowIdx (Just (curCol, result)))
+    then let result = fromMaybe "" (vals V.!? 0)
+         in if T.null result then pure s
+            else applyRow s curCol result (Table.findRow (tbl s) curCol result 0 True)
+    else runLive s preview curCol curName vals
+
+-- | Apply a row-search match: run `findM`, move cursor on hit, keep `s`
+-- on miss. Shared by test-mode (uncached) and live-mode finalize (cached).
+applyRow
+  :: ViewStack AdbcTable -> Int -> Text -> IO (Maybe Int)
+  -> IO (ViewStack AdbcTable)
+applyRow s curCol result findM = do
+  mri <- findM
+  pure $ case mri of
+    Nothing     -> s
+    Just rowIdx -> moveRowTo s rowIdx (Just (curCol, result))
+
+-- | Real-fzf path: wire up the socat preview script, run fzf with a live
+-- focus-poll loop, then finalize on the user's pick (or keep the live
+-- preview position on cancel).
+runLive
+  :: ViewStack AdbcTable -> (ViewStack AdbcTable -> IO ())
+  -> Int -> Text -> Vector Text
+  -> IO (ViewStack AdbcTable)
+runLive s preview curCol curName vals = do
+  -- setup: socat script for fzf execute-silent, indexed items for shell-safe args
+  sockPath <- Socket.getPath
+  script   <- Tmp.tmpPath "search-preview.sh"
+  TIO.writeFile script
+    (T.pack ("#!/bin/sh\necho \"search.preview $1\" | socat - UNIX-CONNECT:" ++ sockPath))
+  let items = V.imap (\i v -> T.pack (show i) <> "\t" <> v) vals
+  sRef <- newIORef s
+  (cache, poll) <- searchPoll (tbl s) curCol vals sRef preview
+  let opts = V.fromList
+        [ "--prompt=/" <> curName <> ": "
+        , "--with-nth=2..", "--delimiter=\t"
+        , T.pack ("--bind=focus:execute-silent(sh " ++ script ++ " {1})")
+        ]
+  out <- Fzf.fzfCore False opts (T.intercalate "\n" (V.toList items)) poll
+  if T.null out
+    then readIORef sRef  -- cancelled: keep preview position
+    else case readMaybe (T.unpack (pickIdx out)) :: Maybe Int of
+      Nothing  -> pure s
+      Just idx ->
+        let result = fromMaybe "" (vals V.!? idx)
+        in applyRow s curCol result (cachedFindRow cache (tbl s) curCol idx result)
+  where
+    pickIdx out = case T.splitOn "\t" out of { (x:_) -> x; _ -> "" }
 
 -- | search in direction: fwd=true (n), bwd=false (N)
 searchDir :: ViewStack AdbcTable -> Bool -> IO (ViewStack AdbcTable)
