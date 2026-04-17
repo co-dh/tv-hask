@@ -346,155 +346,174 @@ renderFrame pngPath intervals idx err_ = do
               intervals))
     TIO.putStrLn ("\r                                  " <> hi "," <> "/" <> hi "." <> ":" <> bar)
 
--- | Run plot with interactive controls (in-place re-rendering)
+-- | Sniff xType from a sample string when DuckDB reports ColTypeStr.
+-- Checks common date/time/timestamp patterns in the first non-null row.
+sniffXType :: AdbcTable -> Int -> ColType -> IO ColType
+sniffXType _ _ xType0 | xType0 /= ColTypeStr = pure xType0
+sniffXType tbl xIdx xType0 = do
+  cols <- Ops.getCols tbl (V.singleton xIdx) 0 1
+  let v = T.strip $ fromMaybe "" $ cols V.!? 0 >>= (V.!? 0)
+      cs = T.unpack v
+      at_ i = getD cs i ' '
+  pure $
+    if length cs >= 19 && at_ 4 == '-' && at_ 10 == ' ' then ColTypeTimestamp
+    else if length cs >= 10 && at_ 4 == '-' && at_ 7 == '-' then ColTypeDate
+    else if length cs >= 8 && at_ 2 == ':' && at_ 5 == ':' then ColTypeTime
+    else xType0
+
+-- | Single-column plot (histogram/density): write the y-column to TSV, render once,
+-- then block on keys until the user quits.
+runSingle :: ViewStack AdbcTable -> PlotKind -> IO (Maybe (ViewStack AdbcTable))
+runSingle s kind = do
+  let n = View.nav (View.cur s)
+      yIdx = Nav.colIdx n
+      yName = Nav.colName n
+      yType = Nav.colType n
+  if not (isNumeric yType)
+    then err s $ toString kind <> " needs a numeric column"
+    else do
+      Term.shutdown
+      altEnter
+      datPath <- Tmp.tmpPath "plot.dat"
+      pngPath <- Tmp.tmpPath "plot.png"
+      let nr = min (Table.nRows (Nav.tbl n)) maxPoints
+      cols <- Ops.getCols (Nav.tbl n) (V.singleton yIdx) 0 nr
+      let vals = fromMaybe V.empty $ cols V.!? 0
+      TIO.writeFile datPath $
+        yName <> "\n"
+          <> T.intercalate "\n" (V.toList (V.filter (not . T.null) vals))
+          <> "\n"
+      let script = rScript (T.pack datPath) (T.pack pngPath) kind "" yName
+                     False "" False "" ColTypeOther
+                     (plotTitle kind "" yName False "")
+      err_ <- renderR script
+      clearScreen
+      case err_ of
+        Nothing  -> showPng pngPath
+        Just msg -> TIO.putStrLn msg
+      setRaw
+      let loop = do
+            key <- readKey
+            if handleKey key == KeyQuit then pure () else loop
+      loop
+      exitPlot
+      pure (Just s)
+
+-- | Interactive render/key loop for group plots. Re-exports + re-renders on
+-- interval changes, skips re-render on unknown keys, exits on 'q'.
+plotLoop
+  :: AdbcTable -> PlotKind -> Text -> Text -> Maybe Text -> Bool
+  -> Int -> String -> Vector Interval -> Text -> IO ()
+plotLoop tbl kind xName yName exportCat xIsTime baseStep pngPath intervals script = do
+  idxRef        <- newIORef (0 :: Int)
+  continueRef   <- newIORef True
+  needRenderRef <- newIORef True
+  let maxIdx = V.length intervals - 1
+      loop = do
+        cont <- readIORef continueRef
+        when cont $ do
+          nr_ <- readIORef needRenderRef
+          when nr_ $ do
+            idx <- readIORef idxRef
+            let iv = fromMaybe intervalDefault $ intervals V.!? idx
+            Log.write "plot" $
+              "kind=" <> T.pack (show kind)
+                <> " interval=" <> label iv
+                <> " truncLen=" <> T.pack (show (truncLen iv))
+                <> " idx=" <> T.pack (show idx)
+            -- export may fail (type mismatch, empty filter) — surface as overlay, not crash
+            exportResult <- do
+              r <- try $
+                exportWithHeaders tbl xName yName exportCat xIsTime baseStep (truncLen iv)
+              case r :: Either SomeException (Maybe (Vector Text)) of
+                Right (Just _)  -> pure (Nothing :: Maybe Text)
+                Right Nothing   -> pure (Just "export returned no data")
+                Left e          -> pure $ Just $ T.pack (show e)
+            err_ <- case exportResult of
+              Just msg -> pure (Just msg)
+              Nothing  -> renderR script
+            renderFrame pngPath intervals idx err_
+          key <- readKey
+          case handleKey key of
+            KeyQuit       -> writeIORef continueRef False
+            KeyInterval d -> do
+              idx <- readIORef idxRef
+              let newIdx
+                    | d > 0     = min (idx + 1) maxIdx
+                    | idx > 0   = idx - 1
+                    | otherwise = 0
+              writeIORef needRenderRef (newIdx /= idx)
+              writeIORef idxRef newIdx
+            KeyNoop       -> writeIORef needRenderRef False
+          loop
+  loop
+
+-- | Group plot (line/bar/scatter/box/…): needs >=1 group column for x-axis.
+-- Validates args, sniffs xType if string, then enters the interactive loop.
+runGroup :: ViewStack AdbcTable -> PlotKind -> IO (Maybe (ViewStack AdbcTable))
+runGroup s kind = do
+  let n = View.nav (View.cur s)
+      names = Nav.colNames n
+  if V.null (Nav.grp n)
+    then err s "group a column first (!)"
+    else do
+      let xName = fromMaybe "" $ Nav.grp n V.!? 0
+      case Nav.idxOf names xName of
+        Nothing -> err s $ "x-axis column '" <> xName <> "' not found"
+        Just xIdx -> do
+          let hasFacet = V.length (Nav.grp n) > 2
+              facetName = if hasFacet then fromMaybe "" $ Nav.grp n V.!? 1 else ""
+              catName
+                | hasFacet  = fromMaybe "" $ Nav.grp n V.!? 2
+                | otherwise = fromMaybe "" $ Nav.grp n V.!? 1
+              exportCat
+                | V.length (Nav.grp n) > 2 = Just facetName
+                | V.length (Nav.grp n) > 1 = Just catName
+                | otherwise                = Nothing
+              yName = Nav.colName n
+              yType = Nav.colType n
+          if V.elem yName (Nav.grp n)
+            then err s "move cursor to a non-group column"
+          else if not (isNumeric yType)
+            then err s $ "y-axis '" <> yName <> "' must be numeric (got "
+                         <> toString yType <> ")"
+          else do
+            let tbl = Nav.tbl n
+                nr = Table.totalRows tbl
+                xType0 = Ops.colType tbl xIdx
+            xType <- sniffXType tbl xIdx xType0
+            Log.write "plot" $
+              "xType=" <> toString xType
+                <> " (raw=" <> toString xType0 <> ")"
+                <> " xIdx=" <> T.pack (show xIdx)
+                <> " xName=" <> xName
+            let xIsTime = isTime xType
+                needsDownsample = nr > maxPoints
+                baseStep = if needsDownsample then nr `div` maxPoints else 1
+                hasCat = V.length (Nav.grp n) > 1 && not hasFacet
+                intervals = if needsDownsample
+                              then getIntervals xType baseStep
+                              else V.singleton (Interval "all" 1)
+            -- enter plot mode: shutdown TUI, alternate screen, raw mode
+            Term.shutdown
+            altEnter
+            setRaw
+            datPath <- Tmp.tmpPath "plot.dat"
+            pngPath <- Tmp.tmpPath "plot.png"
+            let script = rScript (T.pack datPath) (T.pack pngPath) kind
+                           xName yName hasCat catName hasFacet facetName xType
+                           (plotTitle kind xName yName hasCat catName)
+            plotLoop tbl kind xName yName exportCat xIsTime baseStep
+              pngPath intervals script
+            exitPlot
+            pure (Just s)
+
+-- | Run plot with interactive controls (in-place re-rendering).
+-- Dispatches to 'runSingle' for histogram/density, 'runGroup' for others.
 run :: ViewStack AdbcTable -> PlotKind -> IO (Maybe (ViewStack AdbcTable))
 run s kind = do
   Log.write "plot" ("run entered, kind=" <> T.pack (show kind))
-  let n = View.nav (View.cur s)
-      names = Nav.colNames n
-  if singleCol kind
-    then do
-      let yIdx = Nav.colIdx n
-          yName = Nav.colName n
-          yType = Nav.colType n
-      if not (isNumeric yType)
-        then err s $ toString kind <> " needs a numeric column"
-        else do
-          Term.shutdown
-          altEnter
-          datPath <- Tmp.tmpPath "plot.dat"
-          pngPath <- Tmp.tmpPath "plot.png"
-          let nr = min (Table.nRows (Nav.tbl n)) maxPoints
-          cols <- Ops.getCols (Nav.tbl n) (V.singleton yIdx) 0 nr
-          let vals = fromMaybe V.empty $ cols V.!? 0
-          TIO.writeFile datPath
-            (yName <> "\n"
-              <> T.intercalate "\n" (V.toList (V.filter (not . T.null) vals))
-              <> "\n")
-          let script = rScript (T.pack datPath) (T.pack pngPath) kind "" yName
-                         False "" False "" ColTypeOther
-                         (plotTitle kind "" yName False "")
-          err_ <- renderR script
-          clearScreen
-          case err_ of
-            Nothing  -> showPng pngPath
-            Just msg -> TIO.putStrLn msg
-          setRaw
-          let loop = do
-                key <- readKey
-                if handleKey key == KeyQuit then pure () else loop
-          loop
-          exitPlot
-          pure (Just s)
-    else do
-      -- all other plots need at least 1 group column
-      if V.null (Nav.grp n)
-        then err s "group a column first (!)"
-        else do
-          let xName = fromMaybe "" $ Nav.grp n V.!? 0
-          case Nav.idxOf names xName of
-            Nothing -> err s $ "x-axis column '" <> xName <> "' not found"
-            Just xIdx -> do
-              let hasFacet = V.length (Nav.grp n) > 2
-                  facetName = if hasFacet then fromMaybe "" $ Nav.grp n V.!? 1 else ""
-                  catName = if hasFacet
-                              then fromMaybe "" $ Nav.grp n V.!? 2
-                              else fromMaybe "" $ Nav.grp n V.!? 1
-                  exportCatName_
-                    | V.length (Nav.grp n) > 2 = Just facetName
-                    | V.length (Nav.grp n) > 1 = Just catName
-                    | otherwise                = Nothing
-                  yName = Nav.colName n
-              if V.elem yName (Nav.grp n)
-                then err s "move cursor to a non-group column"
-                else do
-                  let yType = Nav.colType n
-                  if not (isNumeric yType)
-                    then err s $ "y-axis '" <> yName <> "' must be numeric (got "
-                                 <> toString yType <> ")"
-                    else do
-                      let nr = Table.totalRows (Nav.tbl n)
-                          xType0 = Ops.colType (Nav.tbl n) xIdx
-                      xType <-
-                        if xType0 /= ColTypeStr then pure xType0
-                        else do
-                          cols <- Ops.getCols (Nav.tbl n) (V.singleton xIdx) 0 1
-                          let v = T.strip $ fromMaybe "" $ cols V.!? 0 >>= (V.!? 0)
-                              cs = T.unpack v
-                              at_ i = getD cs i ' '
-                          if length cs >= 19 && at_ 4 == '-' && at_ 10 == ' '
-                            then pure ColTypeTimestamp
-                          else if length cs >= 10 && at_ 4 == '-' && at_ 7 == '-'
-                            then pure ColTypeDate
-                          else if length cs >= 8 && at_ 2 == ':' && at_ 5 == ':'
-                            then pure ColTypeTime
-                          else pure xType0
-                      Log.write "plot"
-                        ("xType=" <> toString xType
-                          <> " (raw=" <> toString xType0 <> ")"
-                          <> " xIdx=" <> T.pack (show xIdx)
-                          <> " xName=" <> xName)
-                      let xIsTime = isTime xType
-                          needsDownsample = nr > maxPoints
-                          baseStep = if nr > maxPoints then nr `div` maxPoints else 1
-                          hasCat = V.length (Nav.grp n) > 1 && not hasFacet
-                          intervals = if needsDownsample
-                                        then getIntervals xType baseStep
-                                        else V.singleton (Interval "all" 1)
-                          maxIdx = V.length intervals - 1
-                      -- enter plot mode: shutdown TUI, alternate screen, raw mode
-                      Term.shutdown
-                      altEnter
-                      setRaw
-                      datPath <- Tmp.tmpPath "plot.dat"
-                      pngPath <- Tmp.tmpPath "plot.png"
-                      let script = rScript (T.pack datPath) (T.pack pngPath) kind
-                                     xName yName hasCat catName hasFacet facetName
-                                     xType
-                                     (plotTitle kind xName yName hasCat catName)
-                      idxRef       <- newIORef (0 :: Int)
-                      continueRef  <- newIORef True
-                      needRenderRef <- newIORef True
-                      let loop = do
-                            cont <- readIORef continueRef
-                            when cont $ do
-                              nr_ <- readIORef needRenderRef
-                              when nr_ $ do
-                                idx <- readIORef idxRef
-                                let iv = fromMaybe intervalDefault $ intervals V.!? idx
-                                Log.write "plot"
-                                  ("kind=" <> T.pack (show kind)
-                                    <> " interval=" <> label iv
-                                    <> " truncLen=" <> T.pack (show (truncLen iv))
-                                    <> " idx=" <> T.pack (show idx))
-                                exportResult <- do
-                                  r <- try $
-                                    exportWithHeaders (Nav.tbl n) xName yName
-                                      exportCatName_ xIsTime baseStep (truncLen iv)
-                                  case r :: Either SomeException (Maybe (Vector Text)) of
-                                    Right (Just _cats) -> pure (Nothing :: Maybe Text)
-                                    Right Nothing      -> pure (Just "export returned no data")
-                                    Left e             -> pure $ Just $ T.pack (show e)
-                                err_ <- case exportResult of
-                                  Just msg -> pure (Just msg)
-                                  Nothing  -> renderR script
-                                renderFrame pngPath intervals idx err_
-                              key <- readKey
-                              case handleKey key of
-                                KeyQuit -> writeIORef continueRef False
-                                KeyInterval d -> do
-                                  idx <- readIORef idxRef
-                                  let newIdx =
-                                        if d > 0
-                                          then min (idx + 1) maxIdx
-                                          else if idx > 0 then idx - 1 else 0
-                                  writeIORef needRenderRef (newIdx /= idx)
-                                  writeIORef idxRef newIdx
-                                KeyNoop -> writeIORef needRenderRef False
-                              loop
-                      loop
-                      exitPlot
-                      pure (Just s)
+  if singleCol kind then runSingle s kind else runGroup s kind
 
 -- Silence unused-import warnings for altLeave/setSane (Lean defines them
 -- as private helpers but the current run path uses exitPlot instead).
