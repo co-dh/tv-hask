@@ -11,7 +11,7 @@ module Tv.Ops
   , splitRun
     -- * Derive (exported for tests/hints)
   , samples
-  , typeStr
+  , toString
   , colHints
   , parseDerive
   , deriveRunWith
@@ -35,7 +35,7 @@ import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
-import Tv.Types (Cmd(..), ColType(..), Op(..), typeStr, escSql)
+import Tv.Types (Cmd(..), ColType(..), Op(..), toString, escSql)
 import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Table (AdbcTable, tmpName, stripSemi)
 import qualified Tv.Data.DuckDB.Table as Table
@@ -138,7 +138,7 @@ colHints names types =
       line i n =
         let pad = T.replicate (maxLen - T.length n) " "
             ty  = fromMaybe ColTypeOther (types V.!? i)
-        in n <> pad <> " : " <> typeStr ty
+        in n <> pad <> " : " <> toString ty
   in T.intercalate "\n" (V.toList (V.imap line names))
 
 parseDerive :: Text -> Maybe (Text, Text)

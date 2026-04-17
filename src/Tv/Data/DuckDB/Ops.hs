@@ -39,7 +39,6 @@ import qualified Data.Vector as V
 import Data.Word (Word64)
 
 import qualified Tv.Data.DuckDB.Conn as Conn
-import Tv.Data.DuckDB.Prql (Query(..))
 import qualified Tv.Data.DuckDB.Prql as Prql
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable(..))

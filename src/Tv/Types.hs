@@ -16,7 +16,6 @@ module Tv.Types
   , ColCache(..)
     -- * Column types
   , ColType(..)
-  , typeStr
   , ofString
   , isNumeric
   , isTime
@@ -35,13 +34,10 @@ module Tv.Types
   , colText
     -- * Agg
   , Agg(..)
-  , aggShort
-  , parseAgg
     -- * Op
   , Op(..)
     -- * ViewKind
   , ViewKind(..)
-  , vkindStr
     -- * PlotKind / ExportFmt
   , PlotKind(..)
   , ExportFmt(..)
@@ -62,11 +58,15 @@ import Data.Word (Word8, Word32)
 import Optics.TH (makeFieldLabelsNoPrefix)
 import Data.Hashable (Hashable(..))
 import Data.Maybe (fromMaybe, listToMaybe)
--- | StrEnum: simple enums with string round-trip.
+-- | Enum-ish types that have a conventional string name. Defaults let
+-- types with payloads (e.g. 'ViewKind') provide only 'toString'; plain
+-- enums override 'all' and 'ofStringQ' for roundtrip.
 class StrEnum a where
   toString  :: a -> Text
   all       :: Vector a
+  all = V.empty
   ofStringQ :: Text -> Maybe a
+  ofStringQ _ = Nothing
 
 -- | Join array elements with separator (avoids .toList |> sep.intercalate)
 joinWith :: Vector Text -> Text -> Text
@@ -85,27 +85,34 @@ data ColType
   | ColTypeOther
   deriving (Eq, Show)
 
-typeStr :: ColType -> Text
-typeStr ColTypeInt       = "int"
-typeStr ColTypeFloat     = "float"
-typeStr ColTypeDecimal   = "decimal"
-typeStr ColTypeStr       = "str"
-typeStr ColTypeDate      = "date"
-typeStr ColTypeTime      = "time"
-typeStr ColTypeTimestamp = "timestamp"
-typeStr ColTypeBool      = "bool"
-typeStr ColTypeOther     = "other"
+instance StrEnum ColType where
+  toString ColTypeInt       = "int"
+  toString ColTypeFloat     = "float"
+  toString ColTypeDecimal   = "decimal"
+  toString ColTypeStr       = "str"
+  toString ColTypeDate      = "date"
+  toString ColTypeTime      = "time"
+  toString ColTypeTimestamp = "timestamp"
+  toString ColTypeBool      = "bool"
+  toString ColTypeOther     = "other"
+  all = V.fromList
+    [ ColTypeInt, ColTypeFloat, ColTypeDecimal, ColTypeStr
+    , ColTypeDate, ColTypeTime, ColTypeTimestamp, ColTypeBool, ColTypeOther
+    ]
+  ofStringQ "int"       = Just ColTypeInt
+  ofStringQ "float"     = Just ColTypeFloat
+  ofStringQ "decimal"   = Just ColTypeDecimal
+  ofStringQ "str"       = Just ColTypeStr
+  ofStringQ "date"      = Just ColTypeDate
+  ofStringQ "time"      = Just ColTypeTime
+  ofStringQ "timestamp" = Just ColTypeTimestamp
+  ofStringQ "bool"      = Just ColTypeBool
+  ofStringQ _           = Nothing
 
+-- | Total parse: falls back to 'ColTypeOther' on any unknown string.
+-- Used at FFI boundaries where input is user/DB-supplied and must not fail.
 ofString :: Text -> ColType
-ofString "int"       = ColTypeInt
-ofString "float"     = ColTypeFloat
-ofString "decimal"   = ColTypeDecimal
-ofString "str"       = ColTypeStr
-ofString "date"      = ColTypeDate
-ofString "time"      = ColTypeTime
-ofString "timestamp" = ColTypeTimestamp
-ofString "bool"      = ColTypeBool
-ofString _           = ColTypeOther
+ofString = fromMaybe ColTypeOther . ofStringQ
 
 isNumeric :: ColType -> Bool
 isNumeric ColTypeInt     = True
@@ -268,11 +275,6 @@ instance StrEnum Agg where
   ofStringQ "dist"   = Just AggDist
   ofStringQ _        = Nothing
 
-aggShort :: Agg -> Text
-aggShort a = toString a
-
-parseAgg :: Text -> Maybe Agg
-parseAgg = ofStringQ
 
 -- | Table operation (single pipeline stage)
 data Op
@@ -293,12 +295,14 @@ data ViewKind
   | VkFld Text Int                                  -- folder browser: path + find depth
   deriving (Eq, Show)
 
--- | Context string for config lookup (shared by Fzf and App dispatch)
-vkindStr :: ViewKind -> Text
-vkindStr (VkFreqV _ _) = "freqV"
-vkindStr VkColMeta     = "colMeta"
-vkindStr (VkFld _ _)   = "fld"
-vkindStr VkTbl         = "tbl"
+-- | Context string for config lookup (shared by Fzf and App dispatch).
+-- ViewKind carries payloads (cols/depth), so 'ofStringQ' and 'all' aren't
+-- meaningful here — only 'toString' is used, by 'CmdConfig.keyLookup'.
+instance StrEnum ViewKind where
+  toString (VkFreqV _ _) = "freqV"
+  toString VkColMeta     = "colMeta"
+  toString (VkFld _ _)   = "fld"
+  toString VkTbl         = "tbl"
 
 -- | Plot types and export formats
 data PlotKind

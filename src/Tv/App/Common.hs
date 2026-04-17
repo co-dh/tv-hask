@@ -58,7 +58,7 @@ import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import qualified Tv.Transpose as Transpose
-import Tv.Types (Cmd(..), ColCache(..), ViewKind(..), cachedPath, cachedCol, cachedVal, vkindStr, noEffect)
+import Tv.Types (Cmd(..), ColCache(..), ViewKind(..), cachedPath, cachedCol, cachedVal, toString, noEffect)
 import qualified Tv.UI.Info as UIInfo
 import qualified Tv.UI.Preview as UIPreview
 import qualified Tv.Log as Log
@@ -216,7 +216,7 @@ initHandlers =
 -- Misc --
 
 ctxStr :: ViewKind -> Text
-ctxStr = vkindStr
+ctxStr = toString
 
 dispatchHandler :: AppState -> Text -> IO AppState
 dispatchHandler a cmdStr = do

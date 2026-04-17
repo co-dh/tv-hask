@@ -33,7 +33,7 @@ import Text.Read (readMaybe)
 
 import Tv.CmdConfig (CmdCache)
 import qualified Tv.CmdConfig as CmdConfig
-import Tv.Types (ViewKind, vkindStr, headD)
+import Tv.Types (ViewKind, toString, headD)
 import qualified Tv.Term as Term
 
 -- | Core fzf: testMode returns first line, else spawn fzf
@@ -116,7 +116,7 @@ fzfIdx tm opts items = do
 -- | Build aligned menu items: "handler | ctx | key | label" with padding
 flatItems :: CmdCache -> ViewKind -> Vector Text
 flatItems cc vk =
-  let items = CmdConfig.menuItems cc (vkindStr vk)
+  let items = CmdConfig.menuItems cc (toString vk)
       (maxH, maxX, maxK) = V.foldl
         (\(mh, mx, mk) (h, x, k, _) ->
            (max mh (T.length h), max mx (T.length x), max mk (T.length k)))
