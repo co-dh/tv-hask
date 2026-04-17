@@ -76,6 +76,7 @@ library
     Tv.UI.Preview
     Tv.Df
     Tv.Df.Freq
+    Tv.Df.Parse
     Tv.Log
     Tv.Remote
     Tv.Socket
