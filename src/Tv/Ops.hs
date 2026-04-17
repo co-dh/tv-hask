@@ -15,6 +15,7 @@ module Tv.Ops
   , colHints
   , parseDerive
   , deriveRunWith
+  , deriveRunWithDf
   , deriveRun
     -- * Join
   , JoinOp(..)
@@ -35,7 +36,7 @@ import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
-import Tv.Types (Cmd(..), ColType(..), Op(..), toString, escSql)
+import Tv.Types (Backend (..), Cmd(..), ColType(..), Op(..), toString, escSql)
 import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Table (AdbcTable, tmpName, stripSemi)
 import qualified Tv.Data.DuckDB.Table as Table
@@ -46,6 +47,12 @@ import qualified Tv.Nav as Nav
 import Tv.View (ViewStack)
 import qualified Tv.View as View
 import qualified Tv.Log as Log
+
+import qualified Tv.Df as Df
+import qualified Tv.Df.Bridge as Bridge
+import qualified Tv.Df.Elab as DfElab
+import qualified Tv.Df.Parse as DfParse
+import DataFrame.Internal.Expression (UExpr (..))
 
 -- ============================================================================
 -- Shared: pipe PRQL op → requery → rebuild → push
@@ -156,6 +163,29 @@ deriveRunWith s input = case parseDerive input of
   Just (name, expr) ->
     pipeAndPush s (OpDerive (V.singleton (name, expr)))
       ("=" <> name) (\t -> V.length (Table.colNames t) - 1)
+
+-- | Derive via the dataframe backend. Parses @name = expr@, elaborates
+-- the RHS against the table's schema, runs 'Df.derive', and bridges
+-- the result back. Falls back to the DuckDB path on any parse or
+-- elaboration failure (same rationale as filterWithDf).
+deriveRunWithDf :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
+deriveRunWithDf s input = case DfParse.parseBinding input of
+  Left _ -> deriveRunWith s input
+  Right (name, pe) -> do
+    src <- Bridge.fromAdbc (View.tbl s)
+    case DfElab.elabDerive src name pe of
+      Left _ -> deriveRunWith s input
+      Right (_, UExpr e) -> do
+        let result = Df.derive name e src
+        mAdbc <- Bridge.toAdbc result
+        case mAdbc of
+          Nothing   -> pure s
+          Just tbl' ->
+            case View.rebuild (View.cur s) tbl'
+                   (V.length (Table.colNames tbl') - 1)
+                   (Nav.grp (View.nav (View.cur s))) 0 of
+              Nothing -> pure s
+              Just v  -> pure (View.push s (v & #disp .~ ("=" <> name)))
 
 deriveRun :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 deriveRun tm s = do
@@ -286,7 +316,11 @@ commands = V.fromList
   [ hdl (mkEntry CmdColSplit "ca" ":" "Split column by delimiter" False "")
         (\a _ arg -> stackIO a (if T.null arg then splitRun (testMode a) (stk a) else splitRunWith (stk a) arg))
   , hdl (mkEntry CmdColDerive "a" "=" "Derive new column (name = expr)" False "")
-        (\a _ arg -> stackIO a (if T.null arg then deriveRun (testMode a) (stk a) else deriveRunWith (stk a) arg))
+        (\a _ arg -> stackIO a $
+           let dw = case backend a of
+                     BackendDuck -> deriveRunWith
+                     BackendDf   -> deriveRunWithDf
+           in if T.null arg then deriveRun (testMode a) (stk a) else dw (stk a) arg)
   , hdl (mkEntry CmdTblJoin "Sa" "J" "Join tables" False "")
         (\a _ arg -> stackIO a (do
           ms <- joinRunWith (stk a) arg

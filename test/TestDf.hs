@@ -168,6 +168,25 @@ test_df_freq_enter_pops = do
   assertBool "exits freq view"        (not (contains tab "[freq"))
   assertBool "back on source tab"     (contains tab "multi_freq")
 
+-- | Same filter that @test_filter_arg@ runs on the DuckDB path, now
+-- under the dataframe backend. Same 528-row count proves the elaborator
+-- produced an equivalent predicate.
+test_df_filter_arg :: Assertion
+test_df_filter_arg = do
+  out <- runDf "\\Exchange == 'P'<ret>" "data/nyse10k.parquet"
+  let (tab, status) = footer out
+  assertBool "filter tab marker"  (contains tab "\\Exchange")
+  assertBool "528 rows after df filter" (contains status "r0/528")
+
+-- | Same derive the DuckDB path runs in @test_derive_arg@: compute
+-- @double = x * 2@ on numeric.csv and land the cursor on the new col.
+test_df_derive_arg :: Assertion
+test_df_derive_arg = do
+  out <- runDf "=double = x * 2<ret>lll" "data/numeric.csv"
+  let (tab, status) = footer out
+  assertBool "derive tab marker" (contains tab "=double")
+  assertBool "cursor at new col" (contains status "c3/4")
+
 tests :: TestTree
 tests = testGroup "TestDf"
   [ testCase "readcsv_smoke"            test_readcsv_smoke
@@ -186,4 +205,6 @@ tests = testGroup "TestDf"
   , testCase "df_freq_columns"          test_df_freq_columns
   , testCase "df_freq_composite"        test_df_freq_composite
   , testCase "df_freq_enter_pops"       test_df_freq_enter_pops
+  , testCase "df_filter_arg"            test_df_filter_arg
+  , testCase "df_derive_arg"            test_df_derive_arg
   ]
