@@ -44,10 +44,11 @@ module Tv.Data.DuckDB.Table
   , plotExport
   , plotDatPath
   , fromTsv
+  , fromCsv
   , fromJson
+  , copyToParquet
   , fileWith
     -- second AdbcTable block in Lean
-  , freqTable
   , filter
   , distinct
   , findRow
@@ -61,7 +62,6 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import qualified Data.Text.Read as TR
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
@@ -447,8 +447,33 @@ fromIngest content label reader
 fromTsv :: Text -> IO (Maybe AdbcTable)
 fromTsv content = fromIngest content "tsv" "read_csv_auto"
 
+-- | CSV variant used by the dataframe bridge (Tv.Df.Bridge.toAdbc).
+-- Matches fromTsv's shape: writes content to a tmp file, ingests via
+-- read_csv_auto into a TEMP TABLE, returns an AdbcTable backed by it.
+fromCsv :: Text -> IO (Maybe AdbcTable)
+fromCsv content = fromIngest content "csv" "read_csv_auto"
+
 fromJson :: Text -> IO (Maybe AdbcTable)
 fromJson content = fromIngest content "json" "read_json_auto"
+
+-- | COPY an AdbcTable's result set to a Parquet file. Raises userError
+-- on failure (no silent fallback). Used by Tv.Df.Bridge.fromAdbc to
+-- hand off AdbcTable rows to the dataframe engine with type fidelity
+-- (CSV would widen numerics to strings and back).
+copyToParquet :: AdbcTable -> FilePath -> IO ()
+copyToParquet t path = do
+  let baseR = Prql.queryRender (query t)
+  sqlM <- Prql.compile baseR
+  case sqlM of
+    Nothing  -> ioError (userError "copyToParquet: failed to compile PRQL")
+    Just sql -> do
+      let sql'    = stripSemi sql
+          copySql = "COPY (" <> sql' <> ") TO '" <> T.pack path
+                 <> "' (FORMAT PARQUET)"
+      r <- try (Conn.query copySql) :: IO (Either SomeException Conn.QueryResult)
+      case r of
+        Left e -> ioError (userError ("copyToParquet failed: " <> show e))
+        Right _ -> pure ()
 
 -- | Create from file path with optional setup SQL and reader function.
 --   reader: DuckDB reader function (e.g. "read_arrow"). Empty = auto-detect via backtick.
@@ -475,39 +500,6 @@ fileWith path_ reader duckdbExt = do
 -- ----------------------------------------------------------------------------
 
 -- | Create freq table entirely in SQL (no round-trip to Lean)
-freqTable :: AdbcTable -> Vector Text -> IO (Maybe (AdbcTable, Int))
-freqTable t cNames
-  | V.null cNames = pure Nothing
-  | otherwise = do
-      let cols = T.intercalate ", " (V.toList (V.map Prql.quote cNames))
-          baseR = Prql.queryRender (query t)
-      -- total distinct groups
-      totalGroups <- do
-        m <- prqlQuery (baseR <> " | cntdist {" <> cols <> "}")
-        case m of
-          Nothing -> pure 0
-          Just qr_ -> do
-            v <- Conn.cellStr qr_ 0 0
-            pure $ parseIntOr0 v
-      -- freq table: uses freq PRQL function which computes Cnt, Pct, Bar in SQL
-      tblName <- tmpName "freq"
-      let prql = baseR <> " | freq {" <> cols <> "} | take 1000"
-      Log.write "prql" prql
-      mSql <- Prql.compile prql
-      case mSql of
-        Nothing -> pure Nothing
-        Just sql -> do
-          let sql' = stripSemi sql
-          _ <- Conn.query ("CREATE TEMP TABLE " <> tblName <> " AS " <> sql')
-          m <- requery (Prql.defaultQuery { Prql.base = "from " <> tblName }) 0
-          case m of
-            Just t' -> pure (Just (t', totalGroups))
-            Nothing -> pure Nothing
-  where
-    parseIntOr0 s = case TR.decimal s of
-      Right (n, _) -> n
-      Left _       -> 0
-
 -- | Filter: requery with filter (queries new filtered count)
 filter :: AdbcTable -> Text -> IO (Maybe AdbcTable)
 filter t expr = do
