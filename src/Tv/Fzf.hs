@@ -36,6 +36,57 @@ import qualified Tv.CmdConfig as CmdConfig
 import Tv.Types (ViewKind, toString, headD)
 import qualified Tv.Term as Term
 
+-- | Build fzf argv: popup geometry fitted to content, prepended to caller opts.
+-- inTmux picks between --tmux=bottom popup and inline --height; width floors 50
+-- (typing room), caps 80; height caps 15. visLines strips the hidden index field
+-- when --with-nth=2 is set so measurement matches what fzf actually renders.
+popupArgs :: Bool -> Vector Text -> Text -> Vector Text
+popupArgs inTmux opts input =
+  let lines_ = filter (not . T.null) (T.splitOn "\n" input)
+      popupH = min (length lines_ + 2) 15
+      visLines = if V.any (T.isPrefixOf "--with-nth=2") opts
+        then map (\l -> case T.splitOn "\t" l of
+                          _ : rest -> T.intercalate "\t" rest
+                          _        -> l) lines_
+        else lines_
+      maxW = foldl' (\m l -> max m (T.length l)) 0 visLines
+      popupW = min (max (maxW + 4) 50) 80
+      baseArgs = if inTmux
+        then V.fromList
+               [ T.pack ("--tmux=bottom," ++ show popupW ++ "," ++ show popupH)
+               , "--layout=reverse", "--exact", "+i" ]
+        else V.fromList
+               [ T.pack ("--height=" ++ show (popupH + 1))
+               , "--layout=reverse", "--exact", "+i" ]
+  in baseArgs V.++ opts
+
+-- | Spawn fzf with argv, pipe input to stdin, poll while it runs, return stdout.
+-- Background-reads stdout to avoid pipe stall, runs `poll` every 30 ms so the
+-- caller can service its socket/re-render while the popup has focus.
+runFzf :: [String] -> Text -> IO () -> IO Text
+runFzf argList input poll = do
+  (Just hin, Just hout, _, ph) <- createProcess
+    (proc "fzf" argList) { std_in = CreatePipe, std_out = CreatePipe }
+  TIO.hPutStr hin input
+  hFlush hin
+  hClose hin
+  done <- newIORef False
+  outRef <- newIORef (T.empty :: Text)
+  _ <- forkIO $ do
+    out <- TIO.hGetContents hout
+    writeIORef outRef out
+    writeIORef done True
+  let loop = do
+        d <- readIORef done
+        unless d $ do
+          poll
+          threadDelay 30000  -- 30 ms
+          loop
+  loop
+  out <- readIORef outRef
+  _ <- waitForProcess ph
+  pure out
+
 -- | Core fzf: testMode returns first line, else spawn fzf
 -- Uses --tmux popup if in tmux (keeps table visible), otherwise compact at bottom
 -- poll: optional callback invoked in loop while fzf runs (tmux only, for live socket dispatch)
@@ -45,46 +96,9 @@ fzfCore tm opts input poll = do
     then pure (headD "" (filter (not . T.null) (T.splitOn "\n" input)))
     else do
       inTmux <- fmap (maybe False (const True)) $ lookupEnv "TMUX"
-      let lines_ = filter (not . T.null) (T.splitOn "\n" input)
-          popupH = min (length lines_ + 2) 15  -- fit content, cap at 15
-          -- measure visible width: strip hidden prefix when --with-nth hides leading fields
-          visLines = if V.any (T.isPrefixOf "--with-nth=2") opts
-            then map (\l -> case T.splitOn "\t" l of
-                              _ : rest -> T.intercalate "\t" rest
-                              _        -> l) lines_
-            else lines_
-          maxW = foldl' (\m l -> max m (T.length l)) 0 visLines
-          popupW = min (max (maxW + 4) 50) 80  -- fit content, floor 50 for typing
-          baseArgs = if inTmux
-            then V.fromList
-                   [ T.pack ("--tmux=bottom," ++ show popupW ++ "," ++ show popupH)
-                   , "--layout=reverse", "--exact", "+i" ]
-            else V.fromList
-                   [ T.pack ("--height=" ++ show (popupH + 1))
-                   , "--layout=reverse", "--exact", "+i" ]
+      let argList = map T.unpack (V.toList (popupArgs inTmux opts input))
       unless inTmux Term.shutdown
-      let argList = map T.unpack (V.toList (baseArgs V.++ opts))
-      (Just hin, Just hout, _, ph) <- createProcess
-        (proc "fzf" argList) { std_in = CreatePipe, std_out = CreatePipe }
-      TIO.hPutStr hin input
-      hFlush hin
-      hClose hin
-      -- Read stdout in background; poll socket while fzf popup is open
-      done <- newIORef False
-      outRef <- newIORef (T.empty :: Text)
-      _ <- forkIO $ do
-        out <- TIO.hGetContents hout
-        writeIORef outRef out
-        writeIORef done True
-      let loop = do
-            d <- readIORef done
-            unless d $ do
-              poll
-              threadDelay 30000  -- 30 ms
-              loop
-      loop
-      out <- readIORef outRef
-      _ <- waitForProcess ph
+      out <- runFzf argList input poll
       -- Clear after re-init: fzf inline renders below termbox area, leaving residue
       unless inTmux $ do
         _ <- Term.init
