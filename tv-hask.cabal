@@ -21,7 +21,7 @@ common shared
     MultiParamTypeClasses
     UndecidableInstances
     TypeFamilies
-  ghc-options: -Wall -Wno-unused-imports -O2
+  ghc-options: -Wall -O2
 
 library
   import: shared

@@ -5,8 +5,8 @@
 --   Tests shell out to the cabal-built `tv` binary and check screen output.
 module Test (tests) where
 
-import Control.Exception (try, SomeException, catch)
-import Data.Char (isDigit, chr)
+import Control.Exception (try, SomeException)
+import Data.Char (isDigit)
 import Data.IORef (IORef, newIORef)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -20,7 +20,6 @@ import System.Exit (ExitCode (..))
 import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcessWithExitCode, proc, createProcess, CreateProcess(..), StdStream(..), waitForProcess, ProcessHandle, terminateProcess)
 import System.IO (Handle, hGetContents)
-import Control.Concurrent (threadDelay)
 
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertBool, Assertion, assertFailure)
@@ -57,10 +56,6 @@ spawnTv args = do
   (_, mOut, _, ph) <- createProcess (proc tvHaskBin args)
     { std_in = NoStream, std_out = CreatePipe, std_err = CreatePipe }
   pure (ph, mOut)
-
--- | Sleep in milliseconds (Lean IO.sleep semantics)
-sleepMs :: Int -> IO ()
-sleepMs ms = threadDelay (ms * 1000)
 
 -- ============================================================================
 -- === Sort tests (CSV) ===
@@ -674,9 +669,7 @@ test_heat_mode = do
   if not socat
     then pure ()
     else do
-      tmpdir <- fromMaybe "/tmp" <$> lookupEnv "TMPDIR"
       (ph, mOut) <- spawnTv ["data/basic.csv", "-c", "<wait><wait><wait>"]
-      let pidStr = "" -- we don't have the pid; best-effort skip
       -- Without access to child pid we can't find the socket reliably; fall back to skip.
       terminateProcess ph
       _ <- waitForProcess ph
@@ -1067,34 +1060,8 @@ test_gz_txt_fallback = do
   assert (not (contains status "r0/")) "gz txt fallback: not a table view"
 
 -- ============================================================================
--- === External-tool tests (osquery, HF, S3, FTP, pg) - auto-skip via hasCmd ===
+-- === External-tool tests (osquery, HF, S3, FTP) - auto-skip via hasCmd ===
 -- ============================================================================
-
-hasPgTest :: IO Bool
-hasPgTest = do
-  (ec, _, _) <- readProcessWithExitCode "pg_isready"
-                  ["-h", "/tmp/claude-1000", "-p", "5433"] ""
-  pure (ec == ExitSuccess)
-
-test_pg_list :: Assertion
-test_pg_list = do
-  ok <- hasPgTest
-  if not ok
-    then pure ()
-    else do
-      out <- run "" "pg://host=/tmp/claude-1000 port=5433 dbname=pagila"
-      assert (contains out "film") "pg:// lists 'film' table"
-      assert (contains out "actor") "pg:// lists 'actor' table"
-
-test_pg_enter :: Assertion
-test_pg_enter = do
-  ok <- hasPgTest
-  if not ok
-    then pure ()
-    else do
-      out <- run "jjjjj<ret>" "pg://host=/tmp/claude-1000 port=5433 dbname=pagila"
-      let (_, status) = footer out
-      assert (contains status "r0/") "Enter on pg table opens it with rows"
 
 hasOsquery :: IO Bool
 hasOsquery = hasCmd "osqueryi"

@@ -36,9 +36,9 @@ import Text.Read (readMaybe)
 import Optics.Core ((%), (&), (.~), (^.), over)
 import Tv.App.Types (AppState(..), HandlerFn, onStk, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
-import Tv.Nav (NavState, rowCur, colCur, finClamp)
+import Tv.Nav (rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
-import Tv.Types (Cmd(..), ColType, isNumeric, typeStr, filterPrql, filterPrompt, headD)
+import Tv.Types (Cmd(..), isNumeric, toString, filterPrql, filterPrompt, headD)
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
@@ -222,7 +222,7 @@ searchDir s fwd = do
 rowFilter :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 rowFilter tm s = withDistinct s $ \_curCol curName vals -> do
   let typ    = Ops.colType (tbl s) _curCol
-      typStr = typeStr typ
+      typStr = toString typ
       header = filterPrompt curName typStr
   mr <- Fzf.fzf tm
           (V.fromList ["--print-query", "--header=" <> header, "--prompt=filter > "])

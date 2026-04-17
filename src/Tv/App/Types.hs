@@ -37,9 +37,7 @@ import Optics.Core (Lens', (%), (&), (.~), (^.), over, set)
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
 import Tv.CmdConfig (CmdInfo(..), CmdCache)
-import qualified Tv.CmdConfig as CmdConfig
 import qualified Tv.Data.DuckDB.Table as AdbcTable
 import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Nav as Nav
@@ -56,7 +54,6 @@ import Tv.Types
   , Effect(..)
   , ViewKind(..)
   , joinWith
-  , noEffect
   )
 import qualified Tv.Log as Log
 import Tv.View (View(..), ViewStack(..))

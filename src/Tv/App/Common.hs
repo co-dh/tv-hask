@@ -50,7 +50,6 @@ import Optics.Core ((&), (.~), (%~))
 import qualified Tv.Meta as Meta
 import qualified Tv.Nav as Nav
 import qualified Tv.Plot as Plot
-import qualified Tv.Render as Render
 import Tv.Render (tabLine)
 import qualified Tv.Session as Session
 import qualified Tv.Sparkline as Sparkline
@@ -59,14 +58,14 @@ import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import qualified Tv.Transpose as Transpose
-import Tv.Types (Cmd(..), ColCache(..), ViewKind(..), cachedPath, cachedCol, cachedVal, vkindStr, noEffect)
+import Tv.Types (Cmd(..), ColCache(..), ViewKind(..), cachedPath, cachedCol, cachedVal, toString, noEffect)
 import qualified Tv.UI.Info as UIInfo
 import qualified Tv.UI.Preview as UIPreview
 import qualified Tv.Log as Log
 import qualified Tv.Socket as Socket
 import qualified Tv.Data.DuckDB.Ops as Ops
 import Tv.Data.DuckDB.Table (AdbcTable)
-import Tv.View (View(..), ViewStack(..))
+import Tv.View (ViewStack(..))
 import qualified Tv.View as View
 
 -- Dispatch --
@@ -217,7 +216,7 @@ initHandlers =
 -- Misc --
 
 ctxStr :: ViewKind -> Text
-ctxStr = vkindStr
+ctxStr = toString
 
 dispatchHandler :: AppState -> Text -> IO AppState
 dispatchHandler a cmdStr = do

@@ -21,16 +21,14 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word64)
 
 import Optics.Core ((&), (.~))
 
 import qualified Tv.Log as Log
 import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk, resetVS)
-import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Prql as Prql
-import Tv.Data.DuckDB.Prql (Query (..))
 import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Table as Table
 import qualified Tv.Nav as Nav

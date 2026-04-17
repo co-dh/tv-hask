@@ -31,7 +31,6 @@ module Tv.Data.DuckDB.Ops
 
 import Prelude hiding (filter)
 import Control.Exception (SomeException, try)
-import Data.Int (Int64)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -41,11 +40,10 @@ import Data.Word (Word64)
 
 import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Prql as Prql
-import Tv.Data.DuckDB.Prql (Query(..))
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable(..))
 import Data.List (nub)
-import Tv.Types (ColType(..), colText, escSql, keepCols)
+import Tv.Types (ColType(..), colText, escSql)
 import qualified Tv.Log as Log
 
 -- ----------------------------------------------------------------------------
