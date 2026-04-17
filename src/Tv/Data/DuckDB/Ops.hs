@@ -21,6 +21,12 @@ module Tv.Data.DuckDB.Ops
   , quoteId
   , columnComment
   , enrichComments
+    -- * SQL builders / runners (shared by Ops/Transpose/StatusAgg)
+  , maxSplitParts
+  , transposeSql
+  , colAggSql
+  , createTempView
+  , createTempTable
   ) where
 
 import Prelude hiding (filter)
@@ -40,7 +46,7 @@ import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable(..))
 import Data.List (nub)
 import Tv.Types (ColType(..), colText, escSql, keepCols)
-import qualified Tv.Util as Log
+import qualified Tv.Log as Log
 
 -- ----------------------------------------------------------------------------
 -- Table operations (were typeclass methods, now plain functions)
@@ -222,6 +228,72 @@ columnComment path_ colName =
           if fromIntegral n == (0 :: Int)
             then pure ""
             else Conn.cellStr qr_ 0 0
+
+-- ----------------------------------------------------------------------------
+-- SQL builders / runners
+-- (Feature modules compose SQL via these; keeps raw SQL strings in Data.DuckDB.)
+-- ----------------------------------------------------------------------------
+
+-- | Run "CREATE OR REPLACE TEMP VIEW <name> AS <sql>".
+createTempView :: Text -> Text -> IO ()
+createTempView name sql = do
+  _ <- Conn.query ("CREATE OR REPLACE TEMP VIEW " <> name <> " AS " <> sql)
+  pure ()
+
+-- | Run "CREATE OR REPLACE TEMP TABLE <name> AS <sql>".
+createTempTable :: Text -> Text -> IO ()
+createTempTable name sql = do
+  _ <- Conn.query ("CREATE OR REPLACE TEMP TABLE " <> name <> " AS " <> sql)
+  pure ()
+
+-- | Max parts from splitting @col@ by regex @ep@ in query over @baseSql@.
+--   Clamped to 20. Returns 0 on SQL error.
+maxSplitParts :: Text -> Text -> Text -> IO Int
+maxSplitParts baseSql col ep = do
+  let countSql =
+        "SELECT COALESCE(max(array_length(string_split_regex("
+        <> quoteId col <> ", '" <> ep <> "'))), 0) FROM (" <> baseSql <> ")"
+  r <- try $ do
+    qr_ <- Conn.query countSql
+    v <- Conn.cellInt qr_ 0 0
+    pure (min (fromIntegral v :: Int) 20)
+  case r of
+    Left (e :: SomeException) -> do
+      Log.write "split" ("maxParts: " <> T.pack (show e))
+      pure 0
+    Right n -> pure n
+
+-- | Build UNPIVOT+PIVOT SQL to transpose a table: rows become columns, up to @n@.
+--   All cells cast to VARCHAR (types collapse). Original column order preserved
+--   via an explicit CASE mapping in ORDER BY (GROUP BY alone would reorder).
+transposeSql :: Text -> Vector Text -> Int -> Text
+transposeSql baseSql colNames n =
+  let castCols = T.intercalate ", "
+        (V.toList (V.map (\c -> "CAST(" <> quoteId c <> " AS VARCHAR) AS " <> quoteId c) colNames))
+      unpivotCols = T.intercalate ", " (V.toList (V.map quoteId colNames))
+      pivotCols = T.intercalate ", "
+        [ "MAX(CASE WHEN _rn = " <> T.pack (show i) <> " THEN _val END) AS \"row_" <> T.pack (show i) <> "\""
+        | i <- [0 .. n - 1]
+        ]
+      ordCases = T.intercalate " "
+        [ "WHEN \"column\" = '" <> escSql (fromMaybe "" (colNames V.!? i)) <> "' THEN " <> T.pack (show i)
+        | i <- [0 .. V.length colNames - 1]
+        ]
+  in "WITH __src AS (SELECT * FROM (" <> baseSql <> ") LIMIT " <> T.pack (show n) <> "), "
+  <> "__num AS (SELECT ROW_NUMBER() OVER () - 1 AS _rn, " <> castCols <> " FROM __src), "
+  <> "__unp AS (UNPIVOT __num ON " <> unpivotCols <> " INTO NAME \"column\" VALUE _val) "
+  <> "SELECT \"column\", " <> pivotCols <> " FROM __unp GROUP BY \"column\" "
+  <> "ORDER BY CASE " <> ordCases <> " END"
+
+-- | Per-column aggregation SQL for the status bar: returns one row with SUM/AVG/COUNT
+--   (numeric) or COUNT (other). Caller wraps @baseSql@ via @SELECT ... FROM (<baseSql>)@.
+colAggSql :: Text -> Text -> Bool -> Text
+colAggSql baseSql colName isNum =
+  let q = quoteId colName
+      aggs = if isNum
+        then "CAST(SUM(" <> q <> ") AS DOUBLE) AS s, CAST(AVG(" <> q <> ") AS DOUBLE) AS a, COUNT(" <> q <> ") AS c"
+        else "COUNT(" <> q <> ") AS c"
+  in "SELECT " <> aggs <> " FROM (" <> baseSql <> ")"
 
 -- | Enrich meta table with column descriptions from DuckDB metadata.
 --   Returns True if enriched.

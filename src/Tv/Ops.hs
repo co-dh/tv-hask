@@ -41,13 +41,13 @@ import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Table (AdbcTable, tmpName, stripSemi)
 import qualified Tv.Data.DuckDB.Table as Table
-import Tv.Data.DuckDB.Ops (quoteId)
+import Tv.Data.DuckDB.Ops (maxSplitParts, createTempView, createTempTable)
 import Tv.Fzf (fzfIdx)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
 import Tv.View (ViewStack)
 import qualified Tv.View as View
-import qualified Tv.Util as Log
+import qualified Tv.Log as Log
 
 -- ============================================================================
 -- Shared: pipe PRQL op → requery → rebuild → push
@@ -74,27 +74,6 @@ pipeAndPush s op label colIdxFn = do
 splitSuggestions :: Text
 splitSuggestions = "-\n,\n;\n:\n|\n\\s+\n_\n/"
 
--- | Max split parts via SQL aggregate on string_split_regex
-splitMaxParts :: Prql.Query -> Text -> Text -> IO Int
-splitMaxParts q col ep = do
-  mBase <- Prql.compile (Prql.queryRender q)
-  case mBase of
-    Nothing -> pure 0
-    Just baseSql -> do
-      let sql = stripSemi baseSql
-          countSql =
-            "SELECT COALESCE(max(array_length(string_split_regex("
-            <> quoteId col <> ", '" <> ep <> "'))), 0) FROM (" <> sql <> ")"
-      r <- try $ do
-        qr_ <- Conn.query countSql
-        v <- Conn.cellInt qr_ 0 0
-        pure (min (fromIntegral v :: Int) 20)
-      case r of
-        Left (e :: SomeException) -> do
-          Log.write "split" ("maxParts: " <> T.pack (show e))
-          pure 0
-        Right n -> pure n
-
 splitBindings :: Text -> Text -> Text -> Int -> Vector (Text, Text)
 splitBindings col ep qc n =
   V.generate n $ \i ->
@@ -110,10 +89,14 @@ splitRunWith s pat = do
   if Nav.colType nav /= ColTypeStr || T.null pat then pure s
   else do
     let ep = escSql pat
-    n <- splitMaxParts (Table.query (View.tbl s)) curName ep
-    if n <= 1 then pure s
-    else pipeAndPush s (OpDerive (splitBindings curName ep (Prql.quote curName) n))
-           (":" <> curName) (\t -> V.length (Table.colNames t) - n)
+    mBase <- Prql.compile (Prql.queryRender (Table.query (View.tbl s)))
+    case mBase of
+      Nothing -> pure s
+      Just baseSql -> do
+        n <- maxSplitParts (stripSemi baseSql) curName ep
+        if n <= 1 then pure s
+        else pipeAndPush s (OpDerive (splitBindings curName ep (Prql.quote curName) n))
+               (":" <> curName) (\t -> V.length (Table.colNames t) - n)
 
 splitRun :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 splitRun tm s = do
@@ -241,8 +224,8 @@ execJoin s op leftGrp = do
     Just parent -> do
       (lName, lSql) <- prepareView (Nav.tbl (View.nav parent)) "l"
       (rName, rSql) <- prepareView (View.tbl s) "r"
-      _ <- Conn.query ("CREATE OR REPLACE TEMP VIEW " <> lName <> " AS " <> lSql)
-      _ <- Conn.query ("CREATE OR REPLACE TEMP VIEW " <> rName <> " AS " <> rSql)
+      createTempView lName lSql
+      createTempView rName rSql
       let prql = prqlStr lName rName leftGrp op
       Log.write "prql" prql
       tblName <- tmpName "join"
@@ -250,7 +233,7 @@ execJoin s op leftGrp = do
       case mSql of
         Nothing  -> ioError (userError ("join PRQL compile failed: " <> T.unpack prql))
         Just sql -> do
-          _ <- Conn.query ("CREATE OR REPLACE TEMP TABLE " <> tblName <> " AS " <> stripSemi sql)
+          createTempTable tblName (stripSemi sql)
           mAdbc <- Table.fromTmp tblName
           case mAdbc of
             Nothing -> pure Nothing

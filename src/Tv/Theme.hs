@@ -41,9 +41,10 @@ import Optics.Core ((&), (.~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 import qualified Tv.Fzf as Fzf
+import qualified Tv.Socket as Socket
 import qualified Tv.Term as Term
-import qualified Tv.Util as Log
-import qualified Tv.Util as Socket  -- Util hosts socket helpers (getPath/pollCmd) and tmpPath
+import qualified Tv.Tmp as Tmp
+import Tv.Types (headD, getD)
 
 -- | Theme state
 data State = State
@@ -179,11 +180,11 @@ load :: Text -> Text -> IO (Vector Word32)
 load theme variant = do
   content <- loadCsv
   let lines_   = filter (not . T.null) (T.splitOn "\n" content)
-      header   = T.splitOn "," (Log.headD "" lines_)
+      header   = T.splitOn "," (headD "" lines_)
       colNames = drop 2 header  -- style names from header
       row      = find (\line ->
                     let cols = T.splitOn "," line
-                    in Log.getD cols 0 "" == theme && Log.getD cols 1 "" == variant)
+                    in getD cols 0 "" == theme && getD cols 1 "" == variant)
                  (drop 1 lines_)
   case row of
     Nothing -> pure defaultDark
@@ -192,12 +193,12 @@ load theme variant = do
           go sty i
             | i >= length colNames = sty
             | otherwise =
-                case parseStyle (Log.getD colNames i "") of
+                case parseStyle (getD colNames i "") of
                   Nothing  -> go sty (i + 1)
                   Just idx ->
-                    let cell = T.splitOn " " (Log.getD cols (i + 2) "")
-                        fg   = Term.parseColor (Log.getD cell 0 "default")
-                        bg   = Term.parseColor (Log.getD cell 1 "default")
+                    let cell = T.splitOn " " (getD cols (i + 2) "")
+                        fg   = Term.parseColor (getD cell 0 "default")
+                        bg   = Term.parseColor (getD cell 1 "default")
                         sty' = sty V.// [(idx * 2, fg), (idx * 2 + 1, bg)]
                     in go sty' (i + 1)
       pure (go defaultDark 0)
@@ -240,7 +241,7 @@ run tm cur applyAndRender = do
       pure (Just (State { styles = sty, themeIdx = idx }))
     else do
       sockPath <- Socket.getPath
-      script <- Socket.tmpPath "theme-pick.sh"
+      script <- Tmp.tmpPath "theme-pick.sh"
       TIO.writeFile script
         (T.pack ("#!/bin/sh\necho \"theme.preview $1\" | socat - UNIX-CONNECT:" ++ sockPath))
       _ <- readProcessWithExitCode "chmod" ["+x", script] ""
@@ -251,8 +252,8 @@ run tm cur applyAndRender = do
             case mcmd of
               Just cmdStr -> do
                 let parts = T.splitOn " " cmdStr
-                if Log.headD "" parts == "theme.preview"
-                  then case readMaybe (T.unpack (Log.getD parts 1 "")) of
+                if headD "" parts == "theme.preview"
+                  then case readMaybe (T.unpack (getD parts 1 "")) of
                          Just idx -> do
                            sty <- loadIdx idx
                            applyAndRender sty

@@ -25,7 +25,7 @@ import Data.Word (Word64)
 
 import Optics.Core ((&), (.~))
 
-import qualified Tv.Util as Log
+import qualified Tv.Log as Log
 import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk, resetVS)
 import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
 import qualified Tv.Data.DuckDB.Conn as Conn
@@ -35,7 +35,6 @@ import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Table as Table
 import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
-import qualified Tv.Util as Log
 import Tv.Types
   ( Cmd(..)
   , ColType (..)

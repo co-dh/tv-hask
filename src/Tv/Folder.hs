@@ -51,9 +51,10 @@ import qualified Tv.Theme as Theme
 import Tv.Types
   ( Cmd(..)
   , ViewKind(..)
+  , getD
   )
-import qualified Tv.Util as Log
-import qualified Tv.Util as Remote
+import qualified Tv.Log as Log
+import qualified Tv.Remote as Remote
 import Tv.View (View, ViewStack)
 import qualified Tv.View as View
 import qualified Tv.Nav as Nav
@@ -97,16 +98,16 @@ listDir path_ depth = do
       body = map mkRow (drop 1 lines_)
       mkRow line =
         let parts = T.splitOn "\t" line
-            getD i = Log.getD parts i ""
-            getLastD = case reverse parts of
-                         (x:_) -> x
-                         []    -> ""
+            at i = getD parts i ""
+            lastD = case reverse parts of
+                      (x:_) -> x
+                      []    -> ""
         in if length parts >= 4
              then
-               let typ = fmtType (getD 0)
-                   sz  = getD 1
-                   dt  = fmtDate (getD 2)
-                   pp  = stripBase p getLastD
+               let typ = fmtType (at 0)
+                   sz  = at 1
+                   dt  = fmtDate (at 2)
+                   pp  = stripBase p lastD
                in T.intercalate "\t" [pp, sz, dt, typ]
              else line
   pure (hdr <> "\n" <> parentEntry

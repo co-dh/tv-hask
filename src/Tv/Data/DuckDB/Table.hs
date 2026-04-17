@@ -79,7 +79,8 @@ import Tv.Types
   , escSql
   , keepCols
   )
-import qualified Tv.Util as Log
+import qualified Tv.Log as Log
+import qualified Tv.Tmp as Tmp
 import Optics.Core ((&), (.~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
@@ -374,7 +375,7 @@ plotExport t xName yName catName_ xIsTime _step truncLen = do
     Nothing -> pure Nothing
     Just sql -> do
       let sql' = stripSemi sql
-      datPath <- Log.tmpPath "plot.dat"
+      datPath <- Tmp.tmpPath "plot.dat"
       let copySql = "COPY (" <> sql' <> ") TO '" <> T.pack datPath
                  <> "' (FORMAT CSV, DELIMITER '\t', HEADER false)"
       Log.write "plot-sql" copySql
@@ -403,7 +404,7 @@ fromIngest content label reader
   | T.null content || T.strip content == "[]" = pure Nothing
   | otherwise = do
       n <- atomicModifyIORef' tblCounter (\x -> (x + 1, x))
-      tmp <- Log.tmpPath (T.unpack label <> "-" <> show n <> "." <> T.unpack label)
+      tmp <- Tmp.tmpPath (T.unpack label <> "-" <> show n <> "." <> T.unpack label)
       TIO.writeFile tmp content
       let tbl = "tc_" <> label <> "_" <> T.pack (show n)
       r <- try (Conn.query ("CREATE TEMP TABLE " <> tbl
@@ -412,11 +413,11 @@ fromIngest content label reader
            :: IO (Either SomeException Conn.QueryResult)
       case r of
         Left e -> do
-          Log.rmFile tmp
+          Tmp.rmFile tmp
           Log.write label ("error: " <> T.pack (show e))
           pure Nothing
         Right _ -> do
-          Log.rmFile tmp
+          Tmp.rmFile tmp
           let q = Prql.defaultQuery { Prql.base = "from " <> tbl }
           total <- queryCount q
           requery q total

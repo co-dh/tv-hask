@@ -43,7 +43,8 @@ import qualified Tv.Plot as Plot
 import Tv.Plot (KeyAction(..))
 import Tv.Types (PlotKind(..), ColType(..))
 import qualified Tv.Data.DuckDB.Table as Tbl
-import qualified Tv.Util as Log
+import qualified Tv.Log as Log
+import qualified Tv.Tmp as Tmp
 
 -- | Alias: `run` in Lean -> runHask in Haskell (no separate binary)
 run :: Text -> FilePath -> IO Text
@@ -911,7 +912,7 @@ test_plot_export_data = do
       case result of
         Just _  -> pure ()
         Nothing -> assertFailure "plotExport should succeed for numeric y"
-      datPath <- Log.tmpPath "plot.dat"
+      datPath <- Tmp.tmpPath "plot.dat"
       content <- TIO.readFile datPath
       let ls = filter (not . T.null) (T.splitOn "\n" content)
       assert (length ls > 0) "plot.dat should have data rows"
@@ -942,7 +943,7 @@ test_plot_time_downsample = do
       case result of
         Just _  -> pure ()
         Nothing -> assertFailure "time downsample should succeed"
-      datPath <- Log.tmpPath "plot.dat"
+      datPath <- Tmp.tmpPath "plot.dat"
       content <- TIO.readFile datPath
       let ls = filter (not . T.null) (T.splitOn "\n" content)
       assert (length ls >= 4)
@@ -961,7 +962,7 @@ test_plot_downsample_step = do
     Nothing  -> assertFailure "failed to open line.csv"
     Just tbl -> do
       _ <- Tbl.plotExport tbl "x" "y" Nothing False 1 1
-      datPath <- Log.tmpPath "plot.dat"
+      datPath <- Tmp.tmpPath "plot.dat"
       c1 <- TIO.readFile datPath
       let n1 = length (filter (not . T.null) (T.splitOn "\n" c1))
       _ <- Tbl.plotExport tbl "x" "y" Nothing False 1 2
@@ -992,7 +993,7 @@ runPlotR :: PlotKind -> Text -> Text -> Text -> Text -> Bool -> Text -> ColType 
 runPlotR kind datPath pngPath xName yName hasCat catName xType = do
   let script = Plot.rScript datPath pngPath kind xName yName hasCat catName False "" xType
                  (Plot.plotTitle kind xName yName hasCat catName)
-  rPath <- Log.tmpPath "plot_test.R"
+  rPath <- Tmp.tmpPath "plot_test.R"
   TIO.writeFile rPath script
   (ec, _, serr) <- readProcessWithExitCode "Rscript" [rPath] ""
   assert (ec == ExitSuccess)
@@ -1011,7 +1012,7 @@ prepXY file xName yName mCat = do
     Nothing  -> ioError (userError ("failed to open " ++ T.unpack file))
     Just tbl -> do
       _ <- Tbl.plotExport tbl xName yName mCat False 1 1
-      datPath <- Log.tmpPath "plot.dat"
+      datPath <- Tmp.tmpPath "plot.dat"
       content <- TIO.readFile datPath
       let hdr = case mCat of
                   Just cn -> xName <> "\t" <> yName <> "\t" <> cn
@@ -1028,7 +1029,7 @@ test_plot_render_line = do
     else if not gg then log "  skip (no ggplot2)"
     else do
       datPath <- prepXY "data/plot/line.csv" "x" "y" Nothing
-      pngPath <- T.pack <$> Log.tmpPath "plot_test.png"
+      pngPath <- T.pack <$> Tmp.tmpPath "plot_test.png"
       runPlotR PlotLine datPath pngPath "x" "y" False "" ColTypeOther
 
 test_plot_render_scatter_cat :: Assertion
@@ -1040,7 +1041,7 @@ test_plot_render_scatter_cat = do
     else if not gg then log "  skip (no ggplot2)"
     else do
       datPath <- prepXY "data/plot/mixed.csv" "x" "y" (Just "cat")
-      pngPath <- T.pack <$> Log.tmpPath "plot_test_cat.png"
+      pngPath <- T.pack <$> Tmp.tmpPath "plot_test_cat.png"
       runPlotR PlotScatter datPath pngPath "x" "y" True "cat" ColTypeOther
 
 test_plot_render_histogram :: Assertion
@@ -1051,9 +1052,9 @@ test_plot_render_histogram = do
     then log "  skip (no Rscript)"
     else if not gg then log "  skip (no ggplot2)"
     else do
-      datPath <- T.pack <$> Log.tmpPath "plot.dat"
+      datPath <- T.pack <$> Tmp.tmpPath "plot.dat"
       TIO.writeFile (T.unpack datPath) "y\n10.5\n20.3\n15.7\n25.1\n30.0\n12.2\n18.9\n"
-      pngPath <- T.pack <$> Log.tmpPath "plot_test_hist.png"
+      pngPath <- T.pack <$> Tmp.tmpPath "plot_test_hist.png"
       runPlotR PlotHist datPath pngPath "" "y" False "" ColTypeOther
 
 test_plot_render_area :: Assertion
@@ -1065,7 +1066,7 @@ test_plot_render_area = do
     else if not gg then log "  skip (no ggplot2)"
     else do
       datPath <- prepXY "data/plot/line.csv" "x" "y" Nothing
-      pngPath <- T.pack <$> Log.tmpPath "plot_test_area.png"
+      pngPath <- T.pack <$> Tmp.tmpPath "plot_test_area.png"
       runPlotR PlotArea datPath pngPath "x" "y" False "" ColTypeOther
 
 test_plot_render_density :: Assertion
@@ -1076,10 +1077,10 @@ test_plot_render_density = do
     then log "  skip (no Rscript)"
     else if not gg then log "  skip (no ggplot2)"
     else do
-      datPath <- T.pack <$> Log.tmpPath "plot.dat"
+      datPath <- T.pack <$> Tmp.tmpPath "plot.dat"
       TIO.writeFile (T.unpack datPath)
         "y\n10.5\n20.3\n15.7\n25.1\n30.0\n12.2\n18.9\n22.4\n17.6\n14.3\n"
-      pngPath <- T.pack <$> Log.tmpPath "plot_test_density.png"
+      pngPath <- T.pack <$> Tmp.tmpPath "plot_test_density.png"
       runPlotR PlotDensity datPath pngPath "" "y" False "" ColTypeOther
 
 test_plot_render_step :: Assertion
@@ -1091,7 +1092,7 @@ test_plot_render_step = do
     else if not gg then log "  skip (no ggplot2)"
     else do
       datPath <- prepXY "data/plot/line.csv" "x" "y" Nothing
-      pngPath <- T.pack <$> Log.tmpPath "plot_test_step.png"
+      pngPath <- T.pack <$> Tmp.tmpPath "plot_test_step.png"
       runPlotR PlotStep datPath pngPath "x" "y" False "" ColTypeOther
 
 test_plot_render_violin :: Assertion
@@ -1103,7 +1104,7 @@ test_plot_render_violin = do
     else if not gg then log "  skip (no ggplot2)"
     else do
       datPath <- prepXY "data/plot/mixed.csv" "x" "y" (Just "cat")
-      pngPath <- T.pack <$> Log.tmpPath "plot_test_violin.png"
+      pngPath <- T.pack <$> Tmp.tmpPath "plot_test_violin.png"
       runPlotR PlotViolin datPath pngPath "cat" "y" True "cat" ColTypeOther
 
 test_plot_render_time :: Assertion
@@ -1114,10 +1115,10 @@ test_plot_render_time = do
     then log "  skip (no Rscript)"
     else if not gg then log "  skip (no ggplot2)"
     else do
-      datPath <- T.pack <$> Log.tmpPath "plot_time.dat"
+      datPath <- T.pack <$> Tmp.tmpPath "plot_time.dat"
       TIO.writeFile (T.unpack datPath)
         "time\tprice\n09:30:00\t100.5\n09:30:01\t101.2\n09:30:02\t100.8\n"
-      pngPath <- T.pack <$> Log.tmpPath "plot_test_time.png"
+      pngPath <- T.pack <$> Tmp.tmpPath "plot_test_time.png"
       runPlotR PlotLine datPath pngPath "time" "price" False "" ColTypeTime
 
 -- ============================================================================

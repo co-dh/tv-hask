@@ -25,13 +25,13 @@ import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
-import Tv.Types (ColType (..), isNumeric)
+import Tv.Types (ColCache(..), ColType (..), isNumeric)
 
--- | Cache: (path, colIdx, formatted agg string)
-type Cache = (Text, Int, Text)
+-- | Cache: path + colIdx keyed → formatted agg string.
+type Cache = ColCache Int Text
 
 cacheEmpty :: Cache
-cacheEmpty = ("", 0, "")
+cacheEmpty = ColCache "" 0 ""
 
 -- | Aggregate stats for a single column: sum, avg, count (non-null).
 -- Returns formatted string like "Σ1234 μ12.3 #100" for numeric, "#100" for non-numeric.
@@ -43,20 +43,12 @@ compute t colIdx = do
     else do
       let colName = fromMaybe "" (Table.colNames t V.!? colIdx)
           colTy   = fromMaybe ColTypeOther (Table.colTypes t V.!? colIdx)
-          q       = Ops.quoteId colName
           isNum   = isNumeric colTy
-      mSql <- do
-        mBase <- Prql.compile (Prql.queryRender (Table.query t))
-        case mBase of
-          Nothing      -> pure Nothing
-          Just baseSql ->
-            let aggs = if isNum
-                  then "CAST(SUM(" <> q <> ") AS DOUBLE) AS s, CAST(AVG(" <> q <> ") AS DOUBLE) AS a, COUNT(" <> q <> ") AS c"
-                  else "COUNT(" <> q <> ") AS c"
-            in pure (Just ("SELECT " <> aggs <> " FROM (" <> Table.stripSemi baseSql <> ")"))
-      case mSql of
-        Nothing  -> pure ""
-        Just sql -> do
+      mBase <- Prql.compile (Prql.queryRender (Table.query t))
+      case mBase of
+        Nothing -> pure ""
+        Just baseSql -> do
+          let sql = Ops.colAggSql (Table.stripSemi baseSql) colName isNum
           r <- try (Conn.query sql) :: IO (Either SomeException Conn.QueryResult)
           case r of
             Left _   -> pure ""
@@ -83,9 +75,8 @@ render agg = unless (T.null agg) $ do
 -- | Update cache if column changed, then render. Returns updated cache.
 update :: Cache -> AdbcTable -> Text -> Int -> IO Cache
 update cache tbl path colIdx = do
-  let (cachedPath, cachedCol, _) = cache
   cache' <-
-    if cachedPath == path && cachedCol == colIdx
+    if cachedPath cache == path && cachedCol cache == colIdx
       then pure cache
       else do
         agg <- do
@@ -93,7 +84,6 @@ update cache tbl path colIdx = do
           case r of
             Left _  -> pure ""
             Right a -> pure a
-        pure (path, colIdx, agg)
-  let (_, _, agg) = cache'
-  render agg
+        pure (ColCache path colIdx agg)
+  render (cachedVal cache')
   pure cache'

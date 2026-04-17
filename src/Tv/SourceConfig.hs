@@ -56,8 +56,9 @@ import Tv.Data.DuckDB.Table
 import qualified Tv.Ftp as Ftp
 import qualified Tv.Render as Render
 import Tv.Types (escSql)
-import qualified Tv.Util as Log
-import qualified Tv.Util as Remote  -- Remote.parent lives in Tv.Util
+import qualified Tv.Log as Log
+import qualified Tv.Remote as Remote
+import qualified Tv.Tmp as Tmp
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Config entry for a source
@@ -347,7 +348,7 @@ fromPath path_ =
 cmdVars :: Bool -> Config -> Text -> IO (Vector (Text, Text), Text)
 cmdVars noSign_ cfg path_ = do
   checkShell path_ "path"
-  tmpDir <- Log.tmpPath "src"
+  tmpDir <- Tmp.tmpPath "src"
   createDirectoryIfMissing True tmpDir
   _ <- Log.run "src" "mkdir" ["-p", tmpDir]
   let extra = if pfx cfg == "s3://" then s3Extra noSign_ else ""
@@ -428,12 +429,12 @@ runListCmd noSign_ cfg path_ tbl = do
           (ec2, out2, _) <- readProcessWithExitCode "sh" ["-c", T.unpack fbCmd] ""
           case ec2 of
             ExitSuccess | not (T.null (T.strip (T.pack out2))) -> do
-              tmpFile <- Log.tmpPath "src-list.json"
+              tmpFile <- Tmp.tmpPath "src-list.json"
               TIO.writeFile tmpFile (T.pack out2)
               let fbSql = expand (fallbackSql cfg)
                             (V.singleton ("src", T.pack tmpFile))
               _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> fbSql)
-              Log.rmFile tmpFile
+              Tmp.rmFile tmpFile
               Just <$> fromTbl tbl
             _ -> pure Nothing
         else pure Nothing
@@ -449,7 +450,7 @@ runListCmd noSign_ cfg path_ tbl = do
       if T.null (T.strip raw)
         then pure Nothing
         else do
-          tmpFile <- Log.tmpPath "src-list.json"
+          tmpFile <- Tmp.tmpPath "src-list.json"
           -- FTP mode: parse ls -l in Haskell; otherwise use SQL transform
           let content = if listSql cfg == "FTP" then Ftp.parseLs raw else raw
           TIO.writeFile tmpFile content
@@ -492,7 +493,7 @@ runListCmd noSign_ cfg path_ tbl = do
               case rP of
                 _ -> pure ()
             Nothing -> pure ()
-          Log.rmFile tmpFile
+          Tmp.rmFile tmpFile
           fromTbl tbl
   where
     -- compile+run PRQL, returning the QueryResult (matches Lean `Prql.query`)
@@ -574,12 +575,12 @@ runEnter cfg name =
             then pure Nothing
             else do
               tbl <- tmpName "src"
-              tmpFile <- Log.tmpPath ("src-enter-" <> T.unpack tbl <> ".json")
+              tmpFile <- Tmp.tmpPath ("src-enter-" <> T.unpack tbl <> ".json")
               TIO.writeFile tmpFile json
               _ <- Conn.query ( "CREATE TEMP TABLE " <> tbl
                              <> " AS SELECT * FROM read_json_auto('"
                              <> T.pack tmpFile <> "')" )
-              Log.rmFile tmpFile
+              Tmp.rmFile tmpFile
               -- Apply types from DuckDB stub view (e.g. osq.groups has typed columns)
               let typeApply :: IO ()
                   typeApply = do

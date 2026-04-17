@@ -3,9 +3,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Tv.App.Common
-  ( module Tv.App.Types
-    -- * Dispatch
-  , dispatch
+  ( -- * Dispatch
+    dispatch
   , pureDispatch
   , runMenu
   , dispatchHandler
@@ -60,11 +59,11 @@ import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import qualified Tv.Transpose as Transpose
-import Tv.Types (Cmd(..), ViewKind(..), vkindStr, noEffect)
+import Tv.Types (Cmd(..), ColCache(..), ViewKind(..), cachedPath, cachedCol, cachedVal, vkindStr, noEffect)
 import qualified Tv.UI.Info as UIInfo
 import qualified Tv.UI.Preview as UIPreview
-import qualified Tv.Util as Log
-import qualified Tv.Util as Socket
+import qualified Tv.Log as Log
+import qualified Tv.Socket as Socket
 import qualified Tv.Data.DuckDB.Ops as Ops
 import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.View (View(..), ViewStack(..))
@@ -128,6 +127,21 @@ commands = Nav.commands <> Filter.commands <> Ops.commands
   <> Export.commands <> Session.commands
   <> Transpose.commands <> Diff.commands <> localCmds
 
+-- | Commit a rendered frame (used by live-preview closures after a state mutation).
+--   Reads current AppState from ref, re-renders with the supplied styles, writes
+--   updated state back, and paints the tab line + info overlay + present.
+renderSnap :: IORef AppState -> ViewStack AdbcTable -> V.Vector Word32 -> IO ()
+renderSnap ref stk' styles_ = do
+  a <- readIORef ref
+  (vs', v') <- View.doRender (View.cur stk') (vs a) styles_
+                 (heatMode a) (sparklines a)
+  writeIORef ref (a { stk = View.setCur stk' v', vs = vs' })
+  tabLine (View.tabNames stk') 0 (View.opsStr (View.cur stk'))
+  when (info a) $ do
+    h <- Term.height; w <- Term.width
+    UIInfo.render (fromIntegral h) (fromIntegral w) (View.vkind (View.cur stk'))
+  Term.present
+
 freqH :: HandlerFn
 freqH = \a ci _ -> case Freq.update (stk a) (ciCmd ci) of
   Just (s', e) -> runViewEffect (withStk a ci s') ci (View.cur s') e
@@ -144,15 +158,7 @@ localCmds = V.fromList
               let preview :: ViewStack AdbcTable -> IO ()
                   preview stk' = do
                     a' <- readIORef ref
-                    (vs', v') <- View.doRender (View.cur stk')
-                                   (vs a') (Theme.styles (theme a'))
-                                   (heatMode a') (sparklines a')
-                    writeIORef ref (a' { stk = View.setCur stk' v', vs = vs' })
-                    tabLine (View.tabNames stk') 0 (View.opsStr (View.cur stk'))
-                    when (info a') $ do
-                      h <- Term.height; w <- Term.width
-                      UIInfo.render (fromIntegral h) (fromIntegral w) (View.vkind (View.cur stk'))
-                    Term.present
+                    renderSnap ref stk' (Theme.styles (theme a'))
               stk' <- Filter.rowSearchLive (testMode a) (stk a) preview
               a' <- readIORef ref
               pure (ActOk (resetVS (a' { stk = stk' }))))
@@ -186,15 +192,7 @@ localCmds = V.fromList
               render_ styles_ = do
                 writeIORef Theme.stylesRef styles_
                 a' <- readIORef ref
-                (vs', v') <- View.doRender (View.cur (stk a')) (vs a') styles_
-                               (heatMode a') (sparklines a')
-                writeIORef ref (a' { stk = View.setCur (stk a') v', vs = vs' })
-                tabLine (View.tabNames (stk a')) 0 (View.opsStr (View.cur (stk a')))
-                when (info a') $ do
-                  h <- Term.height; w <- Term.width
-                  UIInfo.render (fromIntegral h) (fromIntegral w)
-                    (View.vkind (View.cur (stk a')))
-                Term.present
+                renderSnap ref (stk a') styles_
           mt <- Theme.run (testMode a) (theme a) render_
           case mt of
             Just t  -> do
@@ -252,14 +250,14 @@ renderBase a0 = do
   let a' = a & #stk .~ View.setCur (stk a) v' & #vs .~ vs'
   tabLine (View.tabNames (stk a')) 0 (View.opsStr (View.cur (stk a')))
   let colName = Nav.colName (View.nav (View.cur (stk a')))
-      (cachedPath, cachedCol, _) = statusCache a'
-  a'' <- if cachedPath == View.path (View.cur (stk a')) && cachedCol == colName
+      sc      = statusCache a'
+  a'' <- if cachedPath sc == View.path (View.cur (stk a')) && cachedCol sc == colName
            then pure a'
            else do
              desc <- Ops.columnComment (View.path (View.cur (stk a'))) colName
              pure (a' & #statusCache .~
-                          (View.path (View.cur (stk a')), colName, desc))
-  let (_, _, desc) = statusCache a''
+                          ColCache (View.path (View.cur (stk a'))) colName desc)
+  let desc = cachedVal (statusCache a'')
   unless (T.null desc) $ do
     ht <- Term.height
     w  <- Term.width

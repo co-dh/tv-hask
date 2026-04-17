@@ -66,7 +66,10 @@ library
     Tv.Types
     Tv.UI.Info
     Tv.UI.Preview
-    Tv.Util
+    Tv.Log
+    Tv.Remote
+    Tv.Socket
+    Tv.Tmp
     Tv.View
   build-depends:
     aeson >= 2.0,

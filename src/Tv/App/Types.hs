@@ -52,12 +52,13 @@ import qualified Tv.Theme as Theme
 import qualified Tv.Data.DuckDB.Ops as Ops
 import Tv.Types
   ( Cmd(..)
+  , ColCache
   , Effect(..)
   , ViewKind(..)
   , joinWith
   , noEffect
   )
-import qualified Tv.Util as Log
+import qualified Tv.Log as Log
 import Tv.View (View(..), ViewStack(..))
 import qualified Tv.View as View
 
@@ -74,7 +75,7 @@ data AppState = AppState
   , prevScroll  :: Int
   , heatMode    :: Word8
   , sparklines  :: Vector Text
-  , statusCache :: (Text, Text, Text)
+  , statusCache :: ColCache Text Text
   , aggCache    :: StatusAgg.Cache
   , cmdCache    :: CmdCache
   , handlers    :: HashMap Cmd HandlerFn
