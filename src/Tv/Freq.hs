@@ -36,8 +36,7 @@ import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Log as Log
 
-import qualified Tv.Df.Expr as E
-import qualified Tv.Df.Query as Q
+import qualified Tv.Df.Prql as DfQ
 
 -- Truncate freq results to this many rows for display (matches the
 -- DuckDB path's @| take 1000@).
@@ -66,18 +65,21 @@ execFreq t cNames
   | V.null cNames = pure Nothing
   | otherwise = do
       let baseRend = Prql.queryRender (Table.query t)
-          csList   = V.toList cNames
+          cs       = V.toList cNames
+          prqlCols = T.intercalate ", " (map Prql.quote cs)
+          -- Typed stages for what dataframe's Expr can express; a raw
+          -- stage for the window-sum + s-string bits (PRQL-only idioms).
+          freqQ = DfQ.fromBase baseRend
+            DfQ.|> DfQ.rawStage
+                     ("group {" <> prqlCols <> "} "
+                   <> "(aggregate {Cnt = std.count this})")
+            DfQ.|> DfQ.rawStage
+                     "derive {Pct = Cnt * 100 / std.sum Cnt, \
+                     \Bar = s\"repeat('#', CAST(Pct/5 AS INTEGER))\"}"
+            DfQ.|> DfQ.sortDesc ["Cnt"]
+            DfQ.|> DfQ.take_ freqDisplayLimit
+          prql = DfQ.compile freqQ
       totalGroups <- countDistinctGroups baseRend cNames
-      let freqQ = Q.fromBase baseRend
-            Q.|> Q.groupAgg csList [("Cnt", E.stdCount E.this)]
-            Q.|> Q.derive
-                 [ ("Pct", E.col "Cnt" E..* E.lit 100 E../
-                           E.stdSum (E.col "Cnt"))
-                 , ("Bar", E.raw "s\"repeat('#', CAST(Pct/5 AS INTEGER))\"")
-                 ]
-            Q.|> Q.sortDesc ["Cnt"]
-            Q.|> Q.take_ freqDisplayLimit
-          prql = Q.compile freqQ
       Log.write "prql" prql
       mSql <- Prql.compile prql
       case mSql of

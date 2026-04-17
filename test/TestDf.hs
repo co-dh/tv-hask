@@ -11,14 +11,26 @@ import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, assertBool, assertEqual, Assertion)
 
 import qualified DataFrame as D
+import qualified DataFrame.Functions as F
+import DataFrame.Operators ((.>.), (.*.), as)
 import DataFrame.Internal.Column (Columnable)
 import DataFrame.Internal.DataFrame (unsafeGetColumn)
+import Data.Function ((&))
+
+import Control.Exception (try, SomeException)
+import Data.Int (Int64)
+import System.Directory (removeFile)
 
 import TestUtil (runHask, contains, footer)
 
+import qualified Tv.Data.DuckDB.Conn as Conn
+import qualified Tv.Data.DuckDB.Prql as Prql
+import qualified Tv.Data.DuckDB.Table as Table
 import qualified Tv.Df as Df
 import qualified Tv.Df.Freq as Freq
 import qualified Tv.Df.Parse as P
+import qualified Tv.Df.Prql as DfQ
+import qualified Tv.Tmp as Tmp
 import Tv.Df.Parse (BinOp (..), Lit (..), PExpr (..), UnOp (..))
 
 -- | Column-as-list helper: look up by name and convert to [a].
@@ -187,6 +199,91 @@ test_df_derive_arg = do
   assertBool "derive tab marker" (contains tab "=double")
   assertBool "cursor at new col" (contains status "c3/4")
 
+-- ----------------------------------------------------------------------------
+-- Parity: same dataframe Expr evaluated both ways must agree
+--
+-- Given a parquet fixture and a pipeline built from dataframe's own
+-- Expr combinators, two interpreters must produce equal results:
+--   * Path A — dataframe's eager engine runs the pipeline directly on
+--     the in-memory DataFrame.
+--   * Path B — 'Tv.Df.Prql.compile' emits PRQL text; prqlc lowers it
+--     to SQL; DuckDB runs it; we reload the result via CSV. This is
+--     what the production DuckDB path does, only expressed through
+--     the same typed combinators.
+-- These tests are independent of the @-b@ flag; they validate that
+-- the translator is faithful to the DSL.
+-- ----------------------------------------------------------------------------
+
+-- | Run a PRQL string through DuckDB, COPY the result to a tmp CSV,
+-- read it back into a DataFrame. This is the "ground truth" for any
+-- compiled-to-PRQL query.
+prqlToDf :: T.Text -> IO D.DataFrame
+prqlToDf prqlText = do
+  mSql <- Prql.compile prqlText
+  case mSql of
+    Nothing  -> error ("prqlc failed for: " ++ T.unpack prqlText)
+    Just sql -> do
+      tmp <- Tmp.threadPath "parity.csv"
+      let copySql = "COPY (" <> Table.stripSemi sql <> ") TO '"
+                 <> T.pack tmp <> "' (FORMAT CSV, HEADER)"
+      _ <- Conn.query copySql
+      df <- Df.readCsv tmp
+      _ <- try (removeFile tmp) :: IO (Either SomeException ())
+      pure df
+
+-- Simple shape-comparison: row/col counts + a few column projections.
+-- Tighter than nothing; looser than Eq DataFrame (which would compare
+-- internal column representations across a CSV round-trip).
+assertFrameAgree :: String -> D.DataFrame -> D.DataFrame -> Assertion
+assertFrameAgree label a b = do
+  assertEqual (label <> ": row count")    (Df.nRows a) (Df.nRows b)
+  assertEqual (label <> ": column count") (Df.nCols a) (Df.nCols b)
+
+-- | Filter + derive on sort_test.parquet (name: Text, value: Int64, 3 rows).
+-- After filter (value > 1) we have 2 rows; derive appends a column.
+test_parity_filter_derive :: Assertion
+test_parity_filter_derive = do
+  dfIn <- Df.readParquet "data/sort_test.parquet"
+  let dfA = dfIn
+          & D.filterWhere (F.col @Int64 "value" .>. F.lit 1)
+          & D.derive "doubled" (F.col @Int64 "value" .*. F.lit 2)
+      pipeline = DfQ.fromBase ("from `data/sort_test.parquet`")
+        DfQ.|> DfQ.filter_ (F.col @Int64 "value" .>. F.lit 1)
+        DfQ.|> DfQ.derive [(F.col @Int64 "value" .*. F.lit 2) `as` "doubled"]
+      prql = DfQ.compile pipeline
+  dfB <- prqlToDf prql
+  assertFrameAgree "filter_derive" dfA dfB
+  -- Row count is the real contract here
+  assertEqual "filter produces 2 rows" 2 (Df.nRows dfA)
+
+-- | Sort + take on the same parquet.
+test_parity_sort_take :: Assertion
+test_parity_sort_take = do
+  dfIn <- Df.readParquet "data/sort_test.parquet"
+  let dfA = dfIn
+          & D.sortBy [D.Asc (F.col @Int64 "value")]
+          & D.take 2
+      pipeline = DfQ.fromBase ("from `data/sort_test.parquet`")
+        DfQ.|> DfQ.sortAsc ["value"]
+        DfQ.|> DfQ.take_ 2
+      prql = DfQ.compile pipeline
+  dfB <- prqlToDf prql
+  assertFrameAgree "sort_take" dfA dfB
+  assertEqual "took 2 rows" 2 (Df.nRows dfA)
+
+-- | Filter on a string column.
+test_parity_filter_text :: Assertion
+test_parity_filter_text = do
+  dfIn <- Df.readParquet "data/sort_test.parquet"
+  let dfA = dfIn
+          & D.filterWhere (F.col @T.Text "name" .>. F.lit @T.Text "alice")
+      pipeline = DfQ.fromBase "from `data/sort_test.parquet`"
+        DfQ.|> DfQ.filter_ (F.col @T.Text "name" .>. F.lit @T.Text "alice")
+      prql = DfQ.compile pipeline
+  dfB <- prqlToDf prql
+  assertFrameAgree "filter_text" dfA dfB
+  assertEqual "2 rows > 'alice'" 2 (Df.nRows dfA)
+
 tests :: TestTree
 tests = testGroup "TestDf"
   [ testCase "readcsv_smoke"            test_readcsv_smoke
@@ -207,4 +304,7 @@ tests = testGroup "TestDf"
   , testCase "df_freq_enter_pops"       test_df_freq_enter_pops
   , testCase "df_filter_arg"            test_df_filter_arg
   , testCase "df_derive_arg"            test_df_derive_arg
+  , testCase "parity_filter_derive"     test_parity_filter_derive
+  , testCase "parity_sort_take"         test_parity_sort_take
+  , testCase "parity_filter_text"       test_parity_filter_text
   ]

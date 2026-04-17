@@ -77,10 +77,9 @@ library
     Tv.Df
     Tv.Df.Bridge
     Tv.Df.Elab
-    Tv.Df.Expr
     Tv.Df.Freq
     Tv.Df.Parse
-    Tv.Df.Query
+    Tv.Df.Prql
     Tv.Log
     Tv.Remote
     Tv.Socket
