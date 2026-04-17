@@ -139,7 +139,6 @@ render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ ex
         else if curColIdx_ < lastCol view then -1
         else 0
   let nRows_ = Table.nRows (tbl nav)
-  let nCols_ = V.length (Nav.colNames nav)
   let ctx = RenderCtx
         { inWidths   = inWidths_
         , dispIdxs   = Nav.dispIdxs nav
@@ -160,28 +159,35 @@ render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ ex
         }
   -- C returns base widths (no widthAdj), store as-is
   widths <- renderView (tbl nav) ctx
-  -- status line: colName left, stats right
-  -- freqV shows total distinct groups, others show table totalRows
+  statusLine nav vkind styles_ prec_ widthAdj_ curColIdx_ w h
+  pure (ViewState { rowOff = rowOff_, lastCol = curColIdx_ }, widths)
+
+-- | Bottom status line: colName on the left, cursor/grp/sel/prec/width/row stats on the right.
+-- freqV uses its own total (distinct groups); other views use the table's totalRows.
+statusLine
+  :: NavState AdbcTable -> ViewKind -> Vector Word32 -> Int -> Int
+  -> Int -> Word32 -> Word32 -> IO ()
+statusLine nav vkind styles_ prec_ widthAdj_ curColIdx_ w h = do
   let total = case vkind of
         VkFreqV _ t -> t
         _           -> Table.totalRows (tbl nav)
-  let colName = Nav.colName nav
-  let adj =
+      colName = Nav.colName nav
+      nCols_ = V.length (Nav.colNames nav)
+      adj =
         (if prec_ /= 3 then " p" <> T.pack (show prec_) else "")
         <> (if widthAdj_ /= 0 then " w" <> T.pack (show widthAdj_) else "")
-  let right =
+      right =
         "c" <> T.pack (show curColIdx_) <> "/" <> T.pack (show nCols_)
         <> " grp=" <> T.pack (show (V.length (grp nav)))
         <> " sel=" <> T.pack (show (V.length (Nav.sels (Nav.row nav))))
         <> adj
         <> " r" <> T.pack (show (Nav.cur (Nav.row nav)))
         <> "/" <> T.pack (show total)
-  let pad = fromIntegral w - T.length colName - T.length right
+      pad = fromIntegral w - T.length colName - T.length right
   Term.print 0 (h - 1)
     (Theme.styleFg styles_ Theme.sStatus)
     (Theme.styleBg styles_ Theme.sStatus)
     (colName <> T.replicate (max 1 pad) " " <> right)
-  pure (ViewState { rowOff = rowOff_, lastCol = curColIdx_ }, widths)
 
 -- | Render tab line: parent2 │ parent1 │ [current]  replay_ops (stack top on right)
 tabLine :: Vector Text -> Int -> Text -> IO ()
