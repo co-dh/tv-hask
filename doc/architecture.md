@@ -159,11 +159,18 @@ no module imports downward. Every module has an explicit export list.
 
 ## Invariants
 
-1. **PRQL-only for feature modules.** Feature modules never build SQL
-   strings. They call `Tv.Data.DuckDB.Prql.pipe` to compose queries and
-   `Tv.Data.DuckDB.Ops.{transposeSql,colAggSql,maxSplitParts,createTempView,
-   createTempTable}` for the few cases PRQL can't express (UNPIVOT,
-   per-column aggregates, temp view/table plumbing).
+1. **Typed query API for feature modules.** Feature modules never
+   touch `Tv.Data.DuckDB.Prql.pipe` or the `Op` ADT directly. They
+   compose queries through `Tv.Df.Prql` (stages: `filter_`, `derive`,
+   `groupAgg`, `sortAsc/Desc`, `take_`, `select`, `exclude`, `distinct`,
+   `append`, `join_`, `window`) with expressions built from dataframe's
+   typed `Expr` GADT, then hand off to `Tv.Data.DuckDB.Table.fromPrqlText`
+   which runs the result through prqlc + DuckDB. `rawStage` is an
+   escape hatch for PRQL idioms dataframe's Expr can't encode yet —
+   currently used for: the user's free-form text in filter/derive
+   prompts, the Pct/Bar derive in Freq (window sum + s-string repeat),
+   and Split's dynamic-N column bindings (s-string for
+   `string_split_regex`).
 
 2. **Pure core, IO shell.** `View.update` / `Freq.update` return
    `(State, Effect)` — the state is already updated; the `Effect` is a
