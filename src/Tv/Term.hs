@@ -26,6 +26,8 @@ module Tv.Term
     -- screen
   , width, height, clear, present, pollEvent, toEvent, toEvents, bufferStr
   , padC, renderTable, print
+    -- test-only hook (see note on _setScreenBufSize)
+  , _setScreenBufSize
   ) where
 
 import Prelude hiding (init, print)
@@ -303,8 +305,35 @@ height = do
   (_, h, _) <- readIORef screenBuf
   pure (fromIntegral h)
 
+-- | Test-only: reset the screen buffer to the given dims. Exists so
+-- `Term.clear` can be tested for its resize-reconciliation behavior
+-- without needing a real resize event. Not used in production.
+_setScreenBufSize :: Int -> Int -> IO ()
+_setScreenBufSize w h = do
+  buf   <- VSM.replicate (w * h) emptyCell
+  front <- VSM.replicate (w * h) emptyCell
+  writeIORef screenBuf (w, h, buf)
+  writeIORef frontBuf front
+
+-- | Reconcile buffer dims to current terminal size. Called at the top of
+-- every frame from `clear` so any caller reading `width`/`height` after
+-- this point sees current dims — no SIGWINCH handler needed. The front
+-- buffer also resets on size change: the diff in `present` compares
+-- indices that'd be invalid across a dim change, so we force a full
+-- repaint (matches the comment on `frontBuf`).
+syncSize :: IO ()
+syncSize = do
+  (curW, curH, _) <- readIORef screenBuf
+  (newW, newH) <- termSize
+  when (newW /= curW || newH /= curH) $ do
+    buf   <- VSM.replicate (newW * newH) emptyCell
+    front <- VSM.replicate (newW * newH) emptyCell
+    writeIORef screenBuf (newW, newH, buf)
+    writeIORef frontBuf front
+
 clear :: IO ()
 clear = do
+  syncSize
   (_, _, buf) <- readIORef screenBuf
   VSM.set buf emptyCell
 

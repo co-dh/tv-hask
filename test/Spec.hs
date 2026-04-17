@@ -22,9 +22,10 @@ main = do
     then do
       putStrLn ("Backend init failed: " <> T.unpack err)
       exitFailure
-    else
+    else do
+      pureTests <- TestPure.tests
       defaultMain $ testGroup "tv-hask"
-        [ TestPure.tests
+        [ pureTests
         , TestScreen.tests
         , TestLargeData.tests
         , Test.tests
