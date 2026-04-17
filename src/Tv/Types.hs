@@ -613,3 +613,4 @@ plotKind CmdPlotHist    = Just PlotHist
 plotKind CmdPlotDensity = Just PlotDensity
 plotKind CmdPlotViolin  = Just PlotViolin
 plotKind _              = Nothing
+

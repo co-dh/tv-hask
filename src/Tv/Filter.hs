@@ -42,7 +42,9 @@ import Tv.Nav (rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd(..), isNumeric, toString, filterPrql, filterPrompt, headD)
 import qualified Tv.Data.DuckDB.Ops as Ops
+import qualified Tv.Data.DuckDB.Prql as Prql
 import qualified Tv.Data.DuckDB.Table as Table
+import qualified Tv.Df.Prql as DfQ
 import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.View (View(..), ViewStack, cur, setCur, push, tbl)
 import qualified Tv.View as View
@@ -234,7 +236,10 @@ rowFilter tm s = withDistinct s $ \_curCol curName vals -> orKeep s $ do
               (T.intercalate "\n" (V.toList vals))
   let expr = filterPrql curName vals result (isNumeric typ)
   guard $ not $ T.null expr
-  tbl' <- MaybeT $ Table.filter (tbl s) expr
+  let baseRend = Prql.queryRender (Table.query (tbl s))
+      q = DfQ.fromBase baseRend
+            DfQ.|> DfQ.rawStage ("filter " <> expr)
+  tbl' <- MaybeT $ Table.fromPrqlText (DfQ.compile q)
   -- Preserve cursor column across filter (matches Lean's `rebuild tbl' (row := 0)`
   -- default). Resetting col=0 would snap the cursor back to the first column.
   let v      = cur s
@@ -251,10 +256,15 @@ jumpCol s name = orKeep s $ do
   pure $ moveTo s idx
 
 -- | Filter by expression directly (no fzf). Called by socket/dispatch.
+-- Builds a single-stage @filter@ query through 'Tv.Df.Prql' and lets
+-- 'Table.fromPrqlText' drive prqlc + DuckDB.
 filterWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 filterWith s expr = orKeep s $ do
   guard $ not $ T.null expr
-  tbl' <- MaybeT $ Table.filter (tbl s) expr
+  let baseRend = Prql.queryRender (Table.query (tbl s))
+      q = DfQ.fromBase baseRend
+            DfQ.|> DfQ.rawStage ("filter " <> expr)
+  tbl' <- MaybeT $ Table.fromPrqlText (DfQ.compile q)
   -- Match Lean's `rebuild tbl' (row := 0)` — col defaults to the old cursor
   -- column, grp to the old grp. Resetting col to 0 would jump the cursor
   -- home, which the filter demo explicitly asserts should NOT happen.
@@ -263,6 +273,7 @@ filterWith s expr = orKeep s $ do
       grp'   = v ^. #nav % #grp
   v' <- hoistMaybe $ View.rebuild v tbl' curCol grp' 0
   pure $ push s (v' & #disp .~ ("\\" <> expr))
+
 
 -- | Search for value directly (no fzf). Called by socket/dispatch.
 searchWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
@@ -277,7 +288,8 @@ searchWith s val = orKeep s $ do
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
   [ hdl (mkEntry CmdRowFilter     "a"  "\\" "Filter rows by PRQL expression"    True  "")
-        (\a _ arg -> stackIO a (if T.null arg then rowFilter (testMode a) (stk a) else filterWith (stk a) arg))
+        (\a _ arg -> stackIO a $
+           if T.null arg then rowFilter (testMode a) (stk a) else filterWith (stk a) arg)
   , hdl (mkEntry CmdRowSearchNext "rc" "n"  "Jump to next search match"         False "") (onStk (fmap Just . (`searchDir` True)))
   , hdl (mkEntry CmdRowSearchPrev "rc" "N"  "Jump to previous search match"     False "") (onStk (fmap Just . (`searchDir` False)))
   , hdl (mkEntry CmdColSearch     "a"  "g"  "Jump to column by name"            True  "")

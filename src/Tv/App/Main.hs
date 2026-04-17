@@ -59,7 +59,13 @@ data CliArgs = CliArgs
 makeFieldLabelsNoPrefix ''CliArgs
 
 defArgs :: CliArgs
-defArgs = CliArgs { path = Nothing, keys = V.empty, test = False, noSign = False, session = Nothing }
+defArgs = CliArgs
+  { path    = Nothing
+  , keys    = V.empty
+  , test    = False
+  , noSign  = False
+  , session = Nothing
+  }
 
 -- extract flag with value, return (value?, remaining args)
 extractFlag :: Text -> [Text] -> (Maybe Text, [Text])
@@ -75,15 +81,18 @@ parseArgs args0 =
       args1      = filter (/= "+n") args0
       (session_, args2) = extractFlag "-s" args1
       toK s      = Key.tokenizeKeys s
+      withCommon c = c
+        & #noSign  .~ noSign_
+        & #session .~ session_
   in case args2 of
        ("-c" : k : _) ->
-         CliArgs { path = Nothing, keys = toK k, test = True, noSign = noSign_, session = session_ }
+         withCommon $ defArgs & #keys .~ toK k & #test .~ True
        (p : "-c" : k : _) ->
-         CliArgs { path = Just p, keys = toK k, test = True, noSign = noSign_, session = session_ }
+         withCommon $ defArgs & #path .~ Just p & #keys .~ toK k & #test .~ True
        (p : _) ->
-         defArgs & #path .~ Just p & #noSign .~ noSign_ & #session .~ session_
+         withCommon $ defArgs & #path .~ Just p
        [] ->
-         defArgs & #noSign .~ noSign_ & #session .~ session_
+         withCommon defArgs
 
 -- | Init/shutdown socket + terminal around a mainLoop call
 withTui :: Bool -> IO a -> IO a
@@ -183,6 +192,7 @@ runSession sessName theme testMode noSign_ keys_ = do
 dispatchPath :: Text -> Vector Text -> Bool -> Bool -> Bool -> Theme.State -> IO ()
 dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
   let srcCfg = Source.findSource path_
+      go v   = runApp v pipeMode testMode noSign_ theme keys_
   isDir <- doesDirectoryExist (T.unpack path_)
   if T.null path_ || isJust srcCfg || isDir then do
     let p = if T.null path_ then "." else path_
@@ -196,7 +206,7 @@ dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
           case r of
             Source.OpenAsTable adbc ->
               case View.fromTbl adbc p 0 V.empty 0 of
-                Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_
+                Just v  -> do _ <- go v
                               pure True
                 Nothing -> do TIO.hPutStrLn stderr ("Empty: " <> p); pure True
             _ -> pure False  -- fall through to folder listing
@@ -204,7 +214,7 @@ dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
     unless handled $ do
       mv <- Folder.mkView noSign_ p 1
       case mv of
-        Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+        Just v  -> do _ <- go v; pure ()
         Nothing -> TIO.hPutStrLn stderr ("Cannot browse: " <> p)
   else if T.isSuffixOf ".txt" path_ then do
     content <- TIO.readFile (T.unpack path_)
@@ -214,7 +224,7 @@ dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
     -- Smart: try read_csv for unrecognized .gz (handles decompression natively)
     mv <- FileFormat.readCsv path_
     case mv of
-      Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+      Just v  -> do _ <- go v; pure ()
       Nothing -> FileFormat.viewFile testMode path_
   else do
     r <- try (FileFormat.openFile path_) :: IO (Either SomeException (Maybe (View AdbcTable)))
@@ -222,7 +232,7 @@ dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
       Right m -> pure m
       Left e  -> do Log.write "open" (T.pack (show e)); pure Nothing
     case mv of
-      Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+      Just v  -> do _ <- go v; pure ()
       Nothing -> FileFormat.viewFile testMode path_
 
 -- main entry point: init backend, parse args, run app

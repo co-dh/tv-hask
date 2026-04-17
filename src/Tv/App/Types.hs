@@ -145,7 +145,7 @@ runViewEffect a ci v' e =
       pure $ View.setCur s (rv & #nav % #hidden .~ hidden')
 
     EffectFreq colNames -> tryStk a ci $ runMaybeT $ do
-      (adbc, totalGroups) <- MaybeT (AdbcTable.freqTable (View.tbl s) colNames)
+      (adbc, totalGroups) <- MaybeT (Freq.execFreq (View.tbl s) colNames)
       fv <- hoistMaybe (View.fromTbl adbc (View.path (View.cur s)) 0 colNames 0)
       pure $ View.push s (fv
         { View.vkind = VkFreqV colNames totalGroups
