@@ -88,6 +88,7 @@ library
     process >= 1.6,
     text >= 2.0,
     time >= 1.11,
+    transformers >= 0.6,
     unix >= 2.7,
     unordered-containers >= 0.2,
     vector >= 0.13
