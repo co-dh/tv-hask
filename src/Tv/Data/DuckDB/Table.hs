@@ -336,6 +336,56 @@ fetchMore t
         Nothing  -> pure Nothing
         Just qr_ -> Just <$> ofResult qr_ (query t) (totalRows t)
 
+-- | Build the plot PRQL pipeline: ds_trunc for time x-axis (SUBSTRING bucketing),
+-- ds_nth for non-time (every-Nth-row sampling). The _cat suffix keeps a grouping
+-- column through the downsample.
+plotPrql :: Text -> Text -> Text -> Maybe Text -> Bool -> Int -> Text
+plotPrql baseR xName yName catName_ xIsTime truncLen =
+  let q = Prql.quote
+      tn = T.pack (show truncLen)
+  in if xIsTime
+       then case catName_ of
+              Just cn -> baseR <> " | ds_trunc_cat " <> q xName <> " " <> q yName
+                               <> " " <> q cn <> " " <> tn
+              Nothing -> baseR <> " | ds_trunc " <> q xName <> " " <> q yName
+                               <> " " <> tn
+       else
+         let selCols = case catName_ of
+               Just cn -> q xName <> ", " <> q yName <> ", " <> q cn
+               Nothing -> q xName <> ", " <> q yName
+             dsFn = case catName_ of
+               Just cn -> "ds_nth_cat " <> q yName <> " " <> q cn <> " " <> tn
+               Nothing -> "ds_nth " <> q yName <> " " <> tn
+         in baseR <> " | " <> dsFn <> " | select {" <> selCols <> "}"
+
+-- | Run COPY (sql) TO tmpdir/plot.dat as TSV. Raises userError on failure so
+-- the caller (R ggplot pipeline) fails loudly instead of silently empty-plotting.
+copyPlot :: Text -> IO ()
+copyPlot sql = do
+  let sql' = stripSemi sql
+  datPath <- Tmp.tmpPath "plot.dat"
+  let copySql = "COPY (" <> sql' <> ") TO '" <> T.pack datPath
+             <> "' (FORMAT CSV, DELIMITER '\t', HEADER false)"
+  Log.write "plot-sql" copySql
+  r <- try (Conn.query copySql) :: IO (Either SomeException Conn.QueryResult)
+  case r of
+    Left e -> do
+      let msg = "COPY failed: " <> T.pack (show e)
+      Log.write "plot" msg
+      ioError (userError (T.unpack msg))
+    Right _ -> pure ()
+
+-- | Query distinct category values (for legend/facet labels in R).
+uniqCats :: Text -> Text -> IO (Vector Text)
+uniqCats baseR cn = do
+  m <- prqlQuery (baseR <> " | uniq " <> Prql.quote cn)
+  case m of
+    Nothing -> pure V.empty
+    Just catQr -> do
+      nr <- Conn.nrows catQr
+      let n = fromIntegral nr :: Int
+      V.generateM n $ \i -> Conn.cellStr catQr (fromIntegral i) 0
+
 -- | Export plot data to tmpdir/plot.dat via DuckDB COPY (downsample in SQL).
 -- truncLen: SUBSTRING length for time truncation; _step: every-Nth-row for non-time.
 plotExport
@@ -348,51 +398,16 @@ plotExport
   -> Int           -- truncLen
   -> IO (Maybe (Vector Text))
 plotExport t xName yName catName_ xIsTime _step truncLen = do
-  let q = Prql.quote
-      baseR = Prql.queryRender (query t)
-      prqlStr =
-        if xIsTime
-          then case catName_ of
-                 Just cn -> baseR <> " | ds_trunc_cat " <> q xName <> " " <> q yName
-                                  <> " " <> q cn <> " " <> T.pack (show truncLen)
-                 Nothing -> baseR <> " | ds_trunc " <> q xName <> " " <> q yName
-                                  <> " " <> T.pack (show truncLen)
-          else
-            let selCols = case catName_ of
-                  Just cn -> q xName <> ", " <> q yName <> ", " <> q cn
-                  Nothing -> q xName <> ", " <> q yName
-                dsFn = case catName_ of
-                  Just cn -> "ds_nth_cat " <> q yName <> " " <> q cn
-                              <> " " <> T.pack (show truncLen)
-                  Nothing -> "ds_nth " <> q yName <> " " <> T.pack (show truncLen)
-            in baseR <> " | " <> dsFn <> " | select {" <> selCols <> "}"
+  let baseR = Prql.queryRender (query t)
+      prqlStr = plotPrql baseR xName yName catName_ xIsTime truncLen
   Log.write "prql" prqlStr
   mSql <- Prql.compile prqlStr
   case mSql of
     Nothing -> pure Nothing
     Just sql -> do
-      let sql' = stripSemi sql
-      datPath <- Tmp.tmpPath "plot.dat"
-      let copySql = "COPY (" <> sql' <> ") TO '" <> T.pack datPath
-                 <> "' (FORMAT CSV, DELIMITER '\t', HEADER false)"
-      Log.write "plot-sql" copySql
-      r <- try (Conn.query copySql) :: IO (Either SomeException Conn.QueryResult)
-      case r of
-        Left e -> do
-          let msg = "COPY failed: " <> T.pack (show e)
-          Log.write "plot" msg
-          ioError (userError (T.unpack msg))
-        Right _ -> pure ()
+      copyPlot sql
       case catName_ of
-        Just cn -> do
-          m <- prqlQuery (baseR <> " | uniq " <> q cn)
-          case m of
-            Nothing -> pure (Just V.empty)
-            Just catQr -> do
-              nr <- Conn.nrows catQr
-              let n = fromIntegral nr :: Int
-              cats <- V.generateM n $ \i -> Conn.cellStr catQr (fromIntegral i) 0
-              pure (Just cats)
+        Just cn -> Just <$> uniqCats baseR cn
         Nothing -> pure (Just V.empty)
 
 -- | Ingest content via DuckDB reader into a temp table (private helper)
