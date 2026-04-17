@@ -14,10 +14,12 @@ module Tv.Df.Prql
   ( -- * Expression rendering
     renderExpr
   , renderUExpr
+  , this
     -- * Pipeline
   , Query (..)
   , Stage (..)
   , SortDir (..)
+  , JoinKind (..)
   , compile
   , fromBase
   , (|>)
@@ -30,6 +32,11 @@ module Tv.Df.Prql
   , sortBy
   , take_
   , select
+  , exclude
+  , distinct
+  , append
+  , join_
+  , window
   , rawStage
   ) where
 
@@ -53,6 +60,13 @@ import DataFrame.Internal.Expression
 -- Expression → PRQL
 -- ============================================================================
 
+-- | PRQL's @this@ keyword: refers to the current row as a tuple.
+-- Used inside aggregates (@std.count this@) to count rows. Typed as
+-- Int so it composes with counting; dataframe's eager engine won't
+-- interpret this, but the renderer handles it specially.
+this :: Expr Int
+this = Col "this"
+
 -- | Render a dataframe 'Expr' as PRQL expression text. Shares the
 -- precedence structure with 'DataFrame.Internal.Expression.prettyPrint'
 -- but uses PRQL operator tokens.
@@ -60,6 +74,7 @@ renderExpr :: forall a. Expr a -> Text
 renderExpr = go 0
   where
     go :: Int -> Expr b -> Text
+    go _    (Col "this")       = "this"    -- PRQL keyword, never backtick
     go _    (Col name)         = quoteCol name
     go _    (Lit v)            = renderLit v
     go _    (CastWith name _ _) = "/* cast " <> name <> " not supported */"
@@ -115,10 +130,32 @@ binaryPrql = \case
   other          -> other
 
 renderUnary :: Int -> UnaryOp b a -> Expr b -> Text
-renderUnary _ op arg = case unaryName op of
-  "negate" -> "-(" <> renderExpr arg <> ")"
-  "abs"    -> "s\"ABS(\" + " <> renderExpr arg <> " + \")\""
-  other    -> "/* unary " <> other <> " unsupported */"
+renderUnary _ op arg =
+  let x = renderExpr arg
+      call1 fn = fn <> " " <> x
+  in case unaryName op of
+    "negate" -> "-(" <> x <> ")"
+    -- PRQL's math stdlib: math.abs, math.sqrt, math.exp, etc.
+    "abs"    -> call1 "math.abs"
+    "signum" -> call1 "math.sign"
+    "exp"    -> call1 "math.exp"
+    "sqrt"   -> call1 "math.sqrt"
+    "log"    -> call1 "math.ln"      -- Haskell `log` = natural log
+    "sin"    -> call1 "math.sin"
+    "cos"    -> call1 "math.cos"
+    "tan"    -> call1 "math.tan"
+    "asin"   -> call1 "math.asin"
+    "acos"   -> call1 "math.acos"
+    "atan"   -> call1 "math.atan"
+    "sinh"   -> call1 "math.sinh"
+    "cosh"   -> call1 "math.cosh"
+    "asinh"  -> call1 "math.asinh"
+    "acosh"  -> call1 "math.acosh"
+    "atanh"  -> call1 "math.atanh"
+    "floor"  -> call1 "math.floor"
+    "ceil"   -> call1 "math.ceil"
+    "round"  -> call1 "math.round"
+    other    -> "/* unary " <> other <> " unsupported */"
 
 renderAgg :: AggStrategy a b -> Expr b -> Text
 renderAgg strat arg =
@@ -166,6 +203,8 @@ quoteCol c = "`" <> c <> "`"
 
 data SortDir = Asc | Desc deriving (Eq, Show)
 
+data JoinKind = JInner | JLeft | JRight | JFull deriving (Eq, Show)
+
 data Stage
   = StFilter   (Expr Bool)
   | StDerive   [NamedExpr]
@@ -173,7 +212,12 @@ data Stage
   | StSort     [(Text, SortDir)]
   | StTake     Int
   | StSelect   [Text]
-  | StRaw      Text  -- literal PRQL stage text, for idioms dataframe's Expr can't encode (e.g. window sums in derive)
+  | StExclude  [Text]
+  | StDistinct [Text]    -- unique on columns; empty = distinct on all
+  | StAppend   Text      -- base table name to union
+  | StJoin     JoinKind Text (Expr Bool)   -- other-table base + predicate
+  | StWindow   [Stage]   -- stages executed in a PRQL `window` context
+  | StRaw      Text  -- literal PRQL stage text, for idioms dataframe's Expr can't encode
 
 data Query = Query
   { qBase   :: Text     -- "from t" body (text following the `from` keyword)
@@ -196,12 +240,24 @@ renderStage = \case
   StSort cs       -> "sort {" <> commaMap renderSort cs <> "}"
   StTake n        -> "take " <> T.pack (show n)
   StSelect cs     -> "select {" <> commaMap quoteCol cs <> "}"
+  StExclude cs    -> "select s\"* EXCLUDE (" <> commaMap dqCol cs <> ")\""
+  StDistinct cs   ->
+    let ks = if null cs then "this" else commaMap quoteCol cs
+    in "group {" <> ks <> "} (take 1)"
+  StAppend tbl    -> "append " <> tbl
+  StJoin k tbl p  -> "join side:" <> joinKindText k <> " " <> tbl <> " (" <> renderExpr p <> ")"
+  StWindow stages -> "window (" <> T.intercalate " | " (map renderStage stages) <> ")"
   StRaw t         -> t
   where
     renderBind (n, ue) = quoteCol n <> " = " <> renderUExpr ue
     renderSort (c, Asc)  = quoteCol c
     renderSort (c, Desc) = "-" <> quoteCol c
     commaMap f = T.intercalate ", " . map f
+    dqCol c = "\\\"" <> c <> "\\\""
+    joinKindText JInner = "inner"
+    joinKindText JLeft  = "left"
+    joinKindText JRight = "right"
+    joinKindText JFull  = "full"
 
 -- | Pipe forward. Imported from 'Data.Function' under a friendly name.
 (|>) :: a -> (a -> b) -> b
@@ -236,7 +292,31 @@ take_ n q = q { qStages = qStages q ++ [StTake n] }
 select :: [Text] -> Query -> Query
 select cs q = q { qStages = qStages q ++ [StSelect cs] }
 
+-- | Drop columns. Emits a PRQL s-string around DuckDB's @* EXCLUDE@.
+exclude :: [Text] -> Query -> Query
+exclude cs q = q { qStages = qStages q ++ [StExclude cs] }
+
+-- | Deduplicate. @[]@ means distinct on all columns; a non-empty list
+-- keeps one row per combination of the given columns.
+distinct :: [Text] -> Query -> Query
+distinct cs q = q { qStages = qStages q ++ [StDistinct cs] }
+
+-- | Concatenate another table (union) by its PRQL base name.
+append :: Text -> Query -> Query
+append tbl q = q { qStages = qStages q ++ [StAppend tbl] }
+
+-- | Join another table with a predicate expression. The other table's
+-- base is passed as PRQL text (usually just a table identifier).
+join_ :: JoinKind -> Text -> Expr Bool -> Query -> Query
+join_ k tbl pr q = q { qStages = qStages q ++ [StJoin k tbl pr] }
+
+-- | Wrap stages in PRQL's @window@ context — the wrapped stages see
+-- the outer frame as their grouping, so @std.sum@ inside window derive
+-- acts as a window function. Used to compute percentages over totals.
+window :: [Stage] -> Query -> Query
+window stages q = q { qStages = qStages q ++ [StWindow stages] }
+
 -- | Append a raw PRQL stage. Escape hatch for idioms the typed stages
--- can't express (e.g. window sums in derive, or s-string SQL escapes).
+-- can't express (rare remaining cases — see the architecture doc).
 rawStage :: Text -> Query -> Query
 rawStage t q = q { qStages = qStages q ++ [StRaw t] }

@@ -36,6 +36,8 @@ import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Log as Log
 
+import qualified DataFrame.Functions as F
+import DataFrame.Operators (as)
 import qualified Tv.Df.Prql as DfQ
 
 -- Truncate freq results to this many rows for display (matches the
@@ -66,13 +68,16 @@ execFreq t cNames
   | otherwise = do
       let baseRend = Prql.queryRender (Table.query t)
           cs       = V.toList cNames
-          prqlCols = T.intercalate ", " (map Prql.quote cs)
-          -- Typed stages for what dataframe's Expr can express; a raw
-          -- stage for the window-sum + s-string bits (PRQL-only idioms).
+          -- Group by the user-picked key columns, count rows. Pct is
+          -- derived inside a window so std.sum Cnt is the total over
+          -- the result set, not the per-group sum. Bar stays as a raw
+          -- SQL fragment — repeat(chr, n) has no dataframe-Expr form.
           freqQ = DfQ.fromBase baseRend
-            DfQ.|> DfQ.rawStage
-                     ("group {" <> prqlCols <> "} "
-                   <> "(aggregate {Cnt = std.count this})")
+            DfQ.|> DfQ.groupAgg cs
+                     [F.count DfQ.this `as` "Cnt"]
+            -- Pct needs a window sum (std.sum over the outer frame), and
+            -- Bar uses a DuckDB s-string for repeat(); neither is in
+            -- dataframe's Expr today. One rawStage covers both.
             DfQ.|> DfQ.rawStage
                      "derive {Pct = Cnt * 100 / std.sum Cnt, \
                      \Bar = s\"repeat('#', CAST(Pct/5 AS INTEGER))\"}"
