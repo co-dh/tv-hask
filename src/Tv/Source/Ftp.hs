@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+-- STUB: full migration in round 2. Keeps behavior via legacy adapter in `open`.
 -- | FTP (ftp://) backend: curl fetches `ls -l`, Haskell parses it into TSV,
 -- DuckDB reads the TSV. URLs are encoded per-segment because curl is
 -- path-sensitive (spaces, unicode).
@@ -18,7 +19,7 @@ import qualified Tv.Log as Log
 import qualified Tv.Remote as Remote
 import qualified Tv.Render as Render
 import qualified Tv.Tmp as Tmp
-import Tv.Source.Core (Source (..))
+import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
 
 pfx_ :: Text
@@ -68,25 +69,21 @@ ftpList _ path_ = do
       TIO.writeFile tmpFile content
       pure tmpFile
 
-ftpDl :: Bool -> Text -> IO Text
-ftpDl _ path_ = do
-  Render.statusMsg ("Downloading " <> path_ <> " ...")
-  (vars, tmpDir) <- ftpVars path_
-  let cmd = Core.expand dlTmpl vars
-  _ <- Core.runCmd "download" cmd
-  pure (tmpDir <> "/" <> Core.fromPath path_)
+ftpOpen :: Bool -> Text -> IO OpenResult
+ftpOpen _ path_
+  | T.isSuffixOf "/" path_ = pure (OpenAsDir path_)
+  | otherwise = do
+      Render.statusMsg ("Downloading " <> path_ <> " ...")
+      (vars, tmpDir) <- ftpVars path_
+      let cmd = Core.expand dlTmpl vars
+      _ <- Core.runCmd "download" cmd
+      pure $ OpenAsFile $ T.unpack $ tmpDir <> "/" <> Core.fromPath path_
 
 ftp :: Source
 ftp = Source
-  { pfx       = pfx_
-  , list      = ftpList
-  , enter     = Nothing
-  , enterUrl  = Nothing
-  , download  = ftpDl
-  , resolve   = ftpDl                  -- FTP needs download — DuckDB can't read ftp:// URLs directly
-  , setup     = pure ()
-  , parent    = \p -> Remote.parent p 3
-  , grpCol    = ""
-  , attach    = False
-  , dirSuffix = True
+  { pfx    = pfx_
+  , parent = \p -> Remote.parent p 3
+  , grpCol = Nothing
+  , list   = ftpList
+  , open   = ftpOpen
   }

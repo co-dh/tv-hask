@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+-- STUB: full migration in round 2. Keeps behavior via legacy adapter in `open`.
 -- | HuggingFace dataset browser (hf://datasets/<org>/<name>/…): lists files
 -- inside a dataset via the Hub tree API. When the tree API 404s at the
 -- org level, falls back to the `?author=` API for org-level dataset lists.
@@ -13,11 +14,12 @@ import System.Exit (ExitCode (..))
 
 import qualified Tv.Data.DuckDB.Conn as Conn
 import Tv.Data.DuckDB.Table (AdbcTable, fromTmp, tmpName)
+import qualified Tv.FileFormat as FileFormat
 import qualified Tv.Log as Log
 import qualified Tv.Remote as Remote
 import qualified Tv.Render as Render
 import qualified Tv.Tmp as Tmp
-import Tv.Source.Core (Source (..))
+import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
 
 pfx_ :: Text
@@ -39,9 +41,6 @@ listSqlTmpl = "SELECT split_part(path, '/', -1) as name, size, type FROM read_js
 fbSqlTmpl :: Text
 fbSqlTmpl = "SELECT split_part(id, '/', -1) as name, downloads, likes, description, "
           <> "'directory' as type FROM read_json_auto('{src}')"
-
-dlTmpl :: Text
-dlTmpl = "curl -sfL -o {tmp}/{name} https://huggingface.co/datasets/{1}/{2}/resolve/main/{3+}"
 
 hfVars :: Text -> IO (V.Vector (Text, Text), Text)
 hfVars path_ = do
@@ -104,25 +103,27 @@ hfParent p = case Remote.parent p 5 of
   Just par -> Just par
   Nothing  -> Just parentFallback
 
-hfDl :: Bool -> Text -> IO Text
-hfDl _ path_ = do
-  Render.statusMsg ("Downloading " <> path_ <> " ...")
-  (vars, tmpDir) <- hfVars path_
-  let cmd = Core.expand dlTmpl vars
-  _ <- Core.runCmd "download" cmd
-  pure (tmpDir <> "/" <> Core.fromPath path_)
+dlTmpl :: Text
+dlTmpl = "curl -sfL -o {tmp}/{name} https://huggingface.co/datasets/{1}/{2}/resolve/main/{3+}"
+
+-- | Data files: DuckDB httpfs reads hf:// URIs directly (pass-through).
+-- Non-data files (README, .gitattributes …): download so the text viewer works.
+hfOpen :: Bool -> Text -> IO OpenResult
+hfOpen _ path_
+  | T.isSuffixOf "/" path_ = pure (OpenAsDir path_)
+  | FileFormat.isData path_ = pure $ OpenAsFile $ T.unpack path_
+  | otherwise = do
+      Render.statusMsg ("Downloading " <> path_ <> " ...")
+      (vars, tmpDir) <- hfVars path_
+      let cmd = Core.expand dlTmpl vars
+      _ <- Core.runCmd "download" cmd
+      pure $ OpenAsFile $ T.unpack $ tmpDir <> "/" <> Core.fromPath path_
 
 hfDataset :: Source
 hfDataset = Source
-  { pfx       = pfx_
-  , list      = hfList
-  , enter     = Nothing
-  , enterUrl  = Nothing
-  , download  = hfDl
-  , resolve   = \_ p -> pure p        -- DuckDB reads hf:// URLs natively (httpfs)
-  , setup     = pure ()
-  , parent    = hfParent
-  , grpCol    = ""
-  , attach    = False
-  , dirSuffix = True
+  { pfx    = pfx_
+  , parent = hfParent
+  , grpCol = Nothing
+  , list   = hfList
+  , open   = hfOpen
   }

@@ -45,7 +45,6 @@ import qualified Tv.Data.DuckDB.Table as Table
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.FileFormat as FileFormat
 import qualified Tv.Source as Source
-import Tv.Source (Source)
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import Tv.Types
@@ -169,8 +168,7 @@ mkView noSign_ path_ depth = case Source.findSource path_ of
     case m of
       Nothing -> pure Nothing
       Just adbc -> do
-        let grp = if T.null (Source.grpCol src) then V.empty
-                  else V.singleton (Source.grpCol src)
+        let grp = maybe V.empty V.singleton (Source.grpCol src)
         pure $ fldView adbc path_ depth (Remote.dispName path_) grp
   Nothing -> do
       (ec, rpOut, _) <- readProcessWithExitCode "realpath" [T.unpack path_] ""
@@ -230,43 +228,30 @@ goParent noSign_ s = do
       Just s' -> pure (Just s')
       Nothing -> tryView noSign_ s (dir_ <> "/..") (curDepth s) False
 
--- | Try to open a file as data, fall back to viewer
-openFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Source
-         -> IO (Maybe (ViewStack AdbcTable))
-openFile tm noSign_ s curDir_ p src = do
-  let fullPath = joinPath curDir_ p
+-- | Open a local file: data → FileFormat reader, else hexdump/text viewer.
+-- `fullPath` is the path used for display; `viewPath` is what the reader/viewer
+-- actually opens (may be a local download of a URI).
+openLocal :: Bool -> ViewStack AdbcTable -> Text -> Text -> FilePath
+          -> IO (Maybe (ViewStack AdbcTable))
+openLocal tm s fullPath p viewPath =
   if FileFormat.isData p
     then do
-      openPath <- case src of
-        Just c  -> Source.configResolve noSign_ c fullPath
-        Nothing -> pure fullPath
-      m <- FileFormat.openFile openPath
+      m <- FileFormat.openFile (T.pack viewPath)
       case m of
         Just v  -> pure (Just (View.push s v))
-        Nothing -> do
-          case src of
-            Nothing -> FileFormat.viewFile tm fullPath
-            _       -> pure ()
-          pure (Just s)
+        Nothing -> do FileFormat.viewFile tm fullPath; pure (Just s)
     else do
-      viewPath <- case src of
-        Just c  -> Source.runDl noSign_ c fullPath
-        Nothing -> pure fullPath
       done <-
         if T.isSuffixOf ".gz" p
           then do
-            mv <- FileFormat.readCsv viewPath
-            case mv of
-              Just v  -> pure (Just (View.push s v))
-              Nothing -> pure Nothing
+            mv <- FileFormat.readCsv (T.pack viewPath)
+            pure $ fmap (View.push s) mv
           else pure Nothing
       case done of
         Just s' -> pure (Just s')
-        Nothing -> do
-          FileFormat.viewFile tm viewPath
-          pure (Just s)
+        Nothing -> do FileFormat.viewFile tm (T.pack viewPath); pure (Just s)
 
--- | Attach-based enter (FileFormat or config-driven like pg://): open row as a table.
+-- | FileFormat-attach enter: curDir_ is a .duckdb file, rows are tables.
 enterAttach :: ViewStack AdbcTable -> Text -> IO (Maybe (ViewStack AdbcTable))
 enterAttach s curDir_ = do
   mTbl <- curPath (View.cur s)
@@ -281,32 +266,28 @@ enterAttach s curDir_ = do
             Nothing -> pure (Just s)
             Just v  -> pure (Just (View.push s v))
 
--- | Source-driven file enter: script enter → JSON, or enterUrl redirect,
---   else falls back to openFile.
-enterFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Source
-          -> IO (Maybe (ViewStack AdbcTable))
-enterFile tm noSign_ s curDir_ p src = case src of
-  Just c | Just _ <- Source.enter c -> do
-    mAdbc <- Source.runEnter c p
-    case mAdbc of
-      Just adbc ->
-        case View.fromTbl adbc (Source.pfx c <> p) 0 V.empty 0 of
-          Just v  -> pure (Just (View.push s v))
-          Nothing -> pure (Just s)
+-- | Dispatch a source's `open` result.
+handleOpen :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Source.OpenResult
+           -> IO (Maybe (ViewStack AdbcTable))
+handleOpen tm noSign_ s fullPath p res = case res of
+  Source.OpenAsTable adbc ->
+    case View.fromTbl adbc fullPath 0 V.empty 0 of
+      Just v  -> pure (Just (View.push s v))
       Nothing -> pure (Just s)
-  Just c | Just mkUrl <- Source.enterUrl c -> tryView noSign_ s (mkUrl p) (curDepth s) True
-  _ -> openFile tm noSign_ s curDir_ p src
+  Source.OpenAsFile localPath -> openLocal tm s fullPath p localPath
+  Source.OpenAsDir  uri       -> do
+    m <- mkView noSign_ uri 1
+    pure $ maybe (Just s) (Just . View.push s) m
+  Source.OpenNothing -> pure (Just s)
 
 -- | Enter directory or view file based on current row
 enter :: Bool -> Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 enter tm noSign_ s = do
   let curDir_ = View.curDir (View.cur s)
       src = Source.findSource curDir_
-  -- Attach-based: FileFormat or source-driven (e.g. pg://)
-  let isAttach =
-        maybe False FileFormat.attach (FileFormat.find curDir_)
-        || maybe False Source.attach src
-  if isAttach
+  -- FileFormat-attach: the current view is a .duckdb file, rows are tables.
+  -- Source-level attach (pg://) is now handled via `open → OpenAsTable`.
+  if maybe False FileFormat.attach (FileFormat.find curDir_)
     then enterAttach s curDir_
     else do
       mTyp <- curType (View.cur s)
@@ -316,12 +297,21 @@ enter tm noSign_ s = do
           if p == ".." || T.isSuffixOf "/.." p
             then goParent noSign_ s
             else
+              -- append '/' so source.open knows this is a directory
               let fullPath = case src of
-                    Just c  -> joinPath curDir_
-                                 (if Source.dirSuffix c then p <> "/" else p)
+                    Just _  -> joinPath curDir_ (p <> "/")
                     Nothing -> joinPath curDir_ p
-              in tryView noSign_ s fullPath (curDepth s) True
-        (Just 'f', Just p) -> enterFile tm noSign_ s curDir_ p src
+              in case src of
+                   Just c -> do
+                     r <- Source.runOpen noSign_ c fullPath
+                     handleOpen tm noSign_ s fullPath p r
+                   Nothing -> tryView noSign_ s fullPath (curDepth s) True
+        (Just 'f', Just p) -> do
+          let fullPath = joinPath curDir_ p
+          case src of
+            Just c  -> do r <- Source.runOpen noSign_ c fullPath
+                          handleOpen tm noSign_ s fullPath p r
+            Nothing -> openLocal tm s fullPath p (T.unpack fullPath)
         (Just 's', Just p) ->
           case src of
             Just _  -> pure (Just s)
@@ -330,7 +320,7 @@ enter tm noSign_ s = do
               (ec, _, _) <- readProcessWithExitCode "test" ["-d", T.unpack fullPath] ""
               if ec == ExitSuccess
                 then tryView noSign_ s fullPath (curDepth s) True
-                else openFile tm noSign_ s curDir_ p Nothing
+                else openLocal tm s fullPath p (T.unpack fullPath)
         _ -> pure Nothing
 
 -- | Get trash command (trash-put or gio trash)

@@ -13,7 +13,7 @@ import qualified Tv.Log as Log
 import qualified Tv.Remote as Remote
 import qualified Tv.Render as Render
 import qualified Tv.Tmp as Tmp
-import Tv.Source.Core (Source (..))
+import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
 
 pfx_ :: Text
@@ -71,25 +71,23 @@ s3List noSign path_ = do
       Core.addParentRow (Remote.parent path_ 3) tbl
       fromTmp tbl
 
-s3Dl :: Bool -> Text -> IO Text
-s3Dl noSign path_ = do
-  Render.statusMsg ("Downloading " <> path_ <> " ...")
-  (vars, tmpDir) <- s3Vars noSign path_
-  let cmd = Core.expand dlTmpl vars
-  _ <- Core.runCmd "download" cmd
-  pure (tmpDir <> "/" <> Core.fromPath path_)
+-- | Trailing '/' = directory (caller appended it for dir rows); otherwise
+-- a file that needs local download before FileFormat can read it.
+s3Open :: Bool -> Text -> IO OpenResult
+s3Open noSign path_
+  | T.isSuffixOf "/" path_ = pure (OpenAsDir path_)
+  | otherwise = do
+      Render.statusMsg ("Downloading " <> path_ <> " ...")
+      (vars, tmpDir) <- s3Vars noSign path_
+      let cmd = Core.expand dlTmpl vars
+      _ <- Core.runCmd "download" cmd
+      pure $ OpenAsFile $ T.unpack $ tmpDir <> "/" <> Core.fromPath path_
 
 s3 :: Source
 s3 = Source
-  { pfx       = pfx_
-  , list      = s3List
-  , enter     = Nothing
-  , enterUrl  = Nothing
-  , download  = s3Dl
-  , resolve   = s3Dl                 -- S3 requires local download (DuckDB can't read s3:// directly here)
-  , setup     = pure ()
-  , parent    = \p -> Remote.parent p 3
-  , grpCol    = ""
-  , attach    = False
-  , dirSuffix = True
+  { pfx    = pfx_
+  , parent = \p -> Remote.parent p 3
+  , grpCol = Nothing
+  , list   = s3List
+  , open   = s3Open
   }

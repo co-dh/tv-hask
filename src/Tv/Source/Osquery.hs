@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+-- STUB: full migration in round 2. Keeps behavior via legacy adapter in `open`.
 -- | Osquery (osquery://) backend: lists all osqueryi tables from a
 -- pre-populated DuckDB file, entering one runs `osqueryi --json` and
 -- applies typed columns from the corresponding stub view.
@@ -13,7 +14,7 @@ import System.Exit (ExitCode (..))
 import qualified Tv.Data.DuckDB.Conn as Conn
 import Tv.Data.DuckDB.Table (AdbcTable, fromTmp, tmpName)
 import qualified Tv.Log as Log
-import Tv.Source.Core (Source (..))
+import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
 
 pfx_ :: Text
@@ -49,12 +50,13 @@ osqSetup = Core.onceFor setupKey $ do
 
 osqList :: Bool -> Text -> IO (Maybe AdbcTable)
 osqList _ _ = do
+  osqSetup
   tbl <- tmpName "src"
   _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> listSql)
   fromTmp tbl
 
--- | Enter: `osqueryi --json "SELECT * FROM <name>"` → JSON → temp table,
--- then copy typed columns from the stub view (osq.<name>) for display.
+-- | `osqueryi --json "SELECT * FROM <name>"` → JSON → temp table.
+-- Applies typed columns from the stub view (osq.<name>) for display.
 osqEnter :: Text -> IO (Maybe AdbcTable)
 osqEnter name = do
   Core.checkShell name "name"
@@ -74,17 +76,22 @@ osqEnter name = do
              Core.ignoreErrs (Core.applyStubTypes tbl name)
              fromTmp tbl
 
+-- | Row names are osqueryi tables; `open` runs the script and returns the
+-- resulting temp table, which Folder pushes as a new view.
+osqOpen :: Bool -> Text -> IO OpenResult
+osqOpen _ path_ = do
+  osqSetup
+  let name = if T.isPrefixOf pfx_ path_ then T.drop (T.length pfx_) path_ else path_
+  mAdbc <- osqEnter name
+  case mAdbc of
+    Just adbc -> pure (OpenAsTable adbc)
+    Nothing   -> pure OpenNothing
+
 osquery :: Source
 osquery = Source
-  { pfx       = pfx_
-  , list      = osqList
-  , enter     = Just osqEnter
-  , enterUrl  = Nothing
-  , download  = \_ p -> pure p
-  , resolve   = \_ p -> pure p
-  , setup     = osqSetup
-  , parent    = \_ -> Nothing
-  , grpCol    = "name"
-  , attach    = False
-  , dirSuffix = False
+  { pfx    = pfx_
+  , parent = \_ -> Nothing
+  , grpCol = Just "name"
+  , list   = osqList
+  , open   = osqOpen
   }
