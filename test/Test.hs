@@ -44,12 +44,8 @@ import qualified Tv.Data.DuckDB.Table as Tbl
 import qualified Tv.Log as Log
 import qualified Tv.Tmp as Tmp
 
--- | Alias: `run` in Lean -> runHask in Haskell (no separate binary)
 run :: Text -> FilePath -> IO Text
 run keys file = runHask keys file []
-
-runE :: Text -> FilePath -> [String] -> IO Text
-runE = runHask
 
 -- | assert helper that raises through HUnit
 assert :: Bool -> String -> Assertion
@@ -1258,7 +1254,7 @@ s3path :: FilePath
 s3path = "s3://overturemaps-us-west-2/release/"
 
 s3run :: Text -> IO Text
-s3run keys = runE keys s3path ["+n"]
+s3run keys = runHask keys s3path ["+n"]
 
 test_s3_list :: Assertion
 test_s3_list = do

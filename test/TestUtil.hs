@@ -1,11 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
--- |
---   Shared test utilities used by MainSpec, ScreenSpec, RenderSpec, PureSpec.
---   Literal port of Tc/test/TestUtil.lean.
 module TestUtil
-  ( bin
-  , tvHaskBin
-  , run
+  ( tvHaskBin
   , runHask
   , runPty
   , isContent
@@ -21,26 +16,19 @@ module TestUtil
 
 import Control.Exception (catch, SomeException)
 import Data.IORef (IORef, readIORef, writeIORef)
-import System.IO.Unsafe (unsafePerformIO)
 import Data.Char (isAlpha, isDigit)
 import Data.Text (Text)
 import Tv.Types (getD)
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
-import System.IO (hFlush, stderr, withFile, IOMode (..), Handle)
-import qualified System.IO as IO
+import System.IO (withFile, IOMode (..))
 import System.Process (readProcessWithExitCode, readCreateProcessWithExitCode, proc, CreateProcess(..))
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 import System.IO.Unsafe (unsafePerformIO)
 
--- | Path to the tv binary, resolved once via `cabal list-bin`.
-bin :: FilePath
-bin = unsafePerformIO resolveBin
-{-# NOINLINE bin #-}
-
 tvHaskBin :: FilePath
-tvHaskBin = bin
+tvHaskBin = unsafePerformIO resolveBin
+{-# NOINLINE tvHaskBin #-}
 
 resolveBin :: IO FilePath
 resolveBin = do
@@ -51,12 +39,11 @@ resolveBin = do
     _           -> pure fallback
   where fallback = "dist-newstyle/build/x86_64-linux/ghc-9.6.6/tv-hask-0.1.0.0/x/tv/build/tv/tv"
 
-run :: Text -> FilePath -> [String] -> IO Text
-run = runWith bin
-
--- | Same as 'run' but spawns the Haskell-built `tv` binary.
 runHask :: Text -> FilePath -> [String] -> IO Text
-runHask = runWith tvHaskBin
+runHask keys file extraArgs = do
+  let args = (if null file then [] else [file]) ++ extraArgs ++ ["-c", T.unpack keys]
+  (_, out, _) <- readProcessWithExitCode tvHaskBin args ""
+  pure (T.pack out)
 
 -- | Drive `tv` through a real pty via test/pty_run.py. `keys` is passed
 -- verbatim to pty_run.py, which expands only \\r/\\n/\\t/\\b/\\e — so send
@@ -69,12 +56,6 @@ runPty keys file = do
   let envOverride = ("TV", tvHaskBin) : filter ((/= "TV") . fst) parentEnv
       cp = (proc "test/pty_run.py" [file, keys]) { env = Just envOverride }
   (_, out, _) <- readCreateProcessWithExitCode cp ""
-  pure (T.pack out)
-
-runWith :: FilePath -> Text -> FilePath -> [String] -> IO Text
-runWith exe keys file extraArgs = do
-  let args = (if null file then [] else [file]) ++ extraArgs ++ ["-c", T.unpack keys]
-  (_, out, _) <- readProcessWithExitCode exe args ""
   pure (T.pack out)
 
 isContent :: Text -> Bool
