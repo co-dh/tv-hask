@@ -110,7 +110,6 @@ data Conn = Conn
 -- concurrent finalizer.
 data Result = Result
   { resPtr      :: !(ForeignPtr DuckDBResult)
-  , resConn     :: !Conn
   , resColNames :: !(Vector Text)
   , resColTypes :: !(Vector ColType)
   , resRawTypes :: !(Vector DuckDBType)
@@ -220,7 +219,7 @@ query conn sql = mask_ $ do
     C.c_duckdb_destroy_result resSlot
     free resSlot
     touchForeignPtr (connHdl conn)
-  pure (Result resFp conn names tys rawTys)
+  pure (Result resFp names tys rawTys)
 
 zeroBytes :: Ptr Word8 -> Int -> IO ()
 zeroBytes p n = go 0

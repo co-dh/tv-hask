@@ -10,19 +10,18 @@ module Tv.Transpose
   , commands
   ) where
 
-import Data.Text (Text)
 import qualified Data.Vector as V
 
 import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, tryStk)
-import Tv.CmdConfig (Entry, CmdInfo(..), mkEntry, hdl)
+import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Data.DuckDB.Ops (transposeSql, createTempTable)
 import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Table (AdbcTable, stripSemi, tmpName, fromTmp)
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Types (Cmd(..))
-import Tv.View (View(..), ViewStack)
+import Tv.View (ViewStack)
 import qualified Tv.View as View
 
 -- | Max rows to transpose (each original row becomes a column).

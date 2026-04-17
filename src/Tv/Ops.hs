@@ -24,7 +24,6 @@ module Tv.Ops
   , commands
   ) where
 
-import Control.Exception (SomeException, try)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -37,7 +36,6 @@ import Optics.Core ((&), (.~))
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Types (Cmd(..), ColType(..), Op(..), typeStr, escSql)
-import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Table (AdbcTable, tmpName, stripSemi)
 import qualified Tv.Data.DuckDB.Table as Table

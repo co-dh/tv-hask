@@ -22,7 +22,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.Directory (doesDirectoryExist)
 import System.Environment (getArgs, lookupEnv)
-import System.IO (hPutStrLn, stderr)
+import System.IO (stderr)
 
 import qualified Tv.App.Common as Common
 import Tv.App.Types (AppState(..))
@@ -40,7 +40,6 @@ import qualified Tv.SourceConfig as SourceConfig
 import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
-import qualified Tv.UI.Info as UIInfo
 import Tv.View (View, ViewStack(..))
 import qualified Tv.View as View
 import qualified Tv.Log as Log
@@ -155,8 +154,7 @@ appMain args = do
   theme <- Theme.stateInit
   logPath <- Log.path
   Log.setLog (T.pack logPath)
-  td <- Tmp.tmpDir `seq` pure ""
-  _  <- td `seq` pure ()
+  Tmp.tmpDir `seq` pure ()
   tdStr <- Log.dir
   Log.write "init" ("tmpdir=" <> T.pack tdStr)
   initRes <- try AdbcTable.init :: IO (Either SomeException Text)

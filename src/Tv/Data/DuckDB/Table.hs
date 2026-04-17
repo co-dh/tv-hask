@@ -53,11 +53,9 @@ module Tv.Data.DuckDB.Table
   ) where
 
 import Prelude hiding (init, filter)
-import qualified Prelude
 import Control.Exception (SomeException, try)
-import Control.Monad (forM_, when, unless)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef', modifyIORef')
-import Data.Int (Int64)
+import Control.Monad (forM_)
+import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef', modifyIORef')
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -81,7 +79,6 @@ import Tv.Types
   )
 import qualified Tv.Log as Log
 import qualified Tv.Tmp as Tmp
-import Optics.Core ((&), (.~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- ----------------------------------------------------------------------------

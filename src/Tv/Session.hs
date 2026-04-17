@@ -37,9 +37,6 @@ import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.Directory (createDirectoryIfMissing, listDirectory)
-import System.IO.Error (userError)
-
-import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Prql (Query(..))
 import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Table as AdbcTable

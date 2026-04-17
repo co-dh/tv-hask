@@ -15,7 +15,7 @@ module Tv.Fzf
   ) where
 
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Monad (unless, when)
+import Control.Monad (unless)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (foldl')
 import Data.Text (Text)

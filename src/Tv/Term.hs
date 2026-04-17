@@ -41,7 +41,7 @@ import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.Int (Int32, Int64)
 import qualified Data.IntSet as IS
-import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -50,7 +50,6 @@ import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.Builder as TB
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import qualified Data.Vector.Storable as VS
 import qualified Data.Vector.Storable.Mutable as VSM
 import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign.C.Types (CInt(..))
@@ -191,9 +190,6 @@ instance Storable Cell where
     pokeByteOff p 0 ch
     pokeByteOff p 4 fg
     pokeByteOff p 8 bg
-
-cellCh :: Cell -> Char
-cellCh (Cell c _ _) = chr (fromIntegral c)
 
 -- | `emptyCell` is a default space with default style — matches termbox2's
 -- tb_clear initialization. `present` skips any cell that still equals this
@@ -835,7 +831,7 @@ renderTable
                in case curVisIdx of
                     Nothing -> layoutV
                     Just cvi ->
-                      let (di, cx, cw) = layoutV V.! cvi
+                      let (di, _, cw) = layoutV V.! cvi
                           origIdx = fromIntegral (colIdxs V.! di)
                           base = max 3 (baseWidthsV V.! origIdx + fromIntegral widthAdj)
                           expand = min slack (max 0 (base - cw))

@@ -1,10 +1,86 @@
 # tv-hask Architecture
 
-One diagram + one-paragraph description of how `src/Tv/` is layered. Modules
-lower in a layer may import from the same layer or any layer above; no module
-imports downward. Every module has an explicit export list.
+## Main loop — state machine
+
+Every frame goes through this cycle. Arrows are mandatory; branches labelled.
+Primary dispatch code is `App.Common.loopProg` (src/Tv/App/Common.hs:298).
+
+```
+                                         ┌──► return final AppState ◄── ActQuit / key=Nothing
+                                         │
+        ┌─────────────────────────┐      │
+        │  doRender               │      │   reads AppState, paints cell buffer,
+        │   (renderFrame)         │      │   flushes via Term.present
+        └───────────┬─────────────┘      │
+                    ▼                    │
+        ┌─────────────────────────┐      │
+        │  nextKey :: AppM        │      │   Prod: Term.pollEvent → Key.toKey
+        │    → Maybe Text         │      │   Test: pop from keystroke Vector
+        └───────────┬─────────────┘      │
+                    │                    │
+         Nothing ───┤                    │
+                    │                    │
+         Just key ──┤                    │
+                    ▼                    │
+        ┌─────────────────────────┐      │   drains external IPC (CLI -c / socket)
+        │  Socket.pollCmd         │      │   may short-circuit into dispatchHandler
+        └───────────┬─────────────┘      │
+                    ▼                    │
+        ┌─────────────────────────┐      │
+        │  CmdConfig.keyLookup    │      │   (key, viewKind) → Maybe CmdInfo
+        │    key, View.vkind      │      │   cache hit is the hot path
+        └───────────┬─────────────┘      │
+          Nothing ──┘                    │        (unbound key → loop)
+          Just ci                        │
+                    ▼                    │
+        ┌─────────────────────────┐      │
+        │  readArg (if isArgCmd)  │      │   prompt user for a string arg
+        └───────────┬─────────────┘      │   (filter expr, file path, …)
+                    ▼                    │
+        ┌─────────────────────────┐      │   registry is a Vector (Entry,
+        │  dispatch               │      │   Maybe HandlerFn) built by
+        │   registry[ciCmd ci]    │      │   concatenating each feature
+        └───────────┬─────────────┘      │   module's `commands`
+                    ▼                    │
+        ┌─────────────────────────┐      │   handler shape varies by feature,
+        │  HandlerFn runs         │      │   but the canonical pure path is:
+        │   State → CmdInfo →     │      │     View.update cur cmd arg
+        │   arg → IO Action       │      │   returning (View', Effect)
+        └───────────┬─────────────┘      │
+                    ▼                    │
+        ┌─────────────────────────┐      │
+        │  runViewEffect          │      │   EffectNone   → store new View
+        │   interprets Effect     │      │   EffectQuit   → ActQuit
+        │                         │      │   EffectSort   → Ops.sort + rebuild
+        │                         │      │   EffectFreq   → AdbcTable.freqTable
+        │                         │      │   EffectExclude, EffectFetchMore…
+        └───────────┬─────────────┘      │
+                    │                    │
+                    ▼                    │
+              Action ──┬──► ActOk a''  ──┼── recurse with a''
+                       │                 │
+                       ├──► ActQuit    ──┘
+                       │
+                       └──► ActUnhandled ── recurse with a' (pre-handler state)
+```
+
+The free monad `Tv.AppF.AppM` abstracts three operations that differ
+test-vs-prod: `doRender`, `nextKey`, `readArg`. Everything else threads
+through `liftIO`. Two interpreters live in `App.Common` (`prodInterp`,
+`testInterp`). The main loop body is interpreter-agnostic.
+
+### Pure core / IO shell
+
+`View.update` and `Freq.update` are pure: they return `(State, Effect)`
+where the state is already updated and `Effect` is a residual instruction.
+`runViewEffect` is the only place that touches DuckDB / the filesystem.
+This keeps the dispatch graph testable — `TestPure` exercises the state
+transitions directly, without a DB or a terminal.
 
 ## Module layering
+
+Modules lower in a layer may import from the same layer or layers above;
+no module imports downward. Every module has an explicit export list.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -14,17 +90,17 @@ imports downward. Every module has an explicit export list.
                                     │
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
-│ ORCHESTRATION   (IO shell around the pure core)                          │
+│ ORCHESTRATION   (the loop above lives here)                              │
 │   Tv.App.Main       — CLI parsing, init, source dispatch                 │
 │   Tv.App.Common     — handler registry, dispatch, render, main loop      │
-│   Tv.App.Types      — AppState + handler combinators                     │
-│   Tv.AppF           — free-monad AppM + two-interpreter split (prod/test)│
+│   Tv.App.Types      — AppState, Effect interpreter (runViewEffect)       │
+│   Tv.AppF           — free-monad AppM + two-interpreter split            │
 └──────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ FEATURES   (one module per user-visible capability; each exports         │
-│             its own `commands` vector)                                   │
+│             its own `commands` Vector for the registry concat)           │
 │                                                                          │
 │   Tv.Nav        — cursor + selection + grouping                          │
 │   Tv.Filter     — fzf search / PRQL filter / jumpCol                     │
@@ -62,8 +138,8 @@ imports downward. Every module has an explicit export list.
 │   Tv.Data.DuckDB.Conn  — query lifecycle, cellStr/cellInt/cellDbl        │
 │   Tv.Data.DuckDB.Prql  — PRQL Query + `prqlc` compile shell-out          │
 │   Tv.Data.DuckDB.Table — AdbcTable record + builders (fromFile, …)       │
-│   Tv.Data.DuckDB.Ops   — high-level SQL helpers: transposeSql,           │
-│                          colAggSql, maxSplitParts, createTempView/Table, │
+│   Tv.Data.DuckDB.Ops   — named SQL helpers: transposeSql, colAggSql,     │
+│                          maxSplitParts, createTempView/Table,            │
 │                          queryMeta, columnComment                        │
 │   Tv.Data.Text         — TSV parser (from stdin / string)                │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -83,8 +159,8 @@ imports downward. Every module has an explicit export list.
 
 ## Invariants
 
-1. **PRQL-only for feature modules.** Feature modules never build SQL strings.
-   They call `Tv.Data.DuckDB.Prql.pipe` to compose queries and
+1. **PRQL-only for feature modules.** Feature modules never build SQL
+   strings. They call `Tv.Data.DuckDB.Prql.pipe` to compose queries and
    `Tv.Data.DuckDB.Ops.{transposeSql,colAggSql,maxSplitParts,createTempView,
    createTempTable}` for the few cases PRQL can't express (UNPIVOT,
    per-column aggregates, temp view/table plumbing).
@@ -92,7 +168,7 @@ imports downward. Every module has an explicit export list.
 2. **Pure core, IO shell.** `View.update` / `Freq.update` return
    `(State, Effect)` — the state is already updated; the `Effect` is a
    residual instruction the IO shell (`App.Types.runViewEffect`) executes.
-   This keeps the dispatch graph testable.
+   This is what makes the dispatch graph testable without DuckDB.
 
 3. **Two interpreters for one loop.** `Tv.AppF.AppM` is a free monad with
    three operations that differ test-vs-prod (`render`, `nextKey`,
@@ -104,23 +180,3 @@ imports downward. Every module has an explicit export list.
    `Vector (Entry, Maybe HandlerFn)` built from each feature module's own
    `commands` export. Adding a feature is a one-line concat, no central
    table to edit.
-
-## Recent simplification (this PR)
-
-- **Split `Tv.Util` (309 LOC, 4-subsystem grab-bag)** → `Tv.Log`, `Tv.Tmp`,
-  `Tv.Socket`, `Tv.Remote`. Removes `import qualified Tv.Util as Log` /
-  `as Socket` dual-alias of the same module from the same file.
-- **`renderSnap` helper in `App.Common`** replaces two ~10-line duplicated
-  live-preview render blocks (CmdRowSearch, CmdThemeOpen).
-- **Dropped `module Tv.App.Types` re-export from `App.Common`** — feature
-  modules already import `App.Types` directly.
-- **Raw SQL consolidation** into `Tv.Data.DuckDB.Ops`. UNPIVOT+PIVOT,
-  SUM/AVG/COUNT, `array_length(string_split_regex)`, `CREATE TEMP
-  VIEW/TABLE` previously inlined in `Tv.Ops`, `Tv.Transpose`, `Tv.StatusAgg`
-  now live behind named helpers.
-- **Unified `ColCache k v`** in `Tv.Types` replaces two different
-  `(Text, …, Text)` tuple types (`AppState.statusCache`,
-  `StatusAgg.Cache`).
-
-All behavior-preserving: no change to key bindings, cast output, or
-public API beyond these internal moves.

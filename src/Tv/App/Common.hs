@@ -50,7 +50,6 @@ import Optics.Core ((&), (.~), (%~))
 import qualified Tv.Meta as Meta
 import qualified Tv.Nav as Nav
 import qualified Tv.Plot as Plot
-import qualified Tv.Render as Render
 import Tv.Render (tabLine)
 import qualified Tv.Session as Session
 import qualified Tv.Sparkline as Sparkline
@@ -66,7 +65,7 @@ import qualified Tv.Log as Log
 import qualified Tv.Socket as Socket
 import qualified Tv.Data.DuckDB.Ops as Ops
 import Tv.Data.DuckDB.Table (AdbcTable)
-import Tv.View (View(..), ViewStack(..))
+import Tv.View (ViewStack(..))
 import qualified Tv.View as View
 
 -- Dispatch --

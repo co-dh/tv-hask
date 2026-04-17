@@ -60,7 +60,6 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word8, Word32)
 import Optics.TH (makeFieldLabelsNoPrefix)
-import Data.List (nub)
 import Data.Hashable (Hashable(..))
 import Data.Maybe (fromMaybe, listToMaybe)
 -- | StrEnum: simple enums with string round-trip.
