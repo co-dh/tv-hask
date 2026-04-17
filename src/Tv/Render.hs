@@ -227,7 +227,7 @@ waitForQ = do
     else waitForQ
 
 -- | Render error popup centered on screen, returns on 'q' press.
--- Callers like SourceConfig.runList may invoke this before Term.init —
+-- Callers like Tv.Source.runList may invoke this before Term.init —
 -- waitForQ would CPU-spin since tb_peek_event returns immediately pre-init.
 errorPopup :: Text -> IO ()
 errorPopup msg = do
