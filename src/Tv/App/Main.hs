@@ -13,7 +13,7 @@ module Tv.App.Main
   ) where
 
 import Control.Exception (SomeException, try)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -144,14 +144,9 @@ outputTable a = do
   txt <- Ops.toText (View.tbl (stk a))
   TIO.putStrLn txt
 
--- main entry point: init backend, parse args, run app
-appMain :: [Text] -> IO ()
-appMain args = do
-  let cli@(CliArgs { path = path_, keys = keys_, noSign = noSign_ }) = parseArgs args
-  envTest <- maybe False (const True) <$> lookupEnv "TV_TEST_MODE"
-  let testMode = test cli || envTest
-  pipeMode <- if testMode then pure False else not <$> Term.isattyStdin
-  theme <- Theme.stateInit
+-- | Init backend + log file + tmp dir. Returns backend error ("" on success).
+initLogging :: IO Text
+initLogging = do
   logPath <- Log.path
   Log.setLog (T.pack logPath)
   Tmp.tmpDir `seq` pure ()
@@ -159,89 +154,99 @@ appMain args = do
   Log.write "init" ("tmpdir=" <> T.pack tdStr)
   initRes <- try AdbcTable.init :: IO (Either SomeException Text)
   case initRes of
-    Left e -> TIO.hPutStrLn stderr ("Backend init error: " <> T.pack (show e))
-    Right err
-      | not (T.null err) -> TIO.hPutStrLn stderr ("Backend init failed: " <> err)
-      | otherwise -> runRest cli path_ keys_ testMode noSign_ pipeMode theme
-  where
-    runRest cli path_ keys_ testMode noSign_ pipeMode theme = do
-      -- session restore: -s name
-      case session cli of
-        Just sessName -> do
-          finallyCleanup $ do
-            msess <- Session.load noSign_ sessName
-            case msess of
-              Just stk_ -> do
-                _ <- Term.init
-                _ <- withTui testMode
-                       (Common.mainLoop (initState stk_ theme testMode noSign_) testMode keys_)
-                pure ()
-              Nothing -> TIO.hPutStrLn stderr ("Session not found: " <> sessName)
-        Nothing
-          | pipeMode && path_ == Nothing -> do
-              stdinRes <- TextParse.fromStdin
-              m <- runTsv stdinRes "stdin" True testMode noSign_ theme keys_
+    Left e    -> pure ("Backend init error: " <> T.pack (show e))
+    Right err -> pure (if T.null err then "" else "Backend init failed: " <> err)
+
+-- | Always tear down backend + temp dir, even on exception.
+finallyCleanup :: IO () -> IO ()
+finallyCleanup act = do
+  r <- try act :: IO (Either SomeException ())
+  AdbcTable.shutdown
+  Tmp.cleanupTmp
+  case r of
+    Right _ -> pure ()
+    Left e  -> TIO.hPutStrLn stderr ("Error: " <> T.pack (show e))
+
+-- | Session restore (`-s name`): load saved stack, run main loop.
+runSession :: Text -> Theme.State -> Bool -> Bool -> Vector Text -> IO ()
+runSession sessName theme testMode noSign_ keys_ = do
+  msess <- Session.load noSign_ sessName
+  case msess of
+    Just stk_ -> do
+      _ <- Term.init
+      _ <- withTui testMode
+             (Common.mainLoop (initState stk_ theme testMode noSign_) testMode keys_)
+      pure ()
+    Nothing -> TIO.hPutStrLn stderr ("Session not found: " <> sessName)
+
+-- | Dispatch folder / source config / file by path shape.
+dispatchPath :: Text -> Vector Text -> Bool -> Bool -> Bool -> Theme.State -> IO ()
+dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
+  srcCfg <- SourceConfig.findSource path_
+  isDir  <- doesDirectoryExist (T.unpack path_)
+  if T.null path_ || isJust srcCfg || isDir then do
+    let p = if T.null path_ then "." else path_
+    -- Config-driven direct entry (e.g. tv osquery://groups)
+    handled <- case srcCfg of
+      Just cfg
+        | not (T.null (SourceConfig.script cfg)) && not (T.null (SourceConfig.pfx cfg)) -> do
+            let rest = T.drop (T.length (SourceConfig.pfx cfg)) p
+            if not (T.null rest) then do
+              m <- SourceConfig.runEnter cfg rest
               case m of
-                Just a  -> outputTable a
-                Nothing -> pure ()
-              pure ()
-          | otherwise -> do
-              let p0 = fromMaybe "" path_
-              finallyCleanup (runPath p0 keys_ testMode noSign_ pipeMode theme)
+                Just adbc ->
+                  case View.fromTbl adbc (SourceConfig.pfx cfg <> rest) 0 V.empty 0 of
+                    Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+                    Nothing -> TIO.hPutStrLn stderr ("Empty: " <> p)
+                Nothing -> TIO.hPutStrLn stderr ("Cannot open: " <> p)
+              pure True
+            else pure False
+      _ -> pure False
+    unless handled $ do
+      mv <- Folder.mkView noSign_ p 1
+      case mv of
+        Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+        Nothing -> TIO.hPutStrLn stderr ("Cannot browse: " <> p)
+  else if T.isSuffixOf ".txt" path_ then do
+    content <- TIO.readFile (T.unpack path_)
+    _ <- runTsv (TextParse.fromText content) path_ pipeMode testMode noSign_ theme keys_
+    pure ()
+  else if T.isSuffixOf ".gz" path_ && not (FileFormat.isData path_) then do
+    -- Smart: try read_csv for unrecognized .gz (handles decompression natively)
+    mv <- FileFormat.readCsv path_
+    case mv of
+      Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+      Nothing -> FileFormat.viewFile testMode path_
+  else do
+    r <- try (FileFormat.openFile path_) :: IO (Either SomeException (Maybe (View AdbcTable)))
+    mv <- case r of
+      Right m -> pure m
+      Left e  -> do Log.write "open" (T.pack (show e)); pure Nothing
+    case mv of
+      Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+      Nothing -> FileFormat.viewFile testMode path_
 
-    runPath path_ keys_ testMode noSign_ pipeMode theme = do
-      srcCfg <- SourceConfig.findSource path_
-      isDir  <- doesDirectoryExist (T.unpack path_)
-      if T.null path_ || isJust srcCfg || isDir then do
-        let p = if T.null path_ then "." else path_
-        -- Config-driven direct entry (e.g. tv osquery://groups)
-        handled <- case srcCfg of
-          Just cfg
-            | not (T.null (SourceConfig.script cfg)) && not (T.null (SourceConfig.pfx cfg)) -> do
-                let rest = T.drop (T.length (SourceConfig.pfx cfg)) p
-                if not (T.null rest) then do
-                  m <- SourceConfig.runEnter cfg rest
-                  case m of
-                    Just adbc ->
-                      case View.fromTbl adbc (SourceConfig.pfx cfg <> rest) 0 V.empty 0 of
-                        Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
-                        Nothing -> TIO.hPutStrLn stderr ("Empty: " <> p)
-                    Nothing -> TIO.hPutStrLn stderr ("Cannot open: " <> p)
-                  pure True
-                else pure False
-          _ -> pure False
-        if handled then pure ()
-        else do
-          mv <- Folder.mkView noSign_ p 1
-          case mv of
-            Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
-            Nothing -> TIO.hPutStrLn stderr ("Cannot browse: " <> p)
-      else if T.isSuffixOf ".txt" path_ then do
-        content <- TIO.readFile (T.unpack path_)
-        _ <- runTsv (TextParse.fromText content) path_ pipeMode testMode noSign_ theme keys_
-        pure ()
-      else if T.isSuffixOf ".gz" path_ && not (FileFormat.isData path_) then do
-        -- Smart: try read_csv for unrecognized .gz (handles decompression natively)
-        mv <- FileFormat.readCsv path_
-        case mv of
-          Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
-          Nothing -> FileFormat.viewFile testMode path_
-      else do
-        r <- try (FileFormat.openFile path_) :: IO (Either SomeException (Maybe (View AdbcTable)))
-        mv <- case r of
-          Right m -> pure m
-          Left e  -> do Log.write "open" (T.pack (show e)); pure Nothing
-        case mv of
-          Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
-          Nothing -> FileFormat.viewFile testMode path_
-
-    finallyCleanup act = do
-      r <- try act :: IO (Either SomeException ())
-      AdbcTable.shutdown
-      Tmp.cleanupTmp
-      case r of
-        Right _ -> pure ()
-        Left e  -> TIO.hPutStrLn stderr ("Error: " <> T.pack (show e))
+-- main entry point: init backend, parse args, run app
+appMain :: [Text] -> IO ()
+appMain args = do
+  let cli = parseArgs args
+      CliArgs { path = path_, keys = keys_, noSign = noSign_ } = cli
+  envTest  <- maybe False (const True) <$> lookupEnv "TV_TEST_MODE"
+  let testMode = test cli || envTest
+  pipeMode <- if testMode then pure False else not <$> Term.isattyStdin
+  theme    <- Theme.stateInit
+  err      <- initLogging
+  unless (T.null err) $ TIO.hPutStrLn stderr err
+  when (T.null err) $ case session cli of
+    Just sessName -> finallyCleanup (runSession sessName theme testMode noSign_ keys_)
+    Nothing
+      | pipeMode && path_ == Nothing -> do
+          stdinRes <- TextParse.fromStdin
+          m <- runTsv stdinRes "stdin" True testMode noSign_ theme keys_
+          maybe (pure ()) outputTable m
+      | otherwise ->
+          finallyCleanup
+            (dispatchPath (fromMaybe "" path_) keys_ testMode noSign_ pipeMode theme)
 
 
 main :: IO ()

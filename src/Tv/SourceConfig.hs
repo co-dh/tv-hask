@@ -411,7 +411,83 @@ runListSql noSign_ cfg path_ tbl = do
       _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> selectSql)
       fromTbl tbl
 
--- | CLI mode: run command, save JSON, transform via listSql, auto-unnest, add parent row
+-- | Compile+run PRQL, returning the QueryResult (matches Lean `Prql.query`).
+prqlRun :: Text -> IO (Maybe Conn.QueryResult)
+prqlRun q = do
+  m <- Prql.compile q
+  case m of
+    Nothing  -> pure Nothing
+    Just sql -> Just <$> Conn.query sql
+
+-- | Fallback cmd path: run `fallbackCmd`, apply `fallbackSql` on its output.
+-- Used e.g. for HF org-level listing when repo listing 404s.
+-- Returns `Just _` iff fallback ran successfully (distinguishes from "failed"
+-- so caller skips the error popup even on empty fallback output).
+listFallback :: Config -> Vector (Text, Text) -> Text -> IO (Maybe (Maybe AdbcTable))
+listFallback cfg vars tbl = do
+  let fbCmd = expand (fallbackCmd cfg) vars
+  Log.write "src" ("fallback: " <> fbCmd)
+  (ec2, out2, _) <- readProcessWithExitCode "sh" ["-c", T.unpack fbCmd] ""
+  case ec2 of
+    ExitSuccess | not (T.null (T.strip (T.pack out2))) -> do
+      tmpFile <- Tmp.tmpPath "src-list.json"
+      TIO.writeFile tmpFile (T.pack out2)
+      let fbSql = expand (fallbackSql cfg) (V.singleton ("src", T.pack tmpFile))
+      _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> fbSql)
+      Tmp.rmFile tmpFile
+      Just <$> fromTbl tbl
+    _ -> pure Nothing
+
+-- | Write cmd stdout to tmp file and CREATE TEMP TABLE via listSql.
+-- FTP mode parses ls -l in Haskell; others use SQL transform on {src}.
+loadListing :: Config -> Text -> Text -> IO ()
+loadListing cfg raw tbl = do
+  tmpFile <- Tmp.tmpPath "src-list.json"
+  let content = if listSql cfg == "FTP" then Ftp.parseLs raw else raw
+  TIO.writeFile tmpFile content
+  let tmpT = T.pack tmpFile
+      lSql = if listSql cfg == "FTP"
+               then "SELECT * FROM read_csv('" <> tmpT <> "', header=true, delim='\t')"
+               else expand (listSql cfg) (V.singleton ("src", tmpT))
+  _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> lSql)
+  Tmp.rmFile tmpFile
+
+-- | If the listing produced 1 row with a single struct[] column, expand it.
+-- Handles APIs that wrap rows in an envelope (e.g. S3 Contents).
+unnestStruct :: Text -> IO ()
+unnestStruct tbl = do
+  r <- try go :: IO (Either SomeException ())
+  case r of _ -> pure ()
+  where
+    go = do
+      qrM  <- prqlRun ("from dcols | struct_col '" <> tbl <> "'")
+      qr   <- maybe (ioError (userError "struct_col PRQL failed")) pure qrM
+      cntM <- prqlRun ("from " <> tbl <> " | cnt")
+      cntR <- maybe (ioError (userError "count PRQL failed")) pure cntM
+      col  <- Conn.cellStr qr 0 0
+      n    <- Conn.cellInt cntR 0 0
+      when (n == 1 && not (T.null col)) $ do
+        _ <- Conn.query ( "CREATE OR REPLACE TEMP TABLE " <> tbl
+                       <> " AS SELECT unnest(\"" <> col
+                       <> "\", recursive:=true) FROM " <> tbl )
+        pure ()
+
+-- | Add ".." parent row when config allows parent nav and table has folder cols.
+-- Failure is silent: tables without name/size/date/type cols skip this.
+addParentRow :: Config -> Text -> Text -> IO ()
+addParentRow cfg path_ tbl =
+  case configParent cfg path_ of
+    Nothing -> pure ()
+    Just _  -> do
+      r <- try insertRow :: IO (Either SomeException ())
+      case r of _ -> pure ()
+  where
+    insertRow = do
+      _ <- Conn.query ( "INSERT INTO " <> tbl
+                     <> " SELECT '..' as name, 0 as size, '' as date, 'dir' as type" )
+      pure ()
+
+-- | CLI mode: run command, save JSON, transform via listSql, auto-unnest, add parent row.
 runListCmd :: Bool -> Config -> Text -> Text -> IO (Maybe AdbcTable)
 runListCmd noSign_ cfg path_ tbl = do
   let p = if T.isSuffixOf "/" path_ then path_ else path_ <> "/"
@@ -421,25 +497,9 @@ runListCmd noSign_ cfg path_ tbl = do
   (ec, out, err) <- readProcessWithExitCode "sh" ["-c", T.unpack cmd] ""
   case ec of
     ExitFailure code -> do
-      -- Try fallback command (e.g. org-level listing when repo listing fails)
-      fb <- if not (T.null (fallbackCmd cfg))
-        then do
-          let fbCmd = expand (fallbackCmd cfg) vars
-          Log.write "src" ("fallback: " <> fbCmd)
-          (ec2, out2, _) <- readProcessWithExitCode "sh" ["-c", T.unpack fbCmd] ""
-          case ec2 of
-            ExitSuccess | not (T.null (T.strip (T.pack out2))) -> do
-              tmpFile <- Tmp.tmpPath "src-list.json"
-              TIO.writeFile tmpFile (T.pack out2)
-              let fbSql = expand (fallbackSql cfg)
-                            (V.singleton ("src", T.pack tmpFile))
-              _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> fbSql)
-              Tmp.rmFile tmpFile
-              Just <$> fromTbl tbl
-            _ -> pure Nothing
-        else pure Nothing
+      fb <- if T.null (fallbackCmd cfg) then pure Nothing else listFallback cfg vars tbl
       case fb of
-        Just r -> pure r
+        Just r  -> pure r
         Nothing -> do
           let errMsg = T.strip (T.pack err)
           Log.write "src" ("list failed (exit " <> T.pack (show code) <> "): " <> errMsg)
@@ -450,59 +510,10 @@ runListCmd noSign_ cfg path_ tbl = do
       if T.null (T.strip raw)
         then pure Nothing
         else do
-          tmpFile <- Tmp.tmpPath "src-list.json"
-          -- FTP mode: parse ls -l in Haskell; otherwise use SQL transform
-          let content = if listSql cfg == "FTP" then Ftp.parseLs raw else raw
-          TIO.writeFile tmpFile content
-          let tmpT = T.pack tmpFile
-              lSql =
-                if listSql cfg == "FTP"
-                  then "SELECT * FROM read_csv('" <> tmpT <> "', header=true, delim='\t')"
-                  else expand (listSql cfg) (V.singleton ("src", tmpT))
-          _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> lSql)
-          -- Auto-unnest: if result is 1 row with a struct[] column, expand it
-          rU <- try (do
-            mq <- Prql.compile ("from dcols | struct_col '" <> tbl <> "'")
-            case mq of
-              Nothing -> ioError (userError "struct_col PRQL failed")
-              Just _  -> pure ()
-            qrM <- prqlRun ("from dcols | struct_col '" <> tbl <> "'")
-            qr  <- case qrM of
-                     Just q -> pure q
-                     Nothing -> ioError (userError "struct_col PRQL failed")
-            cntM <- prqlRun ("from " <> tbl <> " | cnt")
-            cntR <- case cntM of
-                      Just q -> pure q
-                      Nothing -> ioError (userError "count PRQL failed")
-            col <- Conn.cellStr qr 0 0
-            n   <- Conn.cellInt cntR 0 0
-            when (n == 1 && not (T.null col)) $ do
-              _ <- Conn.query ( "CREATE OR REPLACE TEMP TABLE " <> tbl
-                             <> " AS SELECT unnest(\"" <> col
-                             <> "\", recursive:=true) FROM " <> tbl )
-              pure ()) :: IO (Either SomeException ())
-          case rU of
-            _ -> pure ()
-          -- Add ".." parent row if table has standard folder columns (name,size,date,type)
-          case configParent cfg path_ of
-            Just _ -> do
-              rP <- try (do
-                _ <- Conn.query ( "INSERT INTO " <> tbl
-                               <> " SELECT '..' as name, 0 as size, '' as date, 'dir' as type" )
-                pure ()) :: IO (Either SomeException ())
-              case rP of
-                _ -> pure ()
-            Nothing -> pure ()
-          Tmp.rmFile tmpFile
+          loadListing cfg raw tbl
+          unnestStruct tbl
+          addParentRow cfg path_ tbl
           fromTbl tbl
-  where
-    -- compile+run PRQL, returning the QueryResult (matches Lean `Prql.query`)
-    prqlRun :: Text -> IO (Maybe Conn.QueryResult)
-    prqlRun q = do
-      m <- Prql.compile q
-      case m of
-        Nothing -> pure Nothing
-        Just sql -> Just <$> Conn.query sql
 
 -- | Run listing: cache check -> setup -> dispatch to sql/cmd mode -> cache store.
 -- Results are cached in-memory when listing takes > 3 seconds (e.g. slow S3 buckets).
