@@ -194,73 +194,69 @@ objVal _ _ = Nothing
 objValD :: Value -> Text -> Value
 objValD j k = fromMaybe Null $ objVal j k
 
+-- | Catch IO exceptions, log, return Nothing (matches Lean's per-view skip).
+tryIO :: IO (Maybe AdbcTable) -> IO (Maybe AdbcTable)
+tryIO act = do
+  r <- try act
+  case r of
+    Right x -> pure x
+    Left (e :: SomeException) -> do
+      Log.write "session" ("skip view: " <> T.pack (show e))
+      pure Nothing
+
+-- | Open the underlying AdbcTable for a view: folder listing or query pipeline.
+openView :: Bool -> ViewKind -> Query -> IO (Maybe AdbcTable)
+openView noSign_ vkind_ query_ = tryIO $ case vkind_ of
+  VkFld p depth -> do
+    mv <- Folder.mkView noSign_ p depth
+    pure $ fmap (Nav.tbl . View.nav) mv
+  _ -> do
+    total <- AdbcTable.queryCount query_
+    AdbcTable.requery query_ total
+
+-- | Build a View from an opened table and apply saved metadata (cursor, hidden, search…).
+applyFields :: AdbcTable -> Value -> Text -> ViewKind -> Maybe (View AdbcTable)
+applyFields tbl j path_ vkind_ =
+  let nRows_ = AdbcTable.nRows tbl
+      nCols_ = V.length (AdbcTable.colNames tbl)
+      row_   = jd j "row" 0 :: Int
+      col_   = jd j "col" 0 :: Int
+      grp_   = jd j "grp" V.empty :: Vector Text
+  in if nRows_ == 0 || nCols_ == 0
+    then Nothing
+    else do
+      view <- View.fromTbl tbl path_ (min col_ (nCols_ - 1)) grp_ (min row_ (nRows_ - 1))
+      let search_ = do
+            s <- objVal j "search"
+            case s of
+              Null -> Nothing
+              _    -> Just (jd s "col" 0 :: Int, jd s "val" "" :: Text)
+          nav' = (view ^. #nav)
+               & #hidden      .~ (jd j "hidden" V.empty :: Vector Text)
+               & #col % #sels .~ (jd j "colSels" V.empty :: Vector Text)
+      pure $ view & #vkind    .~ vkind_
+                  & #disp     .~ (jd j "disp" "" :: Text)
+                  & #prec     .~ fromMaybe 3 (jdMaybe j "prec")
+                  & #widthAdj .~ (jd j "widthAdj" 0 :: Int)
+                  & #search   .~ search_
+                  & #nav      .~ nav'
+
 -- | Restore a single view from JSON, re-executing the query pipeline.
 --   Errors are caught per-view so partial restoration works.
 restoreView :: Bool -> Value -> IO (Maybe (View AdbcTable))
 restoreView noSign_ j = do
-  let path_ :: Text
-      path_ = jd j "path" ""
+  let path_ = jd j "path" "" :: Text
   if T.null path_
     then pure Nothing
     else do
       let vkind_ = fromMaybe VkTbl $ jdMaybe j "vkind"
-          disp_ :: Text
-          disp_ = jd j "disp" ""
-          prec_ = fromMaybe 3 (jdMaybe j "prec") :: Int
-          widthAdj_ = jd j "widthAdj" 0 :: Int
-          row_ = jd j "row" 0 :: Int
-          col_ = jd j "col" 0 :: Int
-          grp_ = jd j "grp" V.empty :: Vector Text
-          hidden_ = jd j "hidden" V.empty :: Vector Text
-          colSels_ = jd j "colSels" V.empty :: Vector Text
-          search_ :: Maybe (Int, Text)
-          search_ = do
-            s <- objVal j "search"
-            case s of
-              Null -> Nothing
-              _    -> Just (jd s "col" 0, jd s "val" "")
-          qObj = objValD j "query"
-          baseDefault = "from `" <> path_ <> "`"
-          base_ = fromMaybe baseDefault $ jdMaybe qObj "base"
-          ops_ = jd qObj "ops" V.empty :: Vector Op
-          query_ = Query { base = base_, ops = ops_ }
-      tblM <- tryIO $ case vkind_ of
-        VkFld p depth -> do
-          mv <- Folder.mkView noSign_ p depth
-          pure $ fmap (Nav.tbl . View.nav) mv
-        _ -> do
-          total <- AdbcTable.queryCount query_
-          mt <- AdbcTable.requery query_ total
-          pure mt
-      case tblM of
-        Nothing -> pure Nothing
-        Just tbl -> do
-          let nRows_ = AdbcTable.nRows tbl
-              nCols_ = V.length (AdbcTable.colNames tbl)
-          if nRows_ == 0 || nCols_ == 0
-            then pure Nothing
-            else case View.fromTbl tbl path_ (min col_ (nCols_ - 1)) grp_ (min row_ (nRows_ - 1)) of
-              Just view ->
-                let nav' = (view ^. #nav)
-                         & #hidden       .~ hidden_
-                         & #col % #sels  .~ colSels_
-                in pure $ Just $ view & #vkind    .~ vkind_
-                                      & #disp     .~ disp_
-                                      & #prec     .~ prec_
-                                      & #widthAdj .~ widthAdj_
-                                      & #search   .~ search_
-                                      & #nav      .~ nav'
-              Nothing -> pure Nothing
-  where
-    -- | Catch IO exceptions, log, return Nothing (matches Lean's per-view skip).
-    tryIO :: IO (Maybe AdbcTable) -> IO (Maybe AdbcTable)
-    tryIO act = do
-      r <- try act
-      case r of
-        Right x -> pure x
-        Left (e :: SomeException) -> do
-          Log.write "session" ("skip view: " <> T.pack (show e))
-          pure Nothing
+          qObj   = objValD j "query"
+          query_ = Query
+            { base = fromMaybe ("from `" <> path_ <> "`") $ jdMaybe qObj "base"
+            , ops  = jd qObj "ops" V.empty :: Vector Op
+            }
+      tblM <- openView noSign_ vkind_ query_
+      pure $ tblM >>= \tbl -> applyFields tbl j path_ vkind_
 
 -- ## Public API
 
