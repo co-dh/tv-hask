@@ -29,6 +29,60 @@ import qualified Tv.Log as Log
 blocks :: Vector Char
 blocks = V.fromList [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
 
+-- | Build per-column histogram SQL for one numeric column.
+-- LEAST clamps bucket to [0, nBars-1]; CASE handles constant columns.
+-- Tagged with `col_idx` so a UNION ALL across all numeric columns is
+-- re-scattered into the right bucket vector in `parseBuckets`.
+numSpark :: Int -> Int -> Text -> Text
+numSpark nBars i name =
+  let q = quoteId name
+      sql = "SELECT CASE WHEN mx = mn THEN " <> T.pack (show (nBars `div` 2)) <> " "
+         <> "ELSE LEAST(CAST(FLOOR((" <> q <> "::DOUBLE - mn) / (mx - mn + 1e-30) * "
+         <> T.pack (show nBars) <> ") AS INTEGER), " <> T.pack (show (nBars - 1)) <> ") "
+         <> "END AS bucket, COUNT(*) AS cnt "
+         <> "FROM __src, (SELECT MIN(" <> q <> "::DOUBLE) AS mn, MAX("
+         <> q <> "::DOUBLE) AS mx FROM __src) "
+         <> "WHERE " <> q <> " IS NOT NULL GROUP BY bucket ORDER BY bucket"
+  in "SELECT " <> T.pack (show i) <> " AS col_idx, bucket, cnt FROM (" <> sql <> ")"
+
+-- | Read UNION ALL result into a per-numeric-column bucket vector.
+-- Rows arrive interleaved by col_idx; scatter by index-in-numIdxs.
+parseBuckets :: Conn.QueryResult -> Vector Int -> IO (Vector (Vector (Int, Int)))
+parseBuckets qr_ numIdxs = do
+  nr <- Conn.nrows qr_
+  let nrI = fromIntegral nr :: Int
+      emptyBuckets = V.replicate (V.length numIdxs) (V.empty :: Vector (Int, Int))
+      stepRow cb r_ = do
+        let rW = fromIntegral r_ :: Word64
+        colIdx <- Conn.cellInt qr_ rW 0
+        bucket <- Conn.cellInt qr_ rW 1
+        cnt    <- Conn.cellInt qr_ rW 2
+        pure $ case V.findIndex (== fromIntegral colIdx) numIdxs of
+          Just j ->
+            let cur = fromMaybe V.empty $ cb V.!? j
+            in cb V.// [(j, V.snoc cur (fromIntegral bucket, fromIntegral cnt))]
+          Nothing -> cb
+  V.foldM' stepRow emptyBuckets (V.enumFromN (0 :: Int) nrI)
+
+-- | Render a per-column bucket vector as a Unicode sparkline string.
+-- Returns Nothing for empty bucket lists so caller can skip the column.
+buildSpark :: Int -> Vector (Int, Int) -> Maybe Text
+buildSpark nBars buckets
+  | V.null buckets = Nothing
+  | otherwise =
+      let counts0 = V.replicate nBars (0 :: Int)
+          counts = V.foldl'
+            (\acc (b, c) -> if b < nBars then acc V.// [(b, c)] else acc)
+            counts0 buckets
+          maxCnt = V.foldl' max 0 counts
+      in Just $ if maxCnt == 0
+           then T.replicate nBars " "
+           else T.pack $ V.toList $ V.map
+             (\c ->
+               let level = (c * 8 + maxCnt - 1) `div` maxCnt  -- ceil: 0->0, >0->1..8
+               in fromMaybe ' ' (blocks V.!? level))
+             counts
+
 -- | Compute sparkline strings for all columns via DuckDB histogram.
 -- Returns one string per column (empty for non-numeric).
 -- nBars = number of histogram buckets.
@@ -42,17 +96,7 @@ compute t nBars = do
     else do
       let stepQuery (ps, is) i name = case types V.!? i of
             Just tp | isNumeric tp ->
-              let q = quoteId name
-                  -- LEAST clamps bucket to [0, nBars-1]; CASE handles constant columns
-                  sql = "SELECT CASE WHEN mx = mn THEN " <> T.pack (show (nBars `div` 2)) <> " "
-                     <> "ELSE LEAST(CAST(FLOOR((" <> q <> "::DOUBLE - mn) / (mx - mn + 1e-30) * "
-                     <> T.pack (show nBars) <> ") AS INTEGER), " <> T.pack (show (nBars - 1)) <> ") "
-                     <> "END AS bucket, COUNT(*) AS cnt "
-                     <> "FROM __src, (SELECT MIN(" <> q <> "::DOUBLE) AS mn, MAX("
-                     <> q <> "::DOUBLE) AS mx FROM __src) "
-                     <> "WHERE " <> q <> " IS NOT NULL GROUP BY bucket ORDER BY bucket"
-              in ( V.snoc ps ("SELECT " <> T.pack (show i) <> " AS col_idx, bucket, cnt FROM (" <> sql <> ")")
-                 , V.snoc is i )
+              (V.snoc ps (numSpark nBars i name), V.snoc is i)
             _ -> (ps, is)
           (parts, numIdxs) = V.ifoldl' stepQuery (V.empty :: Vector Text, V.empty :: Vector Int) names
       if V.null parts
@@ -77,39 +121,8 @@ compute t nBars = do
                   Log.errorLog ("sparkline: " <> T.pack (show e))
                   pure empty
                 Right qr_ -> do
-                  nr <- Conn.nrows qr_
-                  let nrI = fromIntegral nr :: Int
-                      emptyBuckets = V.replicate (V.length numIdxs) (V.empty :: Vector (Int, Int))
-                      stepRow cb r_ = do
-                        let rW = fromIntegral r_ :: Word64
-                        colIdx <- Conn.cellInt qr_ rW 0
-                        bucket <- Conn.cellInt qr_ rW 1
-                        cnt    <- Conn.cellInt qr_ rW 2
-                        pure $ case V.findIndex (== fromIntegral colIdx) numIdxs of
-                          Just j ->
-                            let cur = fromMaybe V.empty $ cb V.!? j
-                            in cb V.// [(j, V.snoc cur (fromIntegral bucket, fromIntegral cnt))]
-                          Nothing -> cb
-                  -- Parse results into bucket->count arrays per column
-                  colBuckets <- V.foldM' stepRow emptyBuckets (V.enumFromN (0 :: Int) nrI)
-                  -- Build sparkline string per column
-                  let sparkFor buckets =
-                        if V.null buckets
-                          then Nothing
-                          else
-                            let counts0 = V.replicate nBars (0 :: Int)
-                                counts = V.foldl'
-                                  (\acc (b, c) -> if b < nBars then acc V.// [(b, c)] else acc)
-                                  counts0 buckets
-                                maxCnt = V.foldl' max 0 counts
-                            in Just $ if maxCnt == 0
-                                 then T.replicate nBars " "
-                                 else T.pack $ V.toList $ V.map
-                                   (\c ->
-                                     let level = (c * 8 + maxCnt - 1) `div` maxCnt  -- ceil: 0->0, >0->1..8
-                                     in fromMaybe ' ' (blocks V.!? level))
-                                   counts
-                      updates = V.toList $ V.mapMaybe
-                        (\(i, buckets) -> (,) i <$> sparkFor buckets)
+                  colBuckets <- parseBuckets qr_ numIdxs
+                  let updates = V.toList $ V.mapMaybe
+                        (\(i, buckets) -> (,) i <$> buildSpark nBars buckets)
                         (V.zip numIdxs colBuckets)
                   pure (empty V.// updates)

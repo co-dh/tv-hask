@@ -269,67 +269,100 @@ openFile tm noSign_ s curDir_ p cfg = do
           FileFormat.viewFile tm viewPath
           pure (Just s)
 
+-- | Classify the focused row: is this view attach-based, and what is the
+--   (type, path) pair of the highlighted entry? Attach-based = FileFormat
+--   says "attach me" (e.g. sqlite) or the config flags it (e.g. pg://).
+resolveFocus
+  :: ViewStack AdbcTable -> Text -> Maybe Config
+  -> IO (Bool, Maybe Char, Maybe Text)
+resolveFocus s curDir_ cfg = do
+  let isAttach =
+        maybe False FileFormat.attach (FileFormat.find curDir_)
+        || maybe False SourceConfig.attach cfg
+  mTyp <- curType (View.cur s)
+  mPth <- curPath (View.cur s)
+  pure (isAttach, mTyp, mPth)
+
+-- | Attach-based enter: treat focused row as a table name inside the DB
+--   referenced by curDir_; push a new view over that table if it opens.
+enterAttach :: ViewStack AdbcTable -> Text -> IO (Maybe (ViewStack AdbcTable))
+enterAttach s curDir_ = do
+  mTbl <- curPath (View.cur s)
+  case mTbl of
+    Nothing -> pure (Just s)
+    Just tableName -> do
+      mAK <- Table.fromTable tableName
+      case mAK of
+        Nothing -> pure (Just s)
+        Just (adbc, keys) ->
+          case View.fromTbl adbc (curDir_ <> ":" <> tableName) 0 keys 0 of
+            Nothing -> pure (Just s)
+            Just v  -> pure (Just (View.push s v))
+
+-- | Directory branch: `..` walks up via `goParent`; otherwise push a new
+--   folder view at the joined path. `dirSuffix` matters for S3 where
+--   "foo" and "foo/" are distinct listings.
+enterDir
+  :: Bool -> ViewStack AdbcTable -> Text -> Maybe Config -> Text
+  -> IO (Maybe (ViewStack AdbcTable))
+enterDir noSign_ s curDir_ cfg p =
+  if p == ".." || T.isSuffixOf "/.." p
+    then goParent noSign_ s
+    else
+      let fullPath = case cfg of
+            Just c  -> joinPath curDir_
+                         (if SourceConfig.dirSuffix c then p <> "/" else p)
+            Nothing -> joinPath curDir_ p
+      in tryView noSign_ s fullPath (curDepth s) True
+
+-- | File branch: first try config-driven enter (`script` returns JSON data,
+--   `enterUrl` redirects to a pseudo-path); fall back to the generic
+--   `openFile` which handles real data formats + viewer fallback.
+enterFile
+  :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Maybe Config -> Text
+  -> IO (Maybe (ViewStack AdbcTable))
+enterFile tm noSign_ s curDir_ cfg p = case cfg of
+  Just c | not (T.null (SourceConfig.script c)) -> do
+    mAdbc <- SourceConfig.runEnter c p
+    case mAdbc of
+      Just adbc ->
+        case View.fromTbl adbc (SourceConfig.pfx c <> p) 0 V.empty 0 of
+          Just v  -> pure (Just (View.push s v))
+          Nothing -> pure (Just s)
+      Nothing -> pure (Just s)
+  Just c | not (T.null (SourceConfig.enterUrl c)) -> do
+    let url = SourceConfig.expand (SourceConfig.enterUrl c)
+                (V.singleton ("name", p))
+    tryView noSign_ s url (curDepth s) True
+  _ -> openFile tm noSign_ s curDir_ p cfg
+
+-- | Symlink branch: local only (remote configs don't resolve symlinks).
+--   `test -d` decides dir-vs-file so we pick the right sub-handler.
+enterSymlink
+  :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Maybe Config -> Text
+  -> IO (Maybe (ViewStack AdbcTable))
+enterSymlink tm noSign_ s curDir_ cfg p = case cfg of
+  Just _  -> pure (Just s)
+  Nothing -> do
+    let fullPath = joinPath curDir_ p
+    (ec, _, _) <- readProcessWithExitCode "test" ["-d", T.unpack fullPath] ""
+    if ec == ExitSuccess
+      then tryView noSign_ s fullPath (curDepth s) True
+      else openFile tm noSign_ s curDir_ p Nothing
+
 -- | Enter directory or view file based on current row
 enter :: Bool -> Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 enter tm noSign_ s = do
   let curDir_ = View.curDir (View.cur s)
   cfg <- SourceConfig.findSource curDir_
-  -- Attach-based: FileFormat or config-driven (e.g. pg://)
-  let isAttach =
-        maybe False FileFormat.attach (FileFormat.find curDir_)
-        || maybe False SourceConfig.attach cfg
+  (isAttach, mTyp, mPth) <- resolveFocus s curDir_ cfg
   if isAttach
-    then do
-      mTbl <- curPath (View.cur s)
-      case mTbl of
-        Nothing -> pure (Just s)
-        Just tableName -> do
-          mAK <- Table.fromTable tableName
-          case mAK of
-            Nothing -> pure (Just s)
-            Just (adbc, keys) ->
-              case View.fromTbl adbc (curDir_ <> ":" <> tableName) 0 keys 0 of
-                Nothing -> pure (Just s)
-                Just v  -> pure (Just (View.push s v))
-    else do
-      mTyp <- curType (View.cur s)
-      mPth <- curPath (View.cur s)
-      case (mTyp, mPth) of
-        (Just 'd', Just p) ->
-          if p == ".." || T.isSuffixOf "/.." p
-            then goParent noSign_ s
-            else
-              let fullPath = case cfg of
-                    Just c  -> joinPath curDir_
-                                 (if SourceConfig.dirSuffix c then p <> "/" else p)
-                    Nothing -> joinPath curDir_ p
-              in tryView noSign_ s fullPath (curDepth s) True
-        (Just 'f', Just p) -> do
-          -- Config-driven enter: script cmd -> JSON, or enterUrl redirect
-          case cfg of
-            Just c | not (T.null (SourceConfig.script c)) -> do
-              mAdbc <- SourceConfig.runEnter c p
-              case mAdbc of
-                Just adbc ->
-                  case View.fromTbl adbc (SourceConfig.pfx c <> p) 0 V.empty 0 of
-                    Just v  -> pure (Just (View.push s v))
-                    Nothing -> pure (Just s)
-                Nothing -> pure (Just s)
-            Just c | not (T.null (SourceConfig.enterUrl c)) -> do
-              let url = SourceConfig.expand (SourceConfig.enterUrl c)
-                          (V.singleton ("name", p))
-              tryView noSign_ s url (curDepth s) True
-            _ -> openFile tm noSign_ s curDir_ p cfg
-        (Just 's', Just p) ->
-          case cfg of
-            Just _  -> pure (Just s)
-            Nothing -> do
-              let fullPath = joinPath curDir_ p
-              (ec, _, _) <- readProcessWithExitCode "test" ["-d", T.unpack fullPath] ""
-              if ec == ExitSuccess
-                then tryView noSign_ s fullPath (curDepth s) True
-                else openFile tm noSign_ s curDir_ p Nothing
-        _ -> pure Nothing
+    then enterAttach s curDir_
+    else case (mTyp, mPth) of
+      (Just 'd', Just p) -> enterDir noSign_ s curDir_ cfg p
+      (Just 'f', Just p) -> enterFile tm noSign_ s curDir_ cfg p
+      (Just 's', Just p) -> enterSymlink tm noSign_ s curDir_ cfg p
+      _                  -> pure Nothing
 
 -- | Get trash command (trash-put or gio trash)
 trashCmd :: IO (Maybe (String, [String]))

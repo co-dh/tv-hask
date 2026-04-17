@@ -246,6 +246,35 @@ objVal _ _ = Nothing
 objValD :: Value -> Text -> Value
 objValD j k = fromMaybe Null $ objVal j k
 
+-- | Open an AdbcTable for a saved view — folder views re-list via Folder.mkView,
+--   everything else re-runs the saved query pipeline. Errors propagate to
+--   `restoreView`'s `tryIO` so a single broken view skips cleanly.
+openTable :: Bool -> ViewKind -> Query -> IO (Maybe AdbcTable)
+openTable noSign_ vkind_ query_ = case vkind_ of
+  VkFld p depth -> do
+    mv <- Folder.mkView noSign_ p depth
+    pure $ fmap (Nav.tbl . View.nav) mv
+  _ -> do
+    total <- AdbcTable.queryCount query_
+    AdbcTable.requery query_ total
+
+-- | Apply saved cursor/selections/hidden-cols/search to a freshly-built View.
+--   Row/col cursors are clamped to the re-executed table's bounds; the whole
+--   thing is a no-op on empty tables (caller checks first).
+restoreCursor
+  :: View AdbcTable -> ViewKind -> Text -> Int -> Int
+  -> Vector Text -> Vector Text -> Maybe (Int, Text) -> View AdbcTable
+restoreCursor view vkind_ disp_ prec_ widthAdj_ hidden_ colSels_ search_ =
+  let nav' = (view ^. #nav)
+           & #hidden       .~ hidden_
+           & #col % #sels  .~ colSels_
+  in view & #vkind    .~ vkind_
+          & #disp     .~ disp_
+          & #prec     .~ prec_
+          & #widthAdj .~ widthAdj_
+          & #search   .~ search_
+          & #nav      .~ nav'
+
 -- | Restore a single view from JSON, re-executing the query pipeline.
 --   Errors are caught per-view so partial restoration works.
 restoreView :: Bool -> Value -> IO (Maybe (View AdbcTable))
@@ -276,14 +305,7 @@ restoreView noSign_ j = do
           base_ = fromMaybe baseDefault $ jdMaybe qObj "base"
           ops_ = jd qObj "ops" V.empty :: Vector Op
           query_ = Query { base = base_, ops = ops_ }
-      tblM <- tryIO $ case vkind_ of
-        VkFld p depth -> do
-          mv <- Folder.mkView noSign_ p depth
-          pure $ fmap (Nav.tbl . View.nav) mv
-        _ -> do
-          total <- AdbcTable.queryCount query_
-          mt <- AdbcTable.requery query_ total
-          pure mt
+      tblM <- tryIO (openTable noSign_ vkind_ query_)
       case tblM of
         Nothing -> pure Nothing
         Just tbl -> do
@@ -292,16 +314,8 @@ restoreView noSign_ j = do
           if nRows_ == 0 || nCols_ == 0
             then pure Nothing
             else case View.fromTbl tbl path_ (min col_ (nCols_ - 1)) grp_ (min row_ (nRows_ - 1)) of
-              Just view ->
-                let nav' = (view ^. #nav)
-                         & #hidden       .~ hidden_
-                         & #col % #sels  .~ colSels_
-                in pure $ Just $ view & #vkind    .~ vkind_
-                                      & #disp     .~ disp_
-                                      & #prec     .~ prec_
-                                      & #widthAdj .~ widthAdj_
-                                      & #search   .~ search_
-                                      & #nav      .~ nav'
+              Just view -> pure $ Just $
+                restoreCursor view vkind_ disp_ prec_ widthAdj_ hidden_ colSels_ search_
               Nothing -> pure Nothing
   where
     -- | Catch IO exceptions, log, return Nothing (matches Lean's per-view skip).
