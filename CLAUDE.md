@@ -55,15 +55,6 @@ used primarily at construction sites is clearer with `{ base = X }` than
 `& #base .~ X`. Reserve optics for records where named-field access
 across many call sites justifies the TH splice + import overhead.
 
-## SourceConfig is data-driven
-
-`Tv.SourceConfig.Config` is a plain record of `Text` fields — not a sum
-type. New backends (S3, FTP, HuggingFace, …) are added by inserting a
-config row, not a new constructor. The configs were originally stored in a
-database table and may move to a config file. String sentinels in fields
-like `listSql` (e.g. `"FTP"`) are intentional: they keep dispatch
-extensible at runtime without recompilation.
-
 ## Project layout
 
 - `src/Tv/` — library modules, one per Lean source file under `Tc/Tc/`
