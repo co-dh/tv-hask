@@ -56,6 +56,15 @@ library
     Tv.Render
     Tv.Session
     Tv.SourceConfig
+    Tv.Source
+    Tv.Source.Core
+    Tv.Source.S3
+    Tv.Source.Ftp
+    Tv.Source.HfRoot
+    Tv.Source.HfDataset
+    Tv.Source.Rest
+    Tv.Source.Osquery
+    Tv.Source.Pg
     Tv.Sparkline
     Tv.Ops
     Tv.StatusAgg
