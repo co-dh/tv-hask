@@ -563,6 +563,41 @@ configResolve :: Bool -> Config -> Text -> IO Text
 configResolve noSign_ cfg path_ =
   if needsDownload cfg then runDl noSign_ cfg path_ else pure path_
 
+-- | Copy column types from a DuckDB stub view onto the freshly-loaded temp table.
+-- Non-VARCHAR columns from the stub (e.g. osq.<name> has typed cols) are applied
+-- via ALTER ... TYPE with TRY_CAST so bad rows become NULL rather than erroring.
+applyStubTypes :: Text -> Text -> IO ()
+applyStubTypes tbl stubName = do
+  qr <- Conn.queryParam
+    "SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = $1 AND data_type != 'VARCHAR'"
+    stubName
+  nr <- Conn.nrows qr
+  let n = fromIntegral nr :: Int
+  cols <- V.generateM n $ \i -> do
+    colName <- Conn.cellStr qr (fromIntegral i) 0
+    colType <- Conn.cellStr qr (fromIntegral i) 1
+    pure (colName, colType)
+  V.forM_ cols $ \(colName, colType) -> do
+    let alter = "ALTER TABLE " <> tbl
+              <> " ALTER COLUMN \"" <> colName <> "\" TYPE "
+              <> colType <> " USING TRY_CAST(\"" <> colName
+              <> "\" AS " <> colType <> ")"
+    rA <- try (Conn.query alter) :: IO (Either SomeException Conn.QueryResult)
+    case rA of
+      _ -> pure ()
+
+-- | Load JSON output from an enter script into a fresh temp table and return its name.
+loadEnterJson :: Text -> IO Text
+loadEnterJson json = do
+  tbl <- tmpName "src"
+  tmpFile <- Tmp.tmpPath ("src-enter-" <> T.unpack tbl <> ".json")
+  TIO.writeFile tmpFile json
+  _ <- Conn.query ( "CREATE TEMP TABLE " <> tbl
+                 <> " AS SELECT * FROM read_json_auto('"
+                 <> T.pack tmpFile <> "')" )
+  Tmp.rmFile tmpFile
+  pure tbl
+
 -- | Run enter: script cmd -> JSON -> DuckDB temp table, apply types from stub view
 runEnter :: Config -> Text -> IO (Maybe AdbcTable)
 runEnter cfg name =
@@ -585,34 +620,8 @@ runEnter cfg name =
           if T.null trimmed || trimmed == "[]"
             then pure Nothing
             else do
-              tbl <- tmpName "src"
-              tmpFile <- Tmp.tmpPath ("src-enter-" <> T.unpack tbl <> ".json")
-              TIO.writeFile tmpFile json
-              _ <- Conn.query ( "CREATE TEMP TABLE " <> tbl
-                             <> " AS SELECT * FROM read_json_auto('"
-                             <> T.pack tmpFile <> "')" )
-              Tmp.rmFile tmpFile
-              -- Apply types from DuckDB stub view (e.g. osq.groups has typed columns)
-              let typeApply :: IO ()
-                  typeApply = do
-                    qr <- Conn.queryParam
-                      "SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = $1 AND data_type != 'VARCHAR'"
-                      name
-                    nr <- Conn.nrows qr
-                    let n = fromIntegral nr :: Int
-                    cols <- V.generateM n $ \i -> do
-                      colName <- Conn.cellStr qr (fromIntegral i) 0
-                      colType <- Conn.cellStr qr (fromIntegral i) 1
-                      pure (colName, colType)
-                    V.forM_ cols $ \(colName, colType) -> do
-                      let alter = "ALTER TABLE " <> tbl
-                                <> " ALTER COLUMN \"" <> colName <> "\" TYPE "
-                                <> colType <> " USING TRY_CAST(\"" <> colName
-                                <> "\" AS " <> colType <> ")"
-                      rA <- try (Conn.query alter) :: IO (Either SomeException Conn.QueryResult)
-                      case rA of
-                        _ -> pure ()
-              rT <- try typeApply :: IO (Either SomeException ())
+              tbl <- loadEnterJson json
+              rT <- try (applyStubTypes tbl name) :: IO (Either SomeException ())
               case rT of
                 Left e  -> Log.write "src" ("enter types: " <> T.pack (show e))
                 Right _ -> pure ()
