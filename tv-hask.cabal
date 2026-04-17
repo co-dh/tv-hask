@@ -120,6 +120,8 @@ test-suite tv-hask-test
     bytestring,
     tasty >= 1.4,
     tasty-hunit >= 0.10,
+    tasty-quickcheck >= 0.10,
+    QuickCheck >= 2.14,
     directory >= 1.3,
     optics-core >= 0.4 && < 0.5,
     process >= 1.6,
