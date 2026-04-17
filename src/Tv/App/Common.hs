@@ -160,24 +160,24 @@ localCmds = V.fromList
                     renderSnap ref stk' (Theme.styles (theme a'))
               stk' <- Filter.rowSearchLive (testMode a) (stk a) preview
               a' <- readIORef ref
-              pure (ActOk (resetVS (a' { stk = stk' }))))
+              pure $ ActOk $ resetVS (a' { stk = stk' }))
   , hdl (mkEntry CmdTblMenu   ""  " "  "Open command menu"                  False "") (\a _ _ -> runMenu a)
   , hdl (mkEntry CmdStkSwap   "S" "S"  "Swap top two views"                 False "") stkH
   , hdl (mkEntry CmdStkPop    ""  "q"  "Close current view"                 True  "") stkH
   , hdl (mkEntry CmdStkDup    ""  ""   "Duplicate current view"             False "") stkH
   , hdl (mkEntry CmdTblQuit   ""  ""   ""                                   False "") (\_ _ _ -> pure ActQuit)
   , hdl (mkEntry CmdInfoTog   ""  "I"  "Toggle info overlay"                False "")
-        (\a ci _ -> pure (case UIInfo.update (info a) (ciCmd ci) of
+        (\a ci _ -> pure $ case UIInfo.update (info a) (ciCmd ci) of
                              Just i' -> ActOk (a & #info .~ i')
-                             Nothing -> ActUnhandled))
+                             Nothing -> ActUnhandled)
   , hdl (mkEntry CmdPrecDec   ""  ""   "Decrease decimal precision"         False "") (precAdj (-1))
   , hdl (mkEntry CmdPrecInc   ""  ""   "Increase decimal precision"         False "") (precAdj 1)
   , hdl (mkEntry CmdPrecZero  ""  ""   "Set precision to 0 decimals"        False "") (precSet 0)
   , hdl (mkEntry CmdPrecMax   ""  ""   "Set precision to max (17)"          False "") (precSet 17)
   , hdl (mkEntry CmdCellUp    ""  "{"  "Scroll cell preview up"             False "")
-        (\a _ _ -> pure (ActOk (a & #prevScroll %~ (\p -> p - min p 5))))
+        (\a _ _ -> pure $ ActOk $ a & #prevScroll %~ (\p -> p - min p 5))
   , hdl (mkEntry CmdCellDn    ""  "}"  "Scroll cell preview down"           False "")
-        (\a _ _ -> pure (ActOk (a & #prevScroll %~ (+ 5))))
+        (\a _ _ -> pure $ ActOk $ a & #prevScroll %~ (+ 5))
   , hdl (mkEntry CmdHeat0     ""  ""   "Heatmap: off"                       False "") (heatSet 0)
   , hdl (mkEntry CmdHeat1     ""  ""   "Heatmap: numeric columns"           False "") (heatSet 1)
   , hdl (mkEntry CmdHeat2     ""  ""   "Heatmap: categorical columns"       False "") (heatSet 2)
@@ -196,11 +196,11 @@ localCmds = V.fromList
           case mt of
             Just t  -> do
               a' <- readIORef ref
-              pure (ActOk (resetVS (a' { theme = t })))
+              pure $ ActOk $ resetVS (a' { theme = t })
             Nothing -> do
               writeIORef Theme.stylesRef (Theme.styles (theme a))
               a' <- readIORef ref
-              pure (ActOk (resetVS (a' { theme = theme a }))))
+              pure $ ActOk $ resetVS (a' { theme = theme a }))
   , hdl (mkEntry CmdThemePreview "" "" "" False "") (\a _ _ -> pure (ActOk a))
   ]
 
@@ -336,7 +336,7 @@ delayMs ms = Control.Concurrent.threadDelay (ms * 1000)
 prodInterp :: Interp AppState
 prodInterp = Interp
   { render  = renderFrame True
-  , nextKey = do e <- Term.pollEvent; pure (Just (Key.toKey e))
+  , nextKey = do e <- Term.pollEvent; pure $ Just $ Key.toKey e
   , readArg = pure ""
   }
 

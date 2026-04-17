@@ -121,7 +121,7 @@ socketInit = do
 pollCmd :: IO (Maybe Text)
 pollCmd = do
   s <- sockPoll
-  pure (if null s then Nothing else Just (T.pack s))
+  pure $ if null s then Nothing else Just (T.pack s)
 
 -- | Get socket path (empty if not started)
 getPath :: IO String

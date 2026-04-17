@@ -179,7 +179,7 @@ run s = case tl s of
               Just s' ->
                 pure $ fmap
                   (\v -> View.setCur s' (v & #disp .~ "diff" & #sameHide .~ sameHide_))
-                  (View.fromTbl adbc (View.path (View.cur s')) 0 allKeys 0)
+                  $ View.fromTbl adbc (View.path (View.cur s')) 0 allKeys 0
 
 -- | Clear sameHide to reveal identical-value columns (toggle)
 showSame :: View AdbcTable -> View AdbcTable

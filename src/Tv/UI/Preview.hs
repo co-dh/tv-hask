@@ -45,7 +45,7 @@ render screenH screenW text scroll0 = do
         visible = min nLines maxVisible
         maxScroll = if nLines > visible then nLines - visible else 0
         scroll = min scroll0 maxScroll
-        contentW = V.foldl' (\mx l -> max mx (T.length l)) 0 lns
+        contentW = V.foldl' (\mx l -> max mx $ T.length l) 0 lns
         innerW0 = min contentW maxW
         innerW = max innerW0 4  -- minimum inner width
         -- bottom-left: x0=0, box ends at screenH - 3 (above tab + status lines)
@@ -64,7 +64,7 @@ render screenH screenW text scroll0 = do
       ("┌" <> T.replicate innerW "─" <> "┐")
     -- content lines with side borders
     mapM_ (\i -> do
-        let line = fromMaybe T.empty (lns V.!? (scroll + i))
+        let line = fromMaybe T.empty $ lns V.!? (scroll + i)
             trimmed = if T.length line > innerW then T.take innerW line else line
             padded = trimmed <> T.replicate (innerW - T.length trimmed) " "
         Term.print (fromIntegral x0 :: Word32) (fromIntegral (y0 + 1 + i) :: Word32) fg bg

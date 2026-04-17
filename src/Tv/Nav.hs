@@ -104,18 +104,18 @@ idxOf a x = V.findIndex (== x) a
 dispOrder :: Vector Text -> Vector Text -> Vector Int
 dispOrder group names =
   let n = V.length names
-      getD i = fromMaybe "" (names V.!? i)
+      getD i = fromMaybe "" $ names V.!? i
       isGrp i = V.elem (getD i) group
       -- Sort group indices by position in grp array (respects grp add/reorder order)
       grpSorted =
         let filtered = V.filter isGrp (V.enumFromN 0 n)
-            key i = fromMaybe 0 (idxOf group (getD i))
+            key i = fromMaybe 0 $ idxOf group (getD i)
         in V.fromList (sortBy (comparing key) (V.toList filtered))
   in grpSorted V.++ V.filter (not . isGrp) (V.enumFromN 0 n)
 
 -- Get column index at display position
 idxAt :: Vector Text -> Vector Text -> Int -> Int
-idxAt group names i = fromMaybe 0 (dispOrder group names V.!? i)
+idxAt group names i = fromMaybe 0 $ dispOrder group names V.!? i
 
 -- NavState: table + cached metadata + navigation cursors.
 -- The type parameter t is the underlying table type (AdbcTable in production,
@@ -145,11 +145,11 @@ colIdx nav = idxAt (nav ^. #grp) (colNames nav) (nav ^. #col % #cur)
 
 -- | Current column name
 colName :: NavState t -> Text
-colName nav = fromMaybe "" (colNames nav V.!? colIdx nav)
+colName nav = fromMaybe "" $ colNames nav V.!? colIdx nav
 
 -- | Current column type
 colType :: NavState t -> ColType
-colType nav = fromMaybe ColTypeOther ((nav ^. #tblTypes) V.!? colIdx nav)
+colType nav = fromMaybe ColTypeOther $ (nav ^. #tblTypes) V.!? colIdx nav
 
 -- | Column names in display order (grouped first, then rest)
 dispNames :: NavState t -> Vector Text
@@ -253,8 +253,8 @@ exec h nav rowPg =
              | not fwd && i == 0 -> Nothing
              | otherwise ->
                  let j  = if fwd then i + 1 else i - 1
-                     gi = fromMaybe "" (grp_ V.!? i)
-                     gj = fromMaybe "" (grp_ V.!? j)
+                     gi = fromMaybe "" $ grp_ V.!? i
+                     gj = fromMaybe "" $ grp_ V.!? j
                      newGrp = grp_ V.// [(i, gj), (j, gi)]
                      d = if fwd then 1 else -1
                      nav' = nav & #grp .~ newGrp & #dispIdxs .~ dispOrder newGrp (colNames nav)

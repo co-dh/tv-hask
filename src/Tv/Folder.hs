@@ -159,7 +159,7 @@ curType v = case View.vkind v of
 fldView :: AdbcTable -> Text -> Int -> Text -> Vector Text -> Maybe (View AdbcTable)
 fldView adbc path_ depth disp grp =
   fmap (\v -> v & #vkind .~ VkFld path_ depth & #disp .~ disp)
-       (View.fromTbl adbc path_ 0 grp 0)
+       $ View.fromTbl adbc path_ 0 grp 0
 
 -- | Create folder view — config-driven listing, local fallback
 mkView :: Bool -> Text -> Int -> IO (Maybe (View AdbcTable))
@@ -357,7 +357,7 @@ selPaths v = case View.vkind v of
               if V.null (Nav.sels (Nav.row (View.nav v)))
                 then V.singleton (Nav.cur (Nav.row (View.nav v)))
                 else Nav.sels (Nav.row (View.nav v))
-        pure (V.map (\r -> joinPath curDir_ (fromMaybe "" (c V.!? r))) rows)
+        pure $ V.map (\r -> joinPath curDir_ (fromMaybe "" (c V.!? r))) rows
   _ -> pure V.empty
 
 -- | Draw centered dialog box

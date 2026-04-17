@@ -358,7 +358,7 @@ run s kind = do
           yName = Nav.colName n
           yType = Nav.colType n
       if not (isNumeric yType)
-        then err s (toString kind <> " needs a numeric column")
+        then err s $ toString kind <> " needs a numeric column"
         else do
           Term.shutdown
           altEnter
@@ -366,7 +366,7 @@ run s kind = do
           pngPath <- Tmp.tmpPath "plot.png"
           let nr = min (Table.nRows (Nav.tbl n)) maxPoints
           cols <- Ops.getCols (Nav.tbl n) (V.singleton yIdx) 0 nr
-          let vals = fromMaybe V.empty (cols V.!? 0)
+          let vals = fromMaybe V.empty $ cols V.!? 0
           TIO.writeFile datPath
             (yName <> "\n"
               <> T.intercalate "\n" (V.toList (V.filter (not . T.null) vals))
@@ -391,15 +391,15 @@ run s kind = do
       if V.null (Nav.grp n)
         then err s "group a column first (!)"
         else do
-          let xName = fromMaybe "" (Nav.grp n V.!? 0)
+          let xName = fromMaybe "" $ Nav.grp n V.!? 0
           case Nav.idxOf names xName of
-            Nothing -> err s ("x-axis column '" <> xName <> "' not found")
+            Nothing -> err s $ "x-axis column '" <> xName <> "' not found"
             Just xIdx -> do
               let hasFacet = V.length (Nav.grp n) > 2
-                  facetName = if hasFacet then fromMaybe "" (Nav.grp n V.!? 1) else ""
+                  facetName = if hasFacet then fromMaybe "" $ Nav.grp n V.!? 1 else ""
                   catName = if hasFacet
-                              then fromMaybe "" (Nav.grp n V.!? 2)
-                              else fromMaybe "" (Nav.grp n V.!? 1)
+                              then fromMaybe "" $ Nav.grp n V.!? 2
+                              else fromMaybe "" $ Nav.grp n V.!? 1
                   exportCatName_
                     | V.length (Nav.grp n) > 2 = Just facetName
                     | V.length (Nav.grp n) > 1 = Just catName
@@ -410,8 +410,8 @@ run s kind = do
                 else do
                   let yType = Nav.colType n
                   if not (isNumeric yType)
-                    then err s ("y-axis '" <> yName <> "' must be numeric (got "
-                                 <> toString yType <> ")")
+                    then err s $ "y-axis '" <> yName <> "' must be numeric (got "
+                                 <> toString yType <> ")"
                     else do
                       let nr = Table.totalRows (Nav.tbl n)
                           xType0 = Ops.colType (Nav.tbl n) xIdx
@@ -419,7 +419,7 @@ run s kind = do
                         if xType0 /= ColTypeStr then pure xType0
                         else do
                           cols <- Ops.getCols (Nav.tbl n) (V.singleton xIdx) 0 1
-                          let v = T.strip (fromMaybe "" (cols V.!? 0 >>= (V.!? 0)))
+                          let v = T.strip $ fromMaybe "" $ cols V.!? 0 >>= (V.!? 0)
                               cs = T.unpack v
                               at_ i = getD cs i ' '
                           if length cs >= 19 && at_ 4 == '-' && at_ 10 == ' '
@@ -461,7 +461,7 @@ run s kind = do
                               nr_ <- readIORef needRenderRef
                               when nr_ $ do
                                 idx <- readIORef idxRef
-                                let iv = fromMaybe intervalDefault (intervals V.!? idx)
+                                let iv = fromMaybe intervalDefault $ intervals V.!? idx
                                 Log.write "plot"
                                   ("kind=" <> T.pack (show kind)
                                     <> " interval=" <> label iv
@@ -474,7 +474,7 @@ run s kind = do
                                   case r :: Either SomeException (Maybe (Vector Text)) of
                                     Right (Just _cats) -> pure (Nothing :: Maybe Text)
                                     Right Nothing      -> pure (Just "export returned no data")
-                                    Left e             -> pure (Just (T.pack (show e)))
+                                    Left e             -> pure $ Just $ T.pack (show e)
                                 err_ <- case exportResult of
                                   Just msg -> pure (Just msg)
                                   Nothing  -> renderR script

@@ -59,7 +59,7 @@ pickFmt :: Bool -> IO (Maybe ExportFmt)
 pickFmt tm = do
   m <- Fzf.fzf tm (V.fromList ["--prompt=export: "]) "csv\nparquet\njson\nndjson"
   case m of
-    Just raw -> pure (ofStringQ (T.strip raw))
+    Just raw -> pure $ ofStringQ $ T.strip raw
     Nothing  -> pure Nothing
 
 -- | Export current view to file via DuckDB COPY

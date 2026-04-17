@@ -44,7 +44,7 @@ fzfCore tm opts input poll = do
   if tm
     then pure (headD "" (filter (not . T.null) (T.splitOn "\n" input)))
     else do
-      inTmux <- fmap (maybe False (const True)) (lookupEnv "TMUX")
+      inTmux <- fmap (maybe False (const True)) $ lookupEnv "TMUX"
       let lines_ = filter (not . T.null) (T.splitOn "\n" input)
           popupH = min (length lines_ + 2) 15  -- fit content, cap at 15
           -- measure visible width: strip hidden prefix when --with-nth hides leading fields
@@ -153,4 +153,4 @@ cmdMode cc vk poll = do
       out <- fzfCore False opts input poll
       if T.null out
         then pure Nothing
-        else pure (parseSel out)
+        else pure $ parseSel out

@@ -138,7 +138,7 @@ headD _ (x:_) = x
 
 -- | Safe list index with default
 getD :: [a] -> Int -> a -> a
-getD xs i d = fromMaybe d (listToMaybe (drop i xs))
+getD xs i d = fromMaybe d $ listToMaybe $ drop i xs
 
 -- | Path + per-column cache. Key kind @k@ varies (Text column name vs Int
 --   column index) depending on caller; value @v@ is whatever was computed
@@ -234,7 +234,7 @@ filterPrompt col typ =
 -- | Keep columns not in hide set (shared by hideCols impls)
 keepCols :: Int -> Vector Int -> Vector Text -> Vector Text
 keepCols nCols hideIdxs names =
-  V.map (\i -> fromMaybe "" (names V.!? i))
+  V.map (\i -> fromMaybe "" $ names V.!? i)
     (V.filter (not . (`V.elem` hideIdxs)) (V.enumFromN 0 nCols))
 
 -- | Convert columns to tab-separated text (shared by Table toText impls)

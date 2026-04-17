@@ -59,13 +59,13 @@ viewHints VkTbl =
 
 -- | Pad string s on the left with spaces to width w
 padLeft :: Int -> Text -> Text
-padLeft w s = T.replicate (max 0 (w - T.length s)) " " <> s
+padLeft w s = T.replicate (max 0 $ w - T.length s) " " <> s
 
 -- | Pad string s on the right with spaces to width w (after truncating to w)
 padRight :: Int -> Text -> Text
 padRight w s =
   let t = T.take w s
-  in t <> T.replicate (max 0 (w - min (T.length s) w)) " "
+  in t <> T.replicate (max 0 $ w - min (T.length s) w) " "
 
 -- | Render info overlay at bottom-right
 render :: Int -> Int -> ViewKind -> IO ()

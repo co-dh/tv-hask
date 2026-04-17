@@ -95,7 +95,7 @@ renderCols
 renderCols texts names fmts colTypes totalRows RenderCtx{..} r0_ nVisible heatDs = do
   let adjCur = curRow - r0_
       adjSel = V.mapMaybe
-        (\r -> if r >= r0_ && r < r0_ + nVisible then Just (r - r0_) else Nothing)
+        (\r -> if r >= r0_ && r < r0_ + nVisible then Just $ r - r0_ else Nothing)
         rowSels
   ws <- Term.renderTable texts names fmts colTypes
     (V.map fromIntegral inWidths)
@@ -117,7 +117,7 @@ renderCols texts names fmts colTypes totalRows RenderCtx{..} r0_ nVisible heatDs
     heatMode
     sparklines
     heatDs
-  pure (V.map fromIntegral ws)
+  pure $ V.map fromIntegral ws
 
 -- | Render table to terminal, returns (ViewState, widths)
 -- Calls renderView with NavState fields unpacked

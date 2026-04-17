@@ -137,7 +137,7 @@ colHints names types =
   let maxLen = V.foldl' (\mx n -> max mx (T.length n)) 0 names
       line i n =
         let pad = T.replicate (maxLen - T.length n) " "
-            ty  = fromMaybe ColTypeOther (types V.!? i)
+            ty  = fromMaybe ColTypeOther $ types V.!? i
         in n <> pad <> " : " <> toString ty
   in T.intercalate "\n" (V.toList (V.imap line names))
 
@@ -243,7 +243,7 @@ execJoin s op leftGrp = do
                       JoinDiff  -> "diff"
                       _ -> "⋈ (" <> T.intercalate ", " (V.toList leftGrp) <> ")"
                     mView = View.fromTbl adbc (View.path (View.cur s')) 0 V.empty 0
-                in pure (fmap (\v -> View.setCur s' (v & #disp .~ disp_)) mView)
+                in pure $ fmap (\v -> View.setCur s' (v & #disp .~ disp_)) mView
 
 resolveOps :: ViewStack AdbcTable -> Maybe (Vector JoinOp, Vector Text)
 resolveOps s = do
@@ -265,7 +265,7 @@ joinRun tm s = case resolveOps s of
       case mIdx of
         Nothing  -> pure Nothing
         Just idx ->
-          let op = fromMaybe JoinInner (ops V.!? idx)
+          let op = fromMaybe JoinInner $ ops V.!? idx
           in execJoin s op leftGrp
 
 joinRunWith :: ViewStack AdbcTable -> Text -> IO (Maybe (ViewStack AdbcTable))

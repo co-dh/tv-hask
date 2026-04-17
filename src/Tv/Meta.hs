@@ -44,16 +44,14 @@ push s = do
     Nothing -> pure Nothing
     Just adbc0 -> do
       -- Enrich meta with DuckDB column comments (e.g. osquery views with COMMENT ON COLUMN)
-      let metaBase = T.strip (T.drop 5 (Prql.base (Table.query adbc0)))
+      let metaBase = T.strip $ T.drop 5 (Prql.base (Table.query adbc0))
       enriched <- Ops.enrichComments metaBase (View.cur s ^. #path)
       adbc <-
         if enriched
           then fromMaybe adbc0 <$> Table.requery (Table.query adbc0) (Table.totalRows adbc0)
           else pure adbc0
       let mV = View.fromTbl adbc (View.cur s ^. #path) 0 mempty 0
-      pure $ fmap
-        (\v -> View.push s (v & #vkind .~ VkColMeta & #disp .~ "meta"))
-        mV
+      pure $ fmap (\v -> View.push s (v & #vkind .~ VkColMeta & #disp .~ "meta")) mV
 
 -- | Select meta rows matching PRQL filter
 selBy :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)

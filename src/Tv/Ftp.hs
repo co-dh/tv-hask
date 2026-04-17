@@ -21,16 +21,16 @@ import Tv.Types (headD, getD)
 
 -- | URL-encode a string: encode all bytes not in [A-Za-z0-9._~/-]
 urlEncode :: Text -> Text
-urlEncode s = T.concat (map encChar (T.unpack s))
+urlEncode s = T.concat $ map encChar $ T.unpack s
   where
     encChar c
       | isAlphaNum c || c == '.' || c == '_' || c == '~' || c == '/' || c == '-' =
           T.singleton c
       | otherwise =
           let bytes = BS.unpack (TE.encodeUtf8 (T.singleton c))
-          in T.concat (map encByte bytes)
+          in T.concat $ map encByte bytes
     encByte :: Word8 -> Text
-    encByte b = T.pack (printf "%%%02X" b)
+    encByte b = T.pack $ printf "%%%02X" b
 
 -- | URL-encode an FTP URL: encode only path segments, not protocol/host.
 -- e.g. "ftp://host/a b/c d/" -> "ftp://host/a%20b/c%20d/"
@@ -57,8 +57,8 @@ parseLs raw =
       in if length parts < 9
            then acc
            else
-             let name = headD "" (T.splitOn " -> " (T.unwords (drop 8 parts)))
+             let name = headD "" $ T.splitOn " -> " $ T.unwords $ drop 8 parts
                  size = getD parts 4 "0"
-                 date = T.unwords (take 3 (drop 5 parts))
-                 typ  = if T.isPrefixOf "d" (getD parts 0 "") then "dir" else "file"
+                 date = T.unwords $ take 3 $ drop 5 parts
+                 typ  = if T.isPrefixOf "d" $ getD parts 0 "" then "dir" else "file"
              in (name <> "\t" <> size <> "\t" <> date <> "\t" <> typ) : acc

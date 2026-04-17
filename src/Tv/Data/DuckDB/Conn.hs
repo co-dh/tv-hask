@@ -81,7 +81,7 @@ init = do
         writeIORef connRef (Just c)
   case r of
     Right ()                   -> pure ""
-    Left (e :: SomeException)  -> pure (T.pack (show e))
+    Left (e :: SomeException)  -> pure $ T.pack $ show e
 
 -- | Disconnect and clear the singleton.
 shutdown :: IO ()
@@ -115,13 +115,13 @@ queryParam :: Text -> Text -> IO QueryResult
 queryParam sql _param = query sql
 
 ncols :: QueryResult -> IO Word64
-ncols qr = pure (fromIntegral (V.length (colNames qr)))
+ncols qr = pure $ fromIntegral $ V.length $ colNames qr
 
 nrows :: QueryResult -> IO Word64
-nrows qr = pure (fromIntegral (nRows qr))
+nrows qr = pure $ fromIntegral $ nRows qr
 
 colName :: QueryResult -> Word64 -> IO Text
-colName qr i = pure (colNames qr V.! fromIntegral i)
+colName qr i = pure $ colNames qr V.! fromIntegral i
 
 -- | Column format char. Lean returns the Arrow ArrowSchema.format string. DuckDB
 -- doesn't surface that directly, so we synthesize the first character per
@@ -153,7 +153,7 @@ colFmt qr i =
 -- emit Arrow names — leaving this as-is for now so the ColType round-trip
 -- stays symmetric with Tv.Types.
 colType :: QueryResult -> Word64 -> IO Text
-colType qr i = pure (ctToString (colTypes qr V.! fromIntegral i))
+colType qr i = pure $ ctToString $ colTypes qr V.! fromIntegral i
   where
     ctToString :: Tc.ColType -> Text
     ctToString Tc.ColTypeInt       = "int"
@@ -173,7 +173,7 @@ cellStr qr r c = do
     Nothing -> pure ""
     Just (ch, local) ->
       let cv = DB.chunkColumn ch c'
-      in pure (DB.cellAny cv local)
+      in pure $ DB.cellAny cv local
 
 cellInt :: QueryResult -> Word64 -> Word64 -> IO Int64
 cellInt qr r c = do
@@ -182,7 +182,7 @@ cellInt qr r c = do
     Nothing -> pure 0
     Just (ch, local) ->
       let cv = DB.chunkColumn ch c'
-      in pure (fromMaybe 0 (DB.cellInt cv local))
+      in pure $ fromMaybe 0 $ DB.cellInt cv local
 
 cellFloat :: QueryResult -> Word64 -> Word64 -> IO Double
 cellFloat qr r c = do
@@ -191,7 +191,7 @@ cellFloat qr r c = do
     Nothing -> pure 0
     Just (ch, local) ->
       let cv = DB.chunkColumn ch c'
-      in pure (fromMaybe 0 (DB.cellDbl cv local))
+      in pure $ fromMaybe 0 $ DB.cellDbl cv local
 
 -- | Locate (chunk, local row index) for a global row index. Binary search
 -- over the prescanned chunk offsets.
@@ -245,7 +245,7 @@ formatCellDisplay qr row col prec_ typ =
           Just 0  -> "false"
           Just _  -> "true"
           Nothing -> ""
-        _ -> pure (DB.cellAny cv local)
+        _ -> pure $ DB.cellAny cv local
 
 -- | Materialize a rectangular cell region as display-formatted text.
 -- Column-major: outer Vector indexed by column, inner by local row.

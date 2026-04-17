@@ -151,7 +151,7 @@ compile prql = do
     Left (e :: SomeException) -> do
       Log.errorLog (T.pack ("prqlc spawn failed: " <> show e))
       pure Nothing
-    Right (ExitSuccess, out, _) -> pure (Just (T.pack out))
+    Right (ExitSuccess, out, _) -> pure $ Just $ T.pack out
     Right (_, _, err) -> do
       Log.errorLog ("prqlc: " <> T.pack err)
       pure Nothing

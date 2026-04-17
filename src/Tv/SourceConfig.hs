@@ -119,7 +119,7 @@ pathParts pfx_ path_ =
       rest  = if T.isSuffixOf "/" rest0
                 then T.dropEnd 1 rest0
                 else rest0
-  in if T.null rest then V.empty else V.fromList (T.splitOn "/" rest)
+  in if T.null rest then V.empty else V.fromList $ T.splitOn "/" rest
 
 -- | Expand template placeholders: {path}, {name}, {tmp}, {extra}, {1}, {2}, {2+}, etc.
 -- For empty values, also removes a preceding "/" to avoid trailing slashes
@@ -146,7 +146,7 @@ mkVars cfg path_ tmp name extra =
           , ("extra", extra)
           , ("dsn", dsn)
           ]
-      getD i = fromMaybe "" (parts V.!? i)
+      getD i = fromMaybe "" $ parts V.!? i
       numbered = V.fromList
         [ (T.pack (show (i + 1)), getD i) | i <- [0 .. 8] ]
       plus = V.fromList
@@ -323,7 +323,7 @@ listCache = unsafePerformIO (newIORef V.empty)
 cacheLookup :: Text -> IO (Maybe AdbcTable)
 cacheLookup path_ = do
   arr <- readIORef listCache
-  pure $ fmap snd (V.find (\(k, _) -> k == path_) arr)
+  pure $ fmap snd $ V.find (\(k, _) -> k == path_) arr
 
 cacheStore :: Text -> AdbcTable -> IO ()
 cacheStore path_ tbl =
@@ -370,7 +370,7 @@ getFiltSql = do
     else do
       m <- Prql.compile Prql.ducktabsF
       case m of
-        Nothing -> ioError (userError ("Failed to compile PRQL: " <> T.unpack Prql.ducktabsF))
+        Nothing -> ioError $ userError $ "Failed to compile PRQL: " <> T.unpack Prql.ducktabsF
         Just sql -> do
           let sql' = stripSemi sql
           writeIORef filteredSql sql'

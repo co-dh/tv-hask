@@ -107,7 +107,7 @@ tryStk :: AppState -> CmdInfo -> IO (Maybe (ViewStack AdbcTable)) -> IO Action
 tryStk a ci f = do
   r <- try f :: IO (Either SomeException (Maybe (ViewStack AdbcTable)))
   case r of
-    Right (Just s') -> pure (ActOk (resetVS (withStk a ci s')))
+    Right (Just s') -> pure $ ActOk $ resetVS (withStk a ci s')
     Right Nothing   -> pure (ActOk a)
     Left  e         -> errAction a e
 
@@ -115,7 +115,7 @@ stackIO :: AppState -> IO (ViewStack AdbcTable) -> IO Action
 stackIO a f = do
   r <- try f :: IO (Either SomeException (ViewStack AdbcTable))
   case r of
-    Right s' -> pure (ActOk (resetVS (a & #stk .~ s')))
+    Right s' -> pure $ ActOk $ resetVS (a & #stk .~ s')
     Left  e  -> errAction a e
 
 runViewEffect :: AppState -> CmdInfo -> View AdbcTable -> Effect -> IO Action
@@ -123,18 +123,18 @@ runViewEffect a ci v' e =
   let s    = stk a
       rCur = Nav.cur (Nav.row (View.nav v'))
   in case e of
-    EffectNone -> pure (ActOk (withStk a ci (View.setCur s v')))
+    EffectNone -> pure $ ActOk $ withStk a ci (View.setCur s v')
     EffectQuit -> pure ActQuit
 
     EffectFetchMore -> tryStk a ci $ runMaybeT $ do
       tbl' <- MaybeT (AdbcTable.fetchMore (View.tbl s))
       rv   <- hoistMaybe (View.rebuild v' tbl' 0 V.empty rCur)
-      pure (View.setCur s rv)
+      pure $ View.setCur s rv
 
     EffectSort colIdx sels grp asc -> tryStk a ci $ runMaybeT $ do
       tbl' <- liftIO (Ops.modifyTableSort (View.tbl s) colIdx sels grp asc)
       rv   <- hoistMaybe (View.rebuild v' tbl' colIdx V.empty rCur)
-      pure (View.setCur s rv)
+      pure $ View.setCur s rv
 
     EffectExclude cols -> tryStk a ci $ runMaybeT $ do
       tbl' <- liftIO (AdbcTable.excludeCols (View.tbl s) cols)
@@ -142,15 +142,15 @@ runViewEffect a ci v' e =
           grp'        = notExcluded (Nav.grp    (View.nav v'))
           hidden'     = notExcluded (Nav.hidden (View.nav v'))
       rv <- hoistMaybe (View.rebuild v' tbl' 0 grp' rCur)
-      pure (View.setCur s (rv & #nav % #hidden .~ hidden'))
+      pure $ View.setCur s (rv & #nav % #hidden .~ hidden')
 
     EffectFreq colNames -> tryStk a ci $ runMaybeT $ do
       (adbc, totalGroups) <- MaybeT (AdbcTable.freqTable (View.tbl s) colNames)
       fv <- hoistMaybe (View.fromTbl adbc (View.path (View.cur s)) 0 colNames 0)
-      pure (View.push s (fv
+      pure $ View.push s (fv
         { View.vkind = VkFreqV colNames totalGroups
         , View.disp  = "freq " <> joinWith colNames ","
-        }))
+        })
 
     EffectFreqFilter cols row -> tryStk a ci $ runMaybeT $ do
       s'   <- hoistMaybe $ case (View.vkind (View.cur s), View.pop s) of
@@ -159,7 +159,7 @@ runViewEffect a ci v' e =
       expr <- liftIO (Freq.filterIO (View.tbl s) cols row)
       tbl' <- MaybeT (AdbcTable.filter (View.tbl s') expr)
       rv   <- hoistMaybe (View.rebuild (View.cur s') tbl' 0 V.empty 0)
-      pure (View.push s' rv)
+      pure $ View.push s' rv
 
 viewUp :: AppState -> CmdInfo -> IO Action
 viewUp a ci =
@@ -185,17 +185,17 @@ vuH = \a ci _ -> viewUp a ci
 
 stkH :: HandlerFn
 stkH = \a ci _ ->
-  pure (case View.updateStack (stk a) (ciCmd ci) of
+  pure $ case View.updateStack (stk a) (ciCmd ci) of
     Just (_, EffectQuit) -> ActQuit
     Just (s', _)         -> ActOk (withStk a ci s')
-    Nothing              -> ActUnhandled)
+    Nothing              -> ActUnhandled
 
 precSet :: Int -> HandlerFn
-precSet v = \a _ _ -> pure (ActOk (set precL v a))
+precSet v = \a _ _ -> pure $ ActOk $ set precL v a
 
 precAdj :: Int -> HandlerFn
 precAdj delta = \a _ _ ->
-  pure (ActOk (over precL (\p -> min 17 (max 0 (p + delta))) a))
+  pure $ ActOk $ over precL (\p -> min 17 (max 0 (p + delta))) a
 
 heatSet :: Word8 -> HandlerFn
-heatSet v = \a _ _ -> pure (ActOk (a & #heatMode .~ v))
+heatSet v = \a _ _ -> pure $ ActOk $ a & #heatMode .~ v

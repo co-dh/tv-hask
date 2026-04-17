@@ -131,7 +131,7 @@ tblCounter = unsafePerformIO (newIORef 0)
 tmpName :: Text -> IO Text
 tmpName label = do
   n <- atomicModifyIORef' tblCounter (\n -> (n + 1, n))
-  pure ("tc_" <> label <> "_" <> T.pack (show n))
+  pure $ "tc_" <> label <> "_" <> T.pack (show n)
 
 -- | Track loaded DuckDB extensions (idempotent install+load)
 {-# NOINLINE extLoaded #-}
@@ -213,7 +213,7 @@ queryCount q = do
       if fromIntegral nr > (0 :: Int)
         then do
           v <- Conn.cellInt qr_ 0 0
-          pure (fromIntegral v)
+          pure $ fromIntegral v
         else pure 0
 
 -- | Execute PRQL query and return new AdbcTable (preserves totalRows if provided)
@@ -250,9 +250,9 @@ fromFile path_ = do
            _ <- Conn.query
                   ( "CREATE OR REPLACE TEMP TABLE \"" <> tbl
                  <> "\" AS (SELECT * FROM '" <> escSql path_ <> "')" )
-           pure (Prql.defaultQuery { Prql.base = "from " <> tbl })
+           pure $ Prql.defaultQuery { Prql.base = "from " <> tbl }
          else
-           pure (Prql.defaultQuery { Prql.base = "from `" <> path_ <> "`" })
+           pure $ Prql.defaultQuery { Prql.base = "from `" <> path_ <> "`" }
   total <- queryCount q
   requery q total
 
@@ -296,7 +296,7 @@ fromTable table = do
       q = Prql.defaultQuery { Prql.base = "from " <> qualName }
   total <- queryCount q
   m <- requery q total
-  pure (fmap (\t -> (t, keys)) m)
+  pure $ fmap (\t -> (t, keys)) m
 
 -- | Sort: append sort op and re-query (all columns use given direction)
 sortBy :: AdbcTable -> Vector Int -> Bool -> IO AdbcTable
@@ -463,7 +463,7 @@ freqTable t cNames
           Nothing -> pure 0
           Just qr_ -> do
             v <- Conn.cellStr qr_ 0 0
-            pure (parseIntOr0 v)
+            pure $ parseIntOr0 v
       -- freq table: uses freq PRQL function which computes Cnt, Pct, Bar in SQL
       tblName <- tmpName "freq"
       let prql = baseR <> " | freq {" <> cols <> "} | take 1000"
@@ -524,7 +524,7 @@ findRow t col val start fwd = do
         else if fwd
                then case V.find (>= start) rows of
                       Just r  -> pure (Just r)
-                      Nothing -> pure (Just (V.head rows))
+                      Nothing -> pure $ Just $ V.head rows
                else
                  -- findRev?: last element satisfying (< start), else fall back to back
                  let revHit = V.foldl'
@@ -532,5 +532,5 @@ findRow t col val start fwd = do
                                 Nothing rows
                  in case revHit of
                       Just r  -> pure (Just r)
-                      Nothing -> pure (Just (V.last rows))
+                      Nothing -> pure $ Just $ V.last rows
 

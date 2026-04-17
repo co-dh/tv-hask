@@ -41,10 +41,10 @@ compute t colIdx = do
   if Table.totalRows t > Table.prqlLimit
     then pure (T.pack ("#" ++ show (Table.totalRows t)))
     else do
-      let colName = fromMaybe "" (Table.colNames t V.!? colIdx)
-          colTy   = fromMaybe ColTypeOther (Table.colTypes t V.!? colIdx)
+      let colName = fromMaybe "" $ Table.colNames t V.!? colIdx
+          colTy   = fromMaybe ColTypeOther $ Table.colTypes t V.!? colIdx
           isNum   = isNumeric colTy
-      mBase <- Prql.compile (Prql.queryRender (Table.query t))
+      mBase <- Prql.compile $ Prql.queryRender $ Table.query t
       case mBase of
         Nothing -> pure ""
         Just baseSql -> do

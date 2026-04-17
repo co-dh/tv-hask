@@ -90,7 +90,7 @@ toText t = do
   cols <- V.generateM nc $ \i ->
     V.generateM (Table.nRows t) $ \r ->
       Conn.cellStr (Table.qr t) (fromIntegral r :: Word64) (fromIntegral i :: Word64)
-  pure (colText (Table.colNames t) cols (Table.nRows t))
+  pure $ colText (Table.colNames t) cols (Table.nRows t)
 
 -- ----------------------------------------------------------------------------
 -- ## Meta: column statistics from parquet metadata or SQL aggregation
@@ -150,7 +150,7 @@ queryMeta t = do
           case mBase of
             Nothing -> pure Nothing
             Just baseSql ->
-              pure (Just (statsSql (T.stripEnd baseSql) names types))
+              pure $ Just $ statsSql (T.stripEnd baseSql) names types
       case mMetaSql of
         Nothing -> pure Nothing
         Just metaSql -> do
