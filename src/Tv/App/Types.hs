@@ -27,6 +27,8 @@ module Tv.App.Types
   ) where
 
 import Control.Exception (SomeException, try)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT, hoistMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Vector (Vector)
@@ -117,56 +119,47 @@ stackIO a f = do
     Left  e  -> errAction a e
 
 runViewEffect :: AppState -> CmdInfo -> View AdbcTable -> Effect -> IO Action
-runViewEffect a ci v' e = do
-  let s  = stk a
-      a' = withStk a ci (View.setCur s v')
-  case e of
-    EffectNone -> pure (ActOk a')
+runViewEffect a ci v' e =
+  let s    = stk a
+      rCur = Nav.cur (Nav.row (View.nav v'))
+  in case e of
+    EffectNone -> pure (ActOk (withStk a ci (View.setCur s v')))
     EffectQuit -> pure ActQuit
-    EffectFetchMore -> do
-      r <- try (AdbcTable.fetchMore (View.tbl s))
-             :: IO (Either SomeException (Maybe AdbcTable))
-      case r of
-        Right (Just tbl') ->
-          case View.rebuild v' tbl' 0 V.empty (Nav.cur (Nav.row (View.nav v'))) of
-            Just rv -> pure (ActOk (resetVS (a' { stk = View.setCur s rv })))
-            Nothing -> pure (ActOk a')
-        Right Nothing  -> pure (ActOk a')
-        Left  err      -> errAction a' err
-    EffectSort colIdx sels grp asc -> tryStk a ci $ do
-      tbl' <- Ops.modifyTableSort (View.tbl s) colIdx sels grp asc
-      let mrv = View.rebuild v' tbl' colIdx V.empty (Nav.cur (Nav.row (View.nav v')))
-      pure (fmap (View.setCur s) mrv)
-    EffectExclude cols -> tryStk a ci $ do
-      tbl' <- AdbcTable.excludeCols (View.tbl s) cols
-      let grp'    = V.filter (not . (`V.elem` cols)) (Nav.grp (View.nav v'))
-          hidden' = V.filter (not . (`V.elem` cols)) (Nav.hidden (View.nav v'))
-          mrv = View.rebuild v' tbl' 0 grp' (Nav.cur (Nav.row (View.nav v')))
-      pure $ fmap (\rv -> View.setCur s (rv & #nav % #hidden .~ hidden')) mrv
-    EffectFreq colNames -> tryStk a ci $ do
-      mft <- AdbcTable.freqTable (View.tbl s) colNames
-      case mft of
-        Nothing -> pure Nothing
-        Just (adbc, totalGroups) ->
-          case View.fromTbl adbc (View.path (View.cur s)) 0 colNames 0 of
-            Just fv ->
-              pure (Just (View.push s (fv
-                { View.vkind = VkFreqV colNames totalGroups
-                , View.disp  = "freq " <> joinWith colNames ","
-                })))
-            Nothing -> pure Nothing
-    EffectFreqFilter cols row -> tryStk a ci $ do
-      case (View.vkind (View.cur s), View.pop s) of
-        (VkFreqV _ _, Just s') -> do
-          expr <- Freq.filterIO (View.tbl s) cols row
-          mf <- AdbcTable.filter (View.tbl s') expr
-          case mf of
-            Just tbl' ->
-              case View.rebuild (View.cur s') tbl' 0 V.empty 0 of
-                Just rv -> pure (Just (View.push s' rv))
-                Nothing -> pure Nothing
-            Nothing -> pure Nothing
-        _ -> pure Nothing
+
+    EffectFetchMore -> tryStk a ci $ runMaybeT $ do
+      tbl' <- MaybeT (AdbcTable.fetchMore (View.tbl s))
+      rv   <- hoistMaybe (View.rebuild v' tbl' 0 V.empty rCur)
+      pure (View.setCur s rv)
+
+    EffectSort colIdx sels grp asc -> tryStk a ci $ runMaybeT $ do
+      tbl' <- liftIO (Ops.modifyTableSort (View.tbl s) colIdx sels grp asc)
+      rv   <- hoistMaybe (View.rebuild v' tbl' colIdx V.empty rCur)
+      pure (View.setCur s rv)
+
+    EffectExclude cols -> tryStk a ci $ runMaybeT $ do
+      tbl' <- liftIO (AdbcTable.excludeCols (View.tbl s) cols)
+      let notExcluded = V.filter (not . (`V.elem` cols))
+          grp'        = notExcluded (Nav.grp    (View.nav v'))
+          hidden'     = notExcluded (Nav.hidden (View.nav v'))
+      rv <- hoistMaybe (View.rebuild v' tbl' 0 grp' rCur)
+      pure (View.setCur s (rv & #nav % #hidden .~ hidden'))
+
+    EffectFreq colNames -> tryStk a ci $ runMaybeT $ do
+      (adbc, totalGroups) <- MaybeT (AdbcTable.freqTable (View.tbl s) colNames)
+      fv <- hoistMaybe (View.fromTbl adbc (View.path (View.cur s)) 0 colNames 0)
+      pure (View.push s (fv
+        { View.vkind = VkFreqV colNames totalGroups
+        , View.disp  = "freq " <> joinWith colNames ","
+        }))
+
+    EffectFreqFilter cols row -> tryStk a ci $ runMaybeT $ do
+      s'   <- hoistMaybe $ case (View.vkind (View.cur s), View.pop s) of
+                (VkFreqV _ _, Just p) -> Just p
+                _                     -> Nothing
+      expr <- liftIO (Freq.filterIO (View.tbl s) cols row)
+      tbl' <- MaybeT (AdbcTable.filter (View.tbl s') expr)
+      rv   <- hoistMaybe (View.rebuild (View.cur s') tbl' 0 V.empty 0)
+      pure (View.push s' rv)
 
 viewUp :: AppState -> CmdInfo -> IO Action
 viewUp a ci =
