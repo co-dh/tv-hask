@@ -35,11 +35,12 @@ import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
-import Tv.Types (Cmd(..), ColType(..), Op(..), toString, escSql)
+import Tv.Types (Cmd(..), ColType(..), toString, escSql)
 import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Table (AdbcTable, tmpName, stripSemi)
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Ops (maxSplitParts, createTempView, createTempTable)
+import qualified Tv.Df.Prql as DfQ
 import Tv.Fzf (fzfIdx)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
@@ -51,17 +52,18 @@ import qualified Tv.Log as Log
 -- Shared: pipe PRQL op → requery → rebuild → push
 -- ============================================================================
 
--- | Pipe an Op onto the current query, requery, rebuild view at given column,
--- and push with a display label. The common tail of split and derive.
-pipeAndPush :: ViewStack AdbcTable -> Op -> Text -> (AdbcTable -> Int) -> IO (ViewStack AdbcTable)
-pipeAndPush s op label colIdxFn = do
-  let q = Prql.pipe (Table.query (View.tbl s)) op
-  Log.write "ops" (Prql.queryRender q)
-  mTbl <- Table.requery q (Table.totalRows (View.tbl s))
+-- | Compile a 'Tv.Df.Prql.Query' through DuckDB, then rebuild + push
+-- the View onto the stack. Shared tail used by split and derive.
+pushQuery :: ViewStack AdbcTable -> DfQ.Query -> Text -> (AdbcTable -> Int)
+          -> IO (ViewStack AdbcTable)
+pushQuery s q label colIdxFn = do
+  Log.write "ops" (DfQ.compile q)
+  mTbl <- Table.fromPrqlText (DfQ.compile q)
   case mTbl of
     Nothing -> pure s
     Just tbl' ->
-      case View.rebuild (View.cur s) tbl' (colIdxFn tbl') (Nav.grp (View.nav (View.cur s))) 0 of
+      case View.rebuild (View.cur s) tbl' (colIdxFn tbl')
+             (Nav.grp (View.nav (View.cur s))) 0 of
         Nothing -> pure s
         Just v  -> pure (View.push s (v & #disp .~ label))
 
@@ -93,8 +95,15 @@ splitRunWith s pat = do
       Just baseSql -> do
         n <- maxSplitParts (stripSemi baseSql) curName ep
         if n <= 1 then pure s
-        else pipeAndPush s (OpDerive (splitBindings curName ep (Prql.quote curName) n))
-               (":" <> curName) (\t -> V.length (Table.colNames t) - n)
+        else do
+          let bs   = splitBindings curName ep (Prql.quote curName) n
+              bsT  = T.intercalate ", "
+                       [ Prql.quote nm <> " = " <> e
+                       | (nm, e) <- V.toList bs ]
+              baseRend = Prql.queryRender (Table.query (View.tbl s))
+              q = DfQ.fromBase baseRend
+                    DfQ.|> DfQ.rawStage ("derive {" <> bsT <> "}")
+          pushQuery s q (":" <> curName) (\t -> V.length (Table.colNames t) - n)
 
 splitRun :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 splitRun tm s = do
@@ -152,10 +161,21 @@ parseDerive input =
 
 deriveRunWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 deriveRunWith s input = case parseDerive input of
-  Nothing -> pure s
-  Just (name, expr) ->
-    pipeAndPush s (OpDerive (V.singleton (name, expr)))
-      ("=" <> name) (\t -> V.length (Table.colNames t) - 1)
+  Nothing           -> pure s
+  Just (name, expr) -> do
+    let baseRend = Prql.queryRender (Table.query (View.tbl s))
+        q = DfQ.fromBase baseRend
+              DfQ.|> DfQ.rawStage
+                       ("derive {" <> Prql.quote name <> " = " <> expr <> "}")
+    mTbl <- Table.fromPrqlText (DfQ.compile q)
+    case mTbl of
+      Nothing   -> pure s
+      Just tbl' ->
+        let colIdx = V.length (Table.colNames tbl') - 1
+            grp'   = Nav.grp (View.nav (View.cur s))
+        in case View.rebuild (View.cur s) tbl' colIdx grp' 0 of
+             Nothing -> pure s
+             Just v  -> pure (View.push s (v & #disp .~ ("=" <> name)))
 
 
 deriveRun :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)

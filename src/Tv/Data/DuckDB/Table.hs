@@ -48,6 +48,7 @@ module Tv.Data.DuckDB.Table
   , fromJson
   , fileWith
   , copyToParquet
+  , fromPrqlText
     -- second AdbcTable block in Lean
   , freqTable
   , filter
@@ -457,6 +458,23 @@ fromCsv content = fromIngest content "csv" "read_csv_auto"
 
 fromJson :: Text -> IO (Maybe AdbcTable)
 fromJson content = fromIngest content "json" "read_json_auto"
+
+-- | Compile a PRQL text query, execute it inside DuckDB via a temp
+-- table, and return an 'AdbcTable' backed by the result. This is the
+-- bridge between 'Tv.Df.Prql' (builders that emit PRQL text) and the
+-- View stack (which holds AdbcTable). Feature modules compose queries
+-- through 'Tv.Df.Prql' and hand off here.
+fromPrqlText :: Text -> IO (Maybe AdbcTable)
+fromPrqlText prql = do
+  Log.write "prql" prql
+  mSql <- Prql.compile prql
+  case mSql of
+    Nothing  -> pure Nothing
+    Just sql -> do
+      name <- tmpName "tq"
+      _    <- Conn.query ("CREATE TEMP TABLE " <> name
+                        <> " AS " <> stripSemi sql)
+      fromTmp name
 
 -- | COPY an AdbcTable's result set to a Parquet file. Used by the
 -- dataframe bridge to hand off AdbcTable rows to the dataframe engine
