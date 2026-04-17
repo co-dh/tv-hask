@@ -85,6 +85,33 @@ data Config = Config
   }
 makeFieldLabelsNoPrefix ''Config
 
+-- List cache: keep newest `cacheCap` entries; on overflow, evict oldest
+-- (keep last `evictKeep`) before appending. Ring-like but with Vector.
+cacheCap, evictKeep :: Int
+cacheCap  = 64
+evictKeep = 32
+
+-- | Swallow exceptions from an IO action (used where a best-effort step
+-- has no sensible recovery, e.g. optional post-processing steps).
+ignoreErrs :: IO a -> IO ()
+ignoreErrs m = try m >>= \(_ :: Either SomeException a) -> pure ()
+
+-- ## Module state
+--
+-- Three IORefs held globally because they cache cross-invocation state:
+-- setup-once flags, slow-listing results, and a compiled-once PRQL string.
+{-# NOINLINE setupDone #-}
+setupDone :: IORef (Vector Text)
+setupDone = unsafePerformIO (newIORef V.empty)
+
+{-# NOINLINE listCache #-}
+listCache :: IORef (Vector (Text, AdbcTable))
+listCache = unsafePerformIO (newIORef V.empty)
+
+{-# NOINLINE filteredSql #-}
+filteredSql :: IORef Text
+filteredSql = unsafePerformIO (newIORef "")
+
 defaultConfig :: Config
 defaultConfig = Config
   { pfx            = ""
@@ -108,11 +135,9 @@ defaultConfig = Config
   , fallbackSql    = ""
   }
 
--- | Get S3 extra args string from noSign flag
 s3Extra :: Bool -> Text
 s3Extra ns = if ns then "--no-sign-request" else ""
 
--- | Split path into components after stripping prefix
 pathParts :: Text -> Text -> Vector Text
 pathParts pfx_ path_ =
   let rest0 = T.drop (T.length pfx_) path_
@@ -133,7 +158,6 @@ expand tmpl vars = V.foldl' step tmpl vars
                (T.replace ("/{" <> k <> "}") "" s)
         else T.replace ("{" <> k <> "}") v s
 
--- | Build template variables from a config and path
 mkVars :: Config -> Text -> Text -> Text -> Text -> Vector (Text, Text)
 mkVars cfg path_ tmp name extra =
   let parts = pathParts (pfx cfg) path_
@@ -249,7 +273,7 @@ sources = V.fromList
       }
   ]
 
--- | Find config for a path by prefix match (longest prefix wins)
+-- | Longest prefix wins.
 findSource :: Text -> IO (Maybe Config)
 findSource path_ =
   pure $ V.foldl' step Nothing sources
@@ -266,17 +290,11 @@ findSource path_ =
 
 -- ## Generic Operations
 
--- | Parent path navigation using Remote.parent with config's minParts
 configParent :: Config -> Text -> Maybe Text
 configParent cfg path_ =
   case Remote.parent path_ (minParts cfg) of
     Just p  -> Just p
     Nothing -> if T.null (parentFallback cfg) then Nothing else Just (parentFallback cfg)
-
--- | Track which prefixes/extensions have completed setup
-{-# NOINLINE setupDone #-}
-setupDone :: IORef (Vector Text)
-setupDone = unsafePerformIO (newIORef V.empty)
 
 -- | Run one-time setup for a config (duckdbExt + setupCmd + setupSql), idempotent.
 -- Tries setupSql first; if it fails (e.g. DB doesn't exist), runs setupCmd to create it.
@@ -315,11 +333,6 @@ runSetup cfg = do
           pure ()
         modifyIORef' setupDone (`V.snoc` pfx cfg)
 
--- | Cache for slow listings (> 3s). Keyed by path.
-{-# NOINLINE listCache #-}
-listCache :: IORef (Vector (Text, AdbcTable))
-listCache = unsafePerformIO (newIORef V.empty)
-
 cacheLookup :: Text -> IO (Maybe AdbcTable)
 cacheLookup path_ = do
   arr <- readIORef listCache
@@ -329,15 +342,11 @@ cacheStore :: Text -> AdbcTable -> IO ()
 cacheStore path_ tbl =
   modifyIORef' listCache $ \arr ->
     let arr' = V.filter (\(k, _) -> k /= path_) arr
-    in if V.length arr' >= 64
-         then V.snoc (V.slice 32 (V.length arr' - 32) arr') (path_, tbl)
+        drop_ = V.length arr' - evictKeep
+    in if V.length arr' >= cacheCap
+         then V.snoc (V.drop drop_ arr') (path_, tbl)
          else V.snoc arr' (path_, tbl)
 
--- | Build AdbcTable from a temp table name
-fromTbl :: Text -> IO (Maybe AdbcTable)
-fromTbl tbl = fromTmp tbl
-
--- | Extract last path component as a filename
 fromPath :: Text -> Text
 fromPath path_ =
   let parts = filter (not . T.null) (T.splitOn "/" path_)
@@ -356,11 +365,6 @@ cmdVars noSign_ cfg path_ = do
   let cmdPath = if urlEncode cfg then Ftp.encodeUrl (pfx cfg) path_ else path_
       tmpT = T.pack tmpDir
   pure (mkVars cfg cmdPath tmpT (fromPath path_) extra, tmpT)
-
--- | Cached compiled SQL for tbl_info_filtered (fixed query, compile once)
-{-# NOINLINE filteredSql #-}
-filteredSql :: IORef Text
-filteredSql = unsafePerformIO (newIORef "")
 
 getFiltSql :: IO Text
 getFiltSql = do
@@ -403,15 +407,14 @@ runListSql noSign_ cfg path_ tbl = do
   case reverse stmts of
     [] -> do
       _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> sql)
-      fromTbl tbl
+      fromTmp tbl
     (selectSql : rest) -> do
       forM_ (reverse rest) $ \stmt -> do
         _ <- Conn.query stmt
         pure ()
       _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> selectSql)
-      fromTbl tbl
+      fromTmp tbl
 
--- | Compile+run PRQL, returning the QueryResult (matches Lean `Prql.query`).
 prqlRun :: Text -> IO (Maybe Conn.QueryResult)
 prqlRun q = do
   m <- Prql.compile q
@@ -435,7 +438,7 @@ listFallback cfg vars tbl = do
       let fbSql = expand (fallbackSql cfg) (V.singleton ("src", T.pack tmpFile))
       _ <- Conn.query ("CREATE TEMP TABLE " <> tbl <> " AS " <> fbSql)
       Tmp.rmFile tmpFile
-      Just <$> fromTbl tbl
+      Just <$> fromTmp tbl
     _ -> pure Nothing
 
 -- | Write cmd stdout to tmp file and CREATE TEMP TABLE via listSql.
@@ -455,9 +458,7 @@ loadListing cfg raw tbl = do
 -- | If the listing produced 1 row with a single struct[] column, expand it.
 -- Handles APIs that wrap rows in an envelope (e.g. S3 Contents).
 unnestStruct :: Text -> IO ()
-unnestStruct tbl = do
-  r <- try go :: IO (Either SomeException ())
-  case r of _ -> pure ()
+unnestStruct tbl = ignoreErrs go
   where
     go = do
       qrM  <- prqlRun ("from dcols | struct_col '" <> tbl <> "'")
@@ -478,9 +479,7 @@ addParentRow :: Config -> Text -> Text -> IO ()
 addParentRow cfg path_ tbl =
   case configParent cfg path_ of
     Nothing -> pure ()
-    Just _  -> do
-      r <- try insertRow :: IO (Either SomeException ())
-      case r of _ -> pure ()
+    Just _  -> ignoreErrs insertRow
   where
     insertRow = do
       _ <- Conn.query ( "INSERT INTO " <> tbl
@@ -513,7 +512,7 @@ runListCmd noSign_ cfg path_ tbl = do
           loadListing cfg raw tbl
           unnestStruct tbl
           addParentRow cfg path_ tbl
-          fromTbl tbl
+          fromTmp tbl
 
 -- | Run listing: cache check -> setup -> dispatch to sql/cmd mode -> cache store.
 -- Results are cached in-memory when listing takes > 3 seconds (e.g. slow S3 buckets).
@@ -548,7 +547,6 @@ runList noSign_ cfg path_ = do
         Nothing -> pure ()
       pure result
 
--- | Download a remote file to local temp path
 runDl :: Bool -> Config -> Text -> IO Text
 runDl noSign_ cfg path_ = do
   Render.statusMsg ("Downloading " <> path_ <> " ...")
@@ -558,7 +556,7 @@ runDl noSign_ cfg path_ = do
   _ <- readProcessWithExitCode "sh" ["-c", T.unpack cmd] ""
   pure (tmpDir <> "/" <> fromPath path_)
 
--- | Resolve data file path: download if needed, or return URI for DuckDB
+-- | Download if needed, else return URI unchanged (DuckDB reads it directly).
 configResolve :: Bool -> Config -> Text -> IO Text
 configResolve noSign_ cfg path_ =
   if needsDownload cfg then runDl noSign_ cfg path_ else pure path_
@@ -625,4 +623,4 @@ runEnter cfg name =
               case rT of
                 Left e  -> Log.write "src" ("enter types: " <> T.pack (show e))
                 Right _ -> pure ()
-              fromTbl tbl
+              fromTmp tbl
