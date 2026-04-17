@@ -45,7 +45,7 @@ import qualified Tv.Data.DuckDB.Table as Table
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.FileFormat as FileFormat
 import qualified Tv.SourceConfig as SourceConfig
-import Tv.SourceConfig (Config)
+import Tv.SourceConfig (Source)
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import Tv.Types
@@ -234,7 +234,7 @@ goParent noSign_ s = do
       Nothing -> tryView noSign_ s (dir_ <> "/..") (curDepth s) False
 
 -- | Try to open a file as data, fall back to viewer
-openFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Config
+openFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Source
          -> IO (Maybe (ViewStack AdbcTable))
 openFile tm noSign_ s curDir_ p cfg = do
   let fullPath = joinPath curDir_ p
@@ -286,7 +286,7 @@ enterAttach s curDir_ = do
 
 -- | Config-driven file enter: runs `script` → JSON, or follows `enterUrl` redirect,
 --   else falls back to openFile.
-enterFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Config
+enterFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Source
           -> IO (Maybe (ViewStack AdbcTable))
 enterFile tm noSign_ s curDir_ p cfg = case cfg of
   Just c | not (T.null (SourceConfig.script c)) -> do
@@ -323,7 +323,7 @@ enter tm noSign_ s = do
             else
               let fullPath = case cfg of
                     Just c  -> joinPath curDir_
-                                 (if SourceConfig.dirSuffix c then p <> "/" else p)
+                                 (if SourceConfig.dirSfx c then p <> "/" else p)
                     Nothing -> joinPath curDir_ p
               in tryView noSign_ s fullPath (curDepth s) True
         (Just 'f', Just p) -> enterFile tm noSign_ s curDir_ p cfg
