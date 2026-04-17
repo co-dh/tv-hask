@@ -316,29 +316,18 @@ tokenizeKeysTests = testGroup "tokenizeKeys"
       Key.tokenizeKeys "<>" @?= V.fromList ["<", ">"]
   ]
 
--- ## Term resize Tests
---
--- Bug: `Term.width`/`Term.height` read from the screenBuf IORef, but that
--- IORef was only ever written inside `Term.init`. After the user resized
--- their terminal there was no code path that noticed — every caller got
--- pre-resize dims, rendering went to a stale-sized cell buffer, and the
--- whole UI desynced until restart. The fix is to re-query termSize inside
--- `clear` (which every frame hits first) and reallocate buffers when dims
--- change. This test simulates a stale buffer via `_setScreenBufSize` and
--- asserts that `clear` reconciles back to the ioctl-reported size.
-resizeTests :: IO TestTree
-resizeTests = do
-  _ <- Term.init
-  pure $ testGroup "Term.clear resize"
-    [ testCase "clear resyncs buffer dims after simulated resize" $ do
-        Term._setScreenBufSize 40 10  -- simulate stale dims from pre-resize
-        Term.clear                     -- should re-query and reallocate
-        w <- Term.width
-        h <- Term.height
-        -- In headless/non-tty test context, termSize falls back to 80x24,
-        -- so after the sync the buffer should reflect that, not 40x10.
-        (fromIntegral w, fromIntegral h) @?= (80 :: Int, 24 :: Int)
-    ]
+-- Regression: width/height were only written in Term.init, so resizes
+-- left every caller on pre-resize dims until restart.
+resizeTests :: TestTree
+resizeTests = testGroup "Term.clear resize"
+  [ testCase "clear resyncs buffer dims after simulated resize" $ do
+      _ <- Term.init
+      Term._setScreenBufSize 40 10
+      Term.clear
+      w <- Term.width
+      h <- Term.height
+      (fromIntegral w, fromIntegral h) @?= (80 :: Int, 24 :: Int)
+  ]
 
 -- ## Term.parseColor Tests
 parseColorTests :: TestTree
@@ -361,18 +350,16 @@ parseColorTests = testGroup "Term.parseColor"
   , testCase "nosuchcolor -> 0"         $ Term.parseColor "nosuchcolor" @?= 0
   ]
 
-tests :: IO TestTree
-tests = do
-  rt <- resizeTests
-  pure $ testGroup "TestPure"
-    [ keyMapTests
-    , viewUpdateTests
-    , menuAlignTests
-    , plotDownsampleTests
-    , plotRScriptTests
-    , viewStackUpdateTests
-    , tabNameTests
-    , tokenizeKeysTests
-    , parseColorTests
-    , rt
-    ]
+tests :: TestTree
+tests = testGroup "TestPure"
+  [ keyMapTests
+  , viewUpdateTests
+  , menuAlignTests
+  , plotDownsampleTests
+  , plotRScriptTests
+  , viewStackUpdateTests
+  , tabNameTests
+  , tokenizeKeysTests
+  , parseColorTests
+  , resizeTests
+  ]

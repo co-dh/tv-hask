@@ -5,7 +5,6 @@
 module TestUtil
   ( bin
   , tvHaskBin
-  , log
   , run
   , runHask
   , runPty
@@ -20,9 +19,9 @@ module TestUtil
   , cachedCheck
   ) where
 
-import Prelude hiding (log)
 import Control.Exception (catch, SomeException)
 import Data.IORef (IORef, readIORef, writeIORef)
+import System.IO.Unsafe (unsafePerformIO)
 import Data.Char (isAlpha, isDigit)
 import Data.Text (Text)
 import Tv.Types (getD)
@@ -52,11 +51,6 @@ resolveBin = do
     _           -> pure fallback
   where fallback = "dist-newstyle/build/x86_64-linux/ghc-9.6.6/tv-hask-0.1.0.0/x/tv/build/tv/tv"
 
-log :: Text -> IO ()
-log msg = withFile "test.log" AppendMode $ \h -> do
-  TIO.hPutStrLn h msg
-  hFlush h
-
 run :: Text -> FilePath -> [String] -> IO Text
 run = runWith bin
 
@@ -69,34 +63,18 @@ runHask = runWith tvHaskBin
 -- a CSI Up as "\\e[A", not "\\x1B[A".
 runPty :: String -> FilePath -> IO Text
 runPty keys file = do
-  log (T.pack "  runPty: " <> T.pack file <> T.pack " keys=" <> T.pack (show keys))
   -- pty_run.py's TV env var: point it at the binary in *this* build tree,
   -- not the hard-coded main-repo fallback (matters in worktrees).
   parentEnv <- getEnvironment
   let envOverride = ("TV", tvHaskBin) : filter ((/= "TV") . fst) parentEnv
       cp = (proc "test/pty_run.py" [file, keys]) { env = Just envOverride }
-  (code, out, err) <- readCreateProcessWithExitCode cp ""
-  case err of
-    "" -> pure ()
-    _  -> log (T.pack "  stderr: " <> T.strip (T.pack err))
-  case code of
-    ExitSuccess   -> pure ()
-    ExitFailure n -> log (T.pack "  exit: " <> T.pack (show n))
-  log (T.pack "  done")
+  (_, out, _) <- readCreateProcessWithExitCode cp ""
   pure (T.pack out)
 
 runWith :: FilePath -> Text -> FilePath -> [String] -> IO Text
 runWith exe keys file extraArgs = do
-  log (T.pack "  run: " <> T.pack file <> T.pack " " <> T.pack (show extraArgs) <> T.pack " keys=" <> keys)
   let args = (if null file then [] else [file]) ++ extraArgs ++ ["-c", T.unpack keys]
-  (code, out, err) <- readProcessWithExitCode exe args ""
-  case err of
-    "" -> pure ()
-    _  -> log (T.pack "  stderr: " <> T.strip (T.pack err))
-  case code of
-    ExitSuccess   -> pure ()
-    ExitFailure n -> log (T.pack "  exit: " <> T.pack (show n))
-  log (T.pack "  done")
+  (_, out, _) <- readProcessWithExitCode exe args ""
   pure (T.pack out)
 
 isContent :: Text -> Bool

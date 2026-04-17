@@ -26,7 +26,6 @@ module Tv.Term
     -- screen
   , width, height, clear, present, pollEvent, toEvent, toEvents, bufferStr
   , padC, renderTable, print
-    -- test-only hook (see note on _setScreenBufSize)
   , _setScreenBufSize
   ) where
 
@@ -238,12 +237,9 @@ init = do
     (w, h) <- if isTty
                 then termSize
                 else pure (80, 24)
-    buf <- VSM.replicate (w * h) emptyCell
-    writeIORef screenBuf (w, h, buf)
     -- Front buffer starts at all-default; termbox2's tb_init does the same,
     -- so the first `present` frame emits every non-default cell.
-    front <- VSM.replicate (w * h) emptyCell
-    writeIORef frontBuf front
+    allocBufs w h
     writeIORef initedRef True
     writeIORef headlessRef (not isTty)
     when isTty $ do
@@ -305,31 +301,23 @@ height = do
   (_, h, _) <- readIORef screenBuf
   pure (fromIntegral h)
 
--- | Test-only: reset the screen buffer to the given dims. Exists so
--- `Term.clear` can be tested for its resize-reconciliation behavior
--- without needing a real resize event. Not used in production.
-_setScreenBufSize :: Int -> Int -> IO ()
-_setScreenBufSize w h = do
+allocBufs :: Int -> Int -> IO ()
+allocBufs w h = do
   buf   <- VSM.replicate (w * h) emptyCell
   front <- VSM.replicate (w * h) emptyCell
   writeIORef screenBuf (w, h, buf)
   writeIORef frontBuf front
 
--- | Reconcile buffer dims to current terminal size. Called at the top of
--- every frame from `clear` so any caller reading `width`/`height` after
--- this point sees current dims — no SIGWINCH handler needed. The front
--- buffer also resets on size change: the diff in `present` compares
--- indices that'd be invalid across a dim change, so we force a full
--- repaint (matches the comment on `frontBuf`).
+_setScreenBufSize :: Int -> Int -> IO ()
+_setScreenBufSize = allocBufs
+
+-- | Front buffer also resets on dim change — the diff in `present` indexes
+-- by (w, h) that'd be invalid otherwise, forcing a full repaint.
 syncSize :: IO ()
 syncSize = do
   (curW, curH, _) <- readIORef screenBuf
   (newW, newH) <- termSize
-  when (newW /= curW || newH /= curH) $ do
-    buf   <- VSM.replicate (newW * newH) emptyCell
-    front <- VSM.replicate (newW * newH) emptyCell
-    writeIORef screenBuf (newW, newH, buf)
-    writeIORef frontBuf front
+  when (newW /= curW || newH /= curH) (allocBufs newW newH)
 
 clear :: IO ()
 clear = do
