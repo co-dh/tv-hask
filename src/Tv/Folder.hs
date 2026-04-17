@@ -269,6 +269,39 @@ openFile tm noSign_ s curDir_ p cfg = do
           FileFormat.viewFile tm viewPath
           pure (Just s)
 
+-- | Attach-based enter (FileFormat or config-driven like pg://): open row as a table.
+enterAttach :: ViewStack AdbcTable -> Text -> IO (Maybe (ViewStack AdbcTable))
+enterAttach s curDir_ = do
+  mTbl <- curPath (View.cur s)
+  case mTbl of
+    Nothing -> pure (Just s)
+    Just tableName -> do
+      mAK <- Table.fromTable tableName
+      case mAK of
+        Nothing -> pure (Just s)
+        Just (adbc, keys) ->
+          case View.fromTbl adbc (curDir_ <> ":" <> tableName) 0 keys 0 of
+            Nothing -> pure (Just s)
+            Just v  -> pure (Just (View.push s v))
+
+-- | Config-driven file enter: runs `script` → JSON, or follows `enterUrl` redirect,
+--   else falls back to openFile.
+enterFile :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Maybe Config
+          -> IO (Maybe (ViewStack AdbcTable))
+enterFile tm noSign_ s curDir_ p cfg = case cfg of
+  Just c | not (T.null (SourceConfig.script c)) -> do
+    mAdbc <- SourceConfig.runEnter c p
+    case mAdbc of
+      Just adbc ->
+        case View.fromTbl adbc (SourceConfig.pfx c <> p) 0 V.empty 0 of
+          Just v  -> pure (Just (View.push s v))
+          Nothing -> pure (Just s)
+      Nothing -> pure (Just s)
+  Just c | not (T.null (SourceConfig.enterUrl c)) -> do
+    let url = SourceConfig.expand (SourceConfig.enterUrl c) (V.singleton ("name", p))
+    tryView noSign_ s url (curDepth s) True
+  _ -> openFile tm noSign_ s curDir_ p cfg
+
 -- | Enter directory or view file based on current row
 enter :: Bool -> Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 enter tm noSign_ s = do
@@ -279,18 +312,7 @@ enter tm noSign_ s = do
         maybe False FileFormat.attach (FileFormat.find curDir_)
         || maybe False SourceConfig.attach cfg
   if isAttach
-    then do
-      mTbl <- curPath (View.cur s)
-      case mTbl of
-        Nothing -> pure (Just s)
-        Just tableName -> do
-          mAK <- Table.fromTable tableName
-          case mAK of
-            Nothing -> pure (Just s)
-            Just (adbc, keys) ->
-              case View.fromTbl adbc (curDir_ <> ":" <> tableName) 0 keys 0 of
-                Nothing -> pure (Just s)
-                Just v  -> pure (Just (View.push s v))
+    then enterAttach s curDir_
     else do
       mTyp <- curType (View.cur s)
       mPth <- curPath (View.cur s)
@@ -304,22 +326,7 @@ enter tm noSign_ s = do
                                  (if SourceConfig.dirSuffix c then p <> "/" else p)
                     Nothing -> joinPath curDir_ p
               in tryView noSign_ s fullPath (curDepth s) True
-        (Just 'f', Just p) -> do
-          -- Config-driven enter: script cmd -> JSON, or enterUrl redirect
-          case cfg of
-            Just c | not (T.null (SourceConfig.script c)) -> do
-              mAdbc <- SourceConfig.runEnter c p
-              case mAdbc of
-                Just adbc ->
-                  case View.fromTbl adbc (SourceConfig.pfx c <> p) 0 V.empty 0 of
-                    Just v  -> pure (Just (View.push s v))
-                    Nothing -> pure (Just s)
-                Nothing -> pure (Just s)
-            Just c | not (T.null (SourceConfig.enterUrl c)) -> do
-              let url = SourceConfig.expand (SourceConfig.enterUrl c)
-                          (V.singleton ("name", p))
-              tryView noSign_ s url (curDepth s) True
-            _ -> openFile tm noSign_ s curDir_ p cfg
+        (Just 'f', Just p) -> enterFile tm noSign_ s curDir_ p cfg
         (Just 's', Just p) ->
           case cfg of
             Just _  -> pure (Just s)
