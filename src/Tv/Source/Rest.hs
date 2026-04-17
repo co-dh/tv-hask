@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
--- STUB: full migration in round 2. Keeps behavior via legacy adapter in `open`.
 -- | REST (rest://) backend: curl a JSON URL, read as a table.
 module Tv.Source.Rest (rest) where
 

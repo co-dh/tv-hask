@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
--- STUB: full migration in round 2. Keeps behavior via legacy adapter in `open`.
 -- | FTP (ftp://) backend: curl fetches `ls -l`, Haskell parses it into TSV,
 -- DuckDB reads the TSV. URLs are encoded per-segment because curl is
 -- path-sensitive (spaces, unicode).

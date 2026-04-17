@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
--- STUB: full migration in round 2. Keeps behavior via legacy adapter in `open`.
 -- | HuggingFace dataset browser (hf://datasets/<org>/<name>/…): lists files
 -- inside a dataset via the Hub tree API. When the tree API 404s at the
 -- org level, falls back to the `?author=` API for org-level dataset lists.

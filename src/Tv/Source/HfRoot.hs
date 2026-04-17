@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
--- STUB: full migration in round 2. Keeps behavior via legacy adapter in `open`.
 -- | HuggingFace root (hf://): lists all public datasets from a pre-populated
 -- DuckDB file under ~/.cache/tv. The listing script runs once per process
 -- if the cache is stale or missing. Selecting a row jumps to hf://datasets/<id>/.

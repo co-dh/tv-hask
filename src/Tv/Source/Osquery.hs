@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
--- STUB: full migration in round 2. Keeps behavior via legacy adapter in `open`.
 -- | Osquery (osquery://) backend: lists all osqueryi tables from a
 -- pre-populated DuckDB file, entering one runs `osqueryi --json` and
 -- applies typed columns from the corresponding stub view.

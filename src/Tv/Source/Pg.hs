@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
--- STUB: full migration in round 2. Keeps behavior via legacy adapter in `open`.
 -- | PostgreSQL (pg://) backend: ATTACH DSN as a read-only DuckDB database,
 -- list its tables via the shared `tbl_info_filtered` PRQL helper.
 module Tv.Source.Pg (pg) where
@@ -55,8 +54,7 @@ pgList _ path_ = do
       fromTmp tbl
 
 -- | fullPath for pg is `pg://<dsn>/<tableName>`; we take the trailing
--- path component as the table name. DSNs with `/` would break this — fine
--- for round 1; round 2 passes tableName through a cleaner API.
+-- path component as the table name. DSNs containing `/` are not supported.
 pgOpen :: Bool -> Text -> IO OpenResult
 pgOpen _ path_ = do
   pgSetup
