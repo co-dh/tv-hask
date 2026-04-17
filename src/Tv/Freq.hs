@@ -1,10 +1,11 @@
 {-
   Freq: group by columns, count, pct, bar.
   Pure update returns residual Effect; dispatch executes IO inline.
-  execFreq is the dataframe-backed compute path, opt-in via the
-  @-b df@ CLI flag; DuckDB remains the default and is served by
-  AdbcTable.freqTable directly from App.Types.
+  execFreq is the @-b df@ compute path: builds the PRQL through the
+  q-like Tv.Df.Query API instead of raw-text concatenation, then runs
+  through DuckDB like the default path.
 -}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Freq
   ( filterIO
@@ -14,6 +15,7 @@ module Tv.Freq
 
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Read as TR
 import Data.Maybe (fromMaybe)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -27,13 +29,15 @@ import Tv.Types
   )
 import qualified Tv.View as View
 import Tv.View (ViewStack)
+import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Ops as Ops
+import qualified Tv.Data.DuckDB.Prql as Prql
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
+import qualified Tv.Log as Log
 
-import qualified Tv.Df as Df
-import qualified Tv.Df.Bridge as Bridge
-import qualified Tv.Df.Freq as DfFreq
+import qualified Tv.Df.Expr as E
+import qualified Tv.Df.Query as Q
 
 -- Truncate freq results to this many rows for display (matches the
 -- DuckDB path's @| take 1000@).
@@ -52,22 +56,59 @@ filterIO tbl cols row = do
       exprs = V.zipWith (\c v -> c <> " == " <> v) cols vals
   pure (T.intercalate " && " (V.toList exprs))
 
--- | Dataframe-backed freq. Reachable via @-b df@. Lowers the AdbcTable
--- to a DataFrame via 'Tv.Df.Bridge', runs the pure pipeline in
--- 'Tv.Df.Freq.freq', caps at 'freqDisplayLimit', and bridges back to an
--- AdbcTable so the View stack keeps its existing table type. Returns
--- the full pre-cap group count alongside the capped table, matching
--- the shape of 'Tv.Data.DuckDB.Table.freqTable'.
+-- | Freq via the q-like API. Reachable as the @-b df@ backend. Builds
+-- the PRQL pipeline through 'Tv.Df.Query' + 'Tv.Df.Expr' combinators
+-- instead of string concatenation, then runs it through DuckDB like
+-- the regular path. Total group count comes from a separate
+-- @cntdist@ pipeline, same as 'Tv.Data.DuckDB.Table.freqTable'.
 execFreq :: AdbcTable -> Vector Text -> IO (Maybe (AdbcTable, Int))
 execFreq t cNames
   | V.null cNames = pure Nothing
   | otherwise = do
-      src <- Bridge.fromAdbc t
-      let fullFreq = DfFreq.freq (V.toList cNames) src
-          nGroups  = Df.nRows fullFreq
-          shown    = Df.take freqDisplayLimit fullFreq
-      mAdbc <- Bridge.toAdbc shown
-      pure (fmap (\adbc -> (adbc, nGroups)) mAdbc)
+      let baseRend = Prql.queryRender (Table.query t)
+          csList   = V.toList cNames
+      totalGroups <- countDistinctGroups baseRend cNames
+      let freqQ = Q.fromBase baseRend
+            Q.|> Q.groupAgg csList [("Cnt", E.stdCount E.this)]
+            Q.|> Q.derive
+                 [ ("Pct", E.col "Cnt" E..* E.lit 100 E../
+                           E.stdSum (E.col "Cnt"))
+                 , ("Bar", E.raw "s\"repeat('#', CAST(Pct/5 AS INTEGER))\"")
+                 ]
+            Q.|> Q.sortDesc ["Cnt"]
+            Q.|> Q.take_ freqDisplayLimit
+          prql = Q.compile freqQ
+      Log.write "prql" prql
+      mSql <- Prql.compile prql
+      case mSql of
+        Nothing  -> pure Nothing
+        Just sql -> do
+          tblName <- Table.tmpName "freq"
+          _ <- Conn.query ("CREATE TEMP TABLE " <> tblName
+                        <> " AS " <> Table.stripSemi sql)
+          Table.fromTmp tblName >>= \case
+            Just t' -> pure (Just (t', totalGroups))
+            Nothing -> pure Nothing
+
+-- Count of distinct group tuples — used for the "/N" status display.
+-- Matches the existing DuckDB path's `cntdist {cs}` query.
+countDistinctGroups :: Text -> Vector Text -> IO Int
+countDistinctGroups baseRend cNames = do
+  let cols = T.intercalate ", " (V.toList (V.map Prql.quote cNames))
+      prql = baseRend <> " | cntdist {" <> cols <> "}"
+  m <- Prql.compile prql
+  case m of
+    Nothing -> pure 0
+    Just sql -> do
+      qr <- Conn.query sql
+      nr <- Conn.nrows qr
+      if fromIntegral nr == (0 :: Int)
+        then pure 0
+        else do
+          v <- Conn.cellStr qr 0 0
+          pure $ case TR.decimal v of
+            Right (n, _) -> n
+            Left _       -> 0
 
 -- | Pure update by Cmd. Returns residual Effect for dispatch to execute.
 update :: ViewStack AdbcTable -> Cmd -> Maybe (ViewStack AdbcTable, Effect)
