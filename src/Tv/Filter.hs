@@ -239,7 +239,7 @@ rowFilter tm s = withDistinct s $ \_curCol curName vals -> orKeep s $ do
   let baseRend = Prql.queryRender (Table.query (tbl s))
       q = DfQ.fromBase baseRend
             DfQ.|> DfQ.rawStage ("filter " <> expr)
-  tbl' <- MaybeT $ Table.fromPrqlText (DfQ.compile q)
+  tbl' <- MaybeT $ Table.fromPrqlInline (DfQ.compile q)
   -- Preserve cursor column across filter (matches Lean's `rebuild tbl' (row := 0)`
   -- default). Resetting col=0 would snap the cursor back to the first column.
   let v      = cur s
@@ -257,14 +257,14 @@ jumpCol s name = orKeep s $ do
 
 -- | Filter by expression directly (no fzf). Called by socket/dispatch.
 -- Builds a single-stage @filter@ query through 'Tv.Df.Prql' and lets
--- 'Table.fromPrqlText' drive prqlc + DuckDB.
+-- 'Table.fromPrqlInline' stream the result without materializing.
 filterWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 filterWith s expr = orKeep s $ do
   guard $ not $ T.null expr
   let baseRend = Prql.queryRender (Table.query (tbl s))
       q = DfQ.fromBase baseRend
             DfQ.|> DfQ.rawStage ("filter " <> expr)
-  tbl' <- MaybeT $ Table.fromPrqlText (DfQ.compile q)
+  tbl' <- MaybeT $ Table.fromPrqlInline (DfQ.compile q)
   -- Match Lean's `rebuild tbl' (row := 0)` — col defaults to the old cursor
   -- column, grp to the old grp. Resetting col to 0 would jump the cursor
   -- home, which the filter demo explicitly asserts should NOT happen.

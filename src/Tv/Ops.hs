@@ -39,7 +39,7 @@ import Tv.Types (Cmd(..), ColType(..), toString, escSql)
 import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Table (AdbcTable, tmpName, stripSemi)
 import qualified Tv.Data.DuckDB.Table as Table
-import Tv.Data.DuckDB.Ops (maxSplitParts, createTempView, createTempTable)
+import Tv.Data.DuckDB.Ops (maxSplitParts, createTempView)
 import qualified Tv.Df.Prql as DfQ
 import Tv.Fzf (fzfIdx)
 import qualified Tv.Fzf as Fzf
@@ -58,7 +58,7 @@ pushQuery :: ViewStack AdbcTable -> DfQ.Query -> Text -> (AdbcTable -> Int)
           -> IO (ViewStack AdbcTable)
 pushQuery s q label colIdxFn = do
   Log.write "ops" (DfQ.compile q)
-  mTbl <- Table.fromPrqlText (DfQ.compile q)
+  mTbl <- Table.fromPrqlInline (DfQ.compile q)
   case mTbl of
     Nothing -> pure s
     Just tbl' ->
@@ -167,7 +167,7 @@ deriveRunWith s input = case parseDerive input of
         q = DfQ.fromBase baseRend
               DfQ.|> DfQ.rawStage
                        ("derive {" <> Prql.quote name <> " = " <> expr <> "}")
-    mTbl <- Table.fromPrqlText (DfQ.compile q)
+    mTbl <- Table.fromPrqlInline (DfQ.compile q)
     case mTbl of
       Nothing   -> pure s
       Just tbl' ->
@@ -216,12 +216,18 @@ joinSide JoinLeft  = "side:left "
 joinSide JoinRight = "side:right "
 joinSide _         = ""
 
-prqlStr :: Text -> Text -> Vector Text -> JoinOp -> Text
-prqlStr lName rName _    JoinUnion = "from " <> lName <> " | append " <> rName
-prqlStr lName rName _    JoinDiff  = "from " <> lName <> " | remove " <> rName
-prqlStr lName rName cols op        =
-  "from " <> lName <> " | join " <> joinSide op <> rName
-    <> " (" <> joinCond cols <> ")"
+-- | Build the join/append/remove pipeline through 'Tv.Df.Prql'.
+-- Union/Diff use typed 'append' / a raw stage for PRQL's @remove@
+-- (no typed variant yet); joins use rawStage for the PRQL @==col@
+-- shorthand, which has no dataframe Expr equivalent.
+joinQuery :: Text -> Text -> Vector Text -> JoinOp -> DfQ.Query
+joinQuery lName rName cols op =
+  DfQ.fromBase ("from " <> lName) DfQ.|> case op of
+    JoinUnion -> DfQ.append rName
+    JoinDiff  -> DfQ.rawStage ("remove " <> rName)
+    _         -> DfQ.rawStage
+                   ("join " <> joinSide op <> rName
+                    <> " (" <> joinCond cols <> ")")
 
 allOps :: Vector JoinOp
 allOps = V.fromList [JoinInner, JoinLeft, JoinRight, JoinUnion, JoinDiff]
@@ -245,26 +251,22 @@ execJoin s op leftGrp = do
       (rName, rSql) <- prepareView (View.tbl s) "r"
       createTempView lName lSql
       createTempView rName rSql
-      let prql = prqlStr lName rName leftGrp op
-      Log.write "prql" prql
-      tblName <- tmpName "join"
-      mSql <- Prql.compile prql
-      case mSql of
-        Nothing  -> ioError (userError ("join PRQL compile failed: " <> T.unpack prql))
-        Just sql -> do
-          createTempTable tblName (stripSemi sql)
-          mAdbc <- Table.fromTmp tblName
-          case mAdbc of
-            Nothing -> pure Nothing
-            Just adbc -> case View.pop s of
-              Nothing -> pure Nothing
-              Just s' ->
-                let disp_ = case op of
-                      JoinUnion -> "union"
-                      JoinDiff  -> "diff"
-                      _ -> "⋈ (" <> T.intercalate ", " (V.toList leftGrp) <> ")"
-                    mView = View.fromTbl adbc (View.path (View.cur s')) 0 V.empty 0
-                in pure $ fmap (\v -> View.setCur s' (v & #disp .~ disp_)) mView
+      let q = joinQuery lName rName leftGrp op
+      -- Materialize: join results are the shape users scroll and re-
+      -- filter; paying the CREATE TEMP TABLE once beats re-running
+      -- the join on every fetchMore.
+      mAdbc <- Table.fromPrqlMaterialized "join" (DfQ.compile q)
+      case mAdbc of
+        Nothing -> pure Nothing
+        Just adbc -> case View.pop s of
+          Nothing -> pure Nothing
+          Just s' ->
+            let disp_ = case op of
+                  JoinUnion -> "union"
+                  JoinDiff  -> "diff"
+                  _ -> "⋈ (" <> T.intercalate ", " (V.toList leftGrp) <> ")"
+                mView = View.fromTbl adbc (View.path (View.cur s')) 0 V.empty 0
+            in pure $ fmap (\v -> View.setCur s' (v & #disp .~ disp_)) mView
 
 resolveOps :: ViewStack AdbcTable -> Maybe (Vector JoinOp, Vector Text)
 resolveOps s = do
@@ -281,7 +283,7 @@ joinRun tm s = case resolveOps s of
     Just parent -> do
       (lName, _) <- prepareView (Nav.tbl (View.nav parent)) "l"
       (rName, _) <- prepareView (View.tbl s) "r"
-      let items = V.map (\op -> opLabel op <> "  |  " <> prqlStr lName rName leftGrp op) ops
+      let items = V.map (\op -> opLabel op <> "  |  " <> DfQ.compile (joinQuery lName rName leftGrp op)) ops
       mIdx <- fzfIdx tm (V.fromList ["--prompt=join> "]) items
       case mIdx of
         Nothing  -> pure Nothing

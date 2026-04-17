@@ -34,7 +34,6 @@ import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Prql as Prql
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
-import qualified Tv.Log as Log
 
 import qualified DataFrame.Functions as F
 import DataFrame.Operators (as)
@@ -85,17 +84,9 @@ execFreq t cNames
             DfQ.|> DfQ.take_ freqDisplayLimit
           prql = DfQ.compile freqQ
       totalGroups <- countDistinctGroups baseRend cNames
-      Log.write "prql" prql
-      mSql <- Prql.compile prql
-      case mSql of
-        Nothing  -> pure Nothing
-        Just sql -> do
-          tblName <- Table.tmpName "freq"
-          _ <- Conn.query ("CREATE TEMP TABLE " <> tblName
-                        <> " AS " <> Table.stripSemi sql)
-          Table.fromTmp tblName >>= \case
-            Just t' -> pure (Just (t', totalGroups))
-            Nothing -> pure Nothing
+      Table.fromPrqlMaterialized "freq" prql >>= \case
+        Just t' -> pure (Just (t', totalGroups))
+        Nothing -> pure Nothing
 
 -- Count of distinct group tuples — used for the "/N" status display.
 -- Matches the existing DuckDB path's `cntdist {cs}` query.

@@ -48,7 +48,8 @@ module Tv.Data.DuckDB.Table
   , fromJson
   , fileWith
   , copyToParquet
-  , fromPrqlText
+  , fromPrqlInline
+  , fromPrqlMaterialized
     -- second AdbcTable block in Lean
   , freqTable
   , filter
@@ -459,19 +460,33 @@ fromCsv content = fromIngest content "csv" "read_csv_auto"
 fromJson :: Text -> IO (Maybe AdbcTable)
 fromJson content = fromIngest content "json" "read_json_auto"
 
--- | Compile a PRQL text query, execute it inside DuckDB via a temp
--- table, and return an 'AdbcTable' backed by the result. This is the
--- bridge between 'Tv.Df.Prql' (builders that emit PRQL text) and the
--- View stack (which holds AdbcTable). Feature modules compose queries
--- through 'Tv.Df.Prql' and hand off here.
-fromPrqlText :: Text -> IO (Maybe AdbcTable)
-fromPrqlText prql = do
+-- | Run a PRQL text query inline — no temp-table round-trip. The
+-- returned AdbcTable's query carries the full PRQL as its base, so
+-- subsequent ops (sort, filter, excludeCols, fetchMore) pipe onto it
+-- and DuckDB re-runs the pipeline with an extended limit or new
+-- stages. Matches the pre-Tv.Df.Prql behavior of 'requery' and is
+-- the right choice for filter / derive / split / sort pipelines whose
+-- results are streamed, not materialized.
+fromPrqlInline :: Text -> IO (Maybe AdbcTable)
+fromPrqlInline prql = do
+  Log.write "prql" prql
+  let q = Prql.defaultQuery { Prql.base = prql }
+  total <- queryCount q
+  requery q total
+
+-- | Run a PRQL text query and materialize the result into a TEMP
+-- TABLE; wrap the temp table as an AdbcTable. Good for small, repeatedly
+-- scrolled results (freq rollups, joins) where paying the
+-- materialization cost once beats re-running the upstream pipeline on
+-- every scroll. Label becomes the temp table name prefix.
+fromPrqlMaterialized :: Text -> Text -> IO (Maybe AdbcTable)
+fromPrqlMaterialized label prql = do
   Log.write "prql" prql
   mSql <- Prql.compile prql
   case mSql of
     Nothing  -> pure Nothing
     Just sql -> do
-      name <- tmpName "tq"
+      name <- tmpName label
       _    <- Conn.query ("CREATE TEMP TABLE " <> name
                         <> " AS " <> stripSemi sql)
       fromTmp name

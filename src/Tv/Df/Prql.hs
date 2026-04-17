@@ -26,6 +26,7 @@ module Tv.Df.Prql
     -- * Stage smart constructors
   , filter_
   , derive
+  , aggregate
   , groupAgg
   , sortAsc
   , sortDesc
@@ -74,35 +75,29 @@ renderExpr :: forall a. Expr a -> Text
 renderExpr = go 0
   where
     go :: Int -> Expr b -> Text
-    go _    (Col "this")       = "this"    -- PRQL keyword, never backtick
-    go _    (Col name)         = quoteCol name
-    go _    (Lit v)            = renderLit v
-    go _    (CastWith name _ _) = "/* cast " <> name <> " not supported */"
-    go p    (CastExprWith _ _ e) = go p e     -- drop the cast; PRQL doesn't expose it
-    go p    (Unary op arg)     = renderUnary p op arg
-    go p    (Binary op l r)    = renderBinary p op l r
-    go _    (Agg strat arg)    = renderAgg strat arg
-    go p    (If c t e)         =
-      let body = "(if " <> go 0 c <> " then " <> go 0 t <> " else " <> go 0 e <> ")"
+    go _    (Col "this")         = "this"    -- PRQL keyword, never backtick
+    go _    (Col name)           = quoteCol name
+    go _    (Lit v)              = renderLit v
+    go _    (CastWith name _ _)  = "/* cast " <> name <> " not supported */"
+    go p    (CastExprWith _ _ e) = go p e   -- drop the cast; PRQL doesn't expose it
+    go p    (Unary op arg)       = renderUnary op (go 11 arg)
+    go p    (Binary op l r) =
+      let pr    = binaryPrecedence op
+          tok   = binaryPrql (binaryName op)
+          -- Left side at precedence pr (same-level associates left);
+          -- right side at pr+1 (force parens on ties for right-assoc
+          -- safety). Nested 'go' sees the outer 'pr' so
+          -- @(a + b) * c@ renders with the inner parens, not as
+          -- @a + b * c@ which PRQL would misparse.
+          inner = go pr l <> " " <> tok <> " " <> go (pr + 1) r
+      in if pr < p then "(" <> inner <> ")" else inner
+    go _    (Agg strat arg)      = renderAgg strat arg
+    go p    (If c t e)           =
+      let body = "if " <> go 0 c <> " then " <> go 0 t <> " else " <> go 0 e
       in if p > 0 then "(" <> body <> ")" else body
 
 renderUExpr :: UExpr -> Text
 renderUExpr (UExpr e) = renderExpr e
-
--- | Pretty-print a binary op inside precedence @p@.
-renderBinary :: Int -> BinaryOp c b a -> Expr c -> Expr b -> Text
-renderBinary p op l r =
-  let pr    = binaryPrecedence op
-      tok   = binaryPrql (binaryName op)
-      inner = renderExpr' pr l <> " " <> tok <> " " <> renderExpr' (pr + 1) r
-  in if pr < p then "(" <> inner <> ")" else inner
-  where
-    renderExpr' :: Int -> Expr b' -> Text
-    renderExpr' n e = case e of
-      Lit v -> renderLit v
-      Col c -> quoteCol c
-      _     -> renderExpr e `withPrec` n
-    withPrec t _ = t  -- precedence already handled by nested renderExpr
 
 -- Map dataframe's binaryName to a PRQL operator token.
 binaryPrql :: Text -> Text
@@ -129,10 +124,11 @@ binaryPrql = \case
   "nullor"       -> "||"
   other          -> other
 
-renderUnary :: Int -> UnaryOp b a -> Expr b -> Text
-renderUnary _ op arg =
-  let x = renderExpr arg
-      call1 fn = fn <> " " <> x
+-- | @x@ is the already-rendered operand (rendered at precedence 11,
+-- so tight enough to use inside a function call without extra parens).
+renderUnary :: UnaryOp b a -> Text -> Text
+renderUnary op x =
+  let call1 fn = fn <> " (" <> x <> ")"
   in case unaryName op of
     "negate" -> "-(" <> x <> ")"
     -- PRQL's math stdlib: math.abs, math.sqrt, math.exp, etc.
@@ -206,9 +202,10 @@ data SortDir = Asc | Desc deriving (Eq, Show)
 data JoinKind = JInner | JLeft | JRight | JFull deriving (Eq, Show)
 
 data Stage
-  = StFilter   (Expr Bool)
-  | StDerive   [NamedExpr]
-  | StGroupAgg [Text] [NamedExpr]
+  = StFilter    (Expr Bool)
+  | StDerive    [NamedExpr]
+  | StAggregate [NamedExpr]   -- scalar aggregate (one row out, no group keys)
+  | StGroupAgg  [Text] [NamedExpr]
   | StSort     [(Text, SortDir)]
   | StTake     Int
   | StSelect   [Text]
@@ -220,7 +217,7 @@ data Stage
   | StRaw      Text  -- literal PRQL stage text, for idioms dataframe's Expr can't encode
 
 data Query = Query
-  { qBase   :: Text     -- "from t" body (text following the `from` keyword)
+  { qBase   :: Text     -- entire @from …@ clause, including the @from@ keyword
   , qStages :: [Stage]
   }
 
@@ -234,6 +231,7 @@ renderStage :: Stage -> Text
 renderStage = \case
   StFilter e      -> "filter " <> renderExpr e
   StDerive bs     -> "derive {" <> commaMap renderBind bs <> "}"
+  StAggregate bs  -> "aggregate {" <> commaMap renderBind bs <> "}"
   StGroupAgg ks aggs ->
     "group {" <> commaMap quoteCol ks <> "} " <>
     "(aggregate {" <> commaMap renderBind aggs <> "})"
@@ -273,6 +271,11 @@ filter_ e q = q { qStages = qStages q ++ [StFilter e] }
 
 derive :: [NamedExpr] -> Query -> Query
 derive bs q = q { qStages = qStages q ++ [StDerive bs] }
+
+-- | Scalar aggregate: @aggregate { … }@ with no group keys. Produces
+-- a single output row with the listed bindings.
+aggregate :: [NamedExpr] -> Query -> Query
+aggregate bs q = q { qStages = qStages q ++ [StAggregate bs] }
 
 groupAgg :: [Text] -> [NamedExpr] -> Query -> Query
 groupAgg ks aggs q = q { qStages = qStages q ++ [StGroupAgg ks aggs] }
