@@ -14,7 +14,8 @@ import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Data.Vector as V
-import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, getCurrentDirectory)
+import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, removeFile, getCurrentDirectory)
+import System.FilePath (takeBaseName, takeExtension)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.IO.Unsafe (unsafePerformIO)
@@ -545,12 +546,23 @@ test_filter_arg = do
   let (_, status) = footer out
   assert (contains status "r0/528") "filter_arg: 528 rows after filter"
 
+-- | Copy a fixture to a thread-unique tmp path so parallel tests don't
+-- clobber each other's export output (the export path is derived from
+-- the source file stem).
+uniqSource :: FilePath -> IO FilePath
+uniqSource src = do
+  let name = takeBaseName src <> takeExtension src
+  dst <- Tmp.threadPath name
+  copyFile src dst
+  pure dst
+
 test_export_arg :: Assertion
 test_export_arg = do
+  src <- uniqSource "data/sort_test.parquet"
   d <- Log.dir
-  let path = d ++ "/tv_export_sort_test.csv"
+  let path = d ++ "/tv_export_" ++ takeBaseName src ++ ".csv"
   _ <- try (removeFile path) :: IO (Either SomeException ())
-  _ <- run "ecsv<ret>" "data/sort_test.parquet"
+  _ <- run "ecsv<ret>" src
   csv <- TIO.readFile path
   assert (contains csv "name") "export_arg: csv should contain header"
   assert (contains csv "alice") "export_arg: csv should contain data"
@@ -568,10 +580,11 @@ test_col_jump_arg = do
 
 test_export_csv :: Assertion
 test_export_csv = do
+  src <- uniqSource "data/sort_test.parquet"
   d <- Log.dir
-  let path = d ++ "/tv_export_sort_test.csv"
+  let path = d ++ "/tv_export_" ++ takeBaseName src ++ ".csv"
   _ <- try (removeFile path) :: IO (Either SomeException ())
-  out <- run "e" "data/sort_test.parquet"
+  out <- run "e" src
   assert (contains out "name") "export_csv: table should render"
   csv <- TIO.readFile path
   assert (contains csv "name") "export_csv: csv should contain header"
