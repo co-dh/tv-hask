@@ -7,6 +7,7 @@ import Test.Tasty
 import qualified Tv.Data.DuckDB.Table as AdbcTable
 
 import qualified Test
+import qualified TestDf
 import qualified TestPure
 import qualified TestScreen
 import qualified TestLargeData
@@ -25,6 +26,7 @@ main = do
     else
       defaultMain $ testGroup "tv-hask"
         [ TestPure.tests
+        , TestDf.tests
         , TestScreen.tests
         , TestLargeData.tests
         , Test.tests

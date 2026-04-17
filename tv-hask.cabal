@@ -75,6 +75,7 @@ library
     Tv.UI.Info
     Tv.UI.Preview
     Tv.Df
+    Tv.Df.Freq
     Tv.Log
     Tv.Remote
     Tv.Socket
@@ -119,6 +120,7 @@ test-suite tv-hask-test
   main-is: Spec.hs
   other-modules:
     Test
+    TestDf
     TestLargeData
     TestPure
     TestScreen
@@ -128,6 +130,7 @@ test-suite tv-hask-test
     base >= 4.16 && < 5,
     tv-hask,
     bytestring,
+    dataframe >= 1.1 && < 2,
     tasty >= 1.4,
     tasty-hunit >= 0.10,
     tasty-quickcheck >= 0.10,
