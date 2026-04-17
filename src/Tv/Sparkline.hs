@@ -87,7 +87,7 @@ compute t nBars = do
                         cnt    <- Conn.cellInt qr_ rW 2
                         pure $ case V.findIndex (== fromIntegral colIdx) numIdxs of
                           Just j ->
-                            let cur = fromMaybe V.empty (cb V.!? j)
+                            let cur = fromMaybe V.empty $ cb V.!? j
                             in cb V.// [(j, V.snoc cur (fromIntegral bucket, fromIntegral cnt))]
                           Nothing -> cb
                   -- Parse results into bucket->count arrays per column

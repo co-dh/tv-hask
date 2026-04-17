@@ -73,10 +73,10 @@ sErrorDim  = 14
 sHint      = 15
 
 styleFg :: Vector Word32 -> Int -> Word32
-styleFg sty idx = fromMaybe 0 (sty V.!? (idx * 2))
+styleFg sty idx = fromMaybe 0 $ sty V.!? (idx * 2)
 
 styleBg :: Vector Word32 -> Int -> Word32
-styleBg sty idx = fromMaybe 0 (sty V.!? (idx * 2 + 1))
+styleBg sty idx = fromMaybe 0 $ sty V.!? (idx * 2 + 1)
 
 parseStyle :: Text -> Maybe Int
 parseStyle s = V.findIndex (== s) styleNames
@@ -119,7 +119,7 @@ isDark = do
   mcfb <- lookupEnv "COLORFGBG"
   case mcfb of
     Just s ->
-      case listToMaybe (reverse (T.splitOn ";" (T.pack s))) >>= (readMaybe . T.unpack) of
+      case listToMaybe (reverse (T.splitOn ";" $ T.pack s)) >>= (readMaybe . T.unpack) of
         Just bg -> pure (bg < (7 :: Int))
         Nothing -> pure True
     Nothing -> pure True
@@ -137,7 +137,7 @@ themes = V.fromList
 
 themeName :: Int -> Text
 themeName idx =
-  let (t, v) = fromMaybe ("default", "dark") (themes V.!? idx)
+  let (t, v) = fromMaybe ("default", "dark") $ themes V.!? idx
   in t <> " (" <> v <> ")"
 
 -- | Embedded CSV as compile-time fallback
@@ -206,7 +206,7 @@ load theme variant = do
 -- | Load theme by index
 loadIdx :: Int -> IO (Vector Word32)
 loadIdx idx = do
-  let (theme, variant) = fromMaybe ("default", "dark") (themes V.!? idx)
+  let (theme, variant) = fromMaybe ("default", "dark") $ themes V.!? idx
   load theme variant
 
 -- namespace State
@@ -217,7 +217,7 @@ stateInit = do
   let variant = if dark then "dark" else "light"
   sty <- load "default" variant
   writeIORef stylesRef sty
-  let idx = fromMaybe 0 (V.findIndex (== ("default", variant)) themes)
+  let idx = fromMaybe 0 $ V.findIndex (== ("default", variant)) themes
   pure (State { styles = sty, themeIdx = idx })
 
 applyIdx :: State -> Int -> IO State

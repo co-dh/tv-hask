@@ -41,7 +41,7 @@ dir = readIORef logDir
 path :: IO String
 path = do
   d <- dir
-  pure (d ++ "/tv.log")
+  pure $ d ++ "/tv.log"
 
 -- | Set C-side log path (stub: C FFI sink not wired in Haskell port)
 setLog :: Text -> IO ()

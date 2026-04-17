@@ -17,7 +17,7 @@ import System.Process (readProcessWithExitCode)
 tmpDir :: IORef String
 tmpDir = unsafePerformIO $ do
   (_, out, _) <- readProcessWithExitCode "mktemp" ["-d", "/tmp/tv-XXXXXX"] ""
-  newIORef (T.unpack (T.strip (T.pack out)))
+  newIORef $ T.unpack $ T.strip $ T.pack out
 {-# NOINLINE tmpDir #-}
 
 tmpPath :: String -> IO String

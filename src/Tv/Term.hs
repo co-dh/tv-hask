@@ -109,11 +109,11 @@ colorMap =
         , ("brCyan", 14), ("brWhite", 15), ("black", 16)
         ]
       cube =
-        [ (T.pack ("rgb" ++ show r ++ show g ++ show b), fromIntegral (16 + 36 * r + 6 * g + b))
+        [ (T.pack ("rgb" ++ show r ++ show g ++ show b), fromIntegral $ 16 + 36 * r + 6 * g + b)
         | r <- [0..5 :: Int], g <- [0..5 :: Int], b <- [0..5 :: Int]
         ]
       gray =
-        [ (T.pack ("gray" ++ show i), fromIntegral (232 + i)) | i <- [0..23 :: Int] ]
+        [ (T.pack ("gray" ++ show i), fromIntegral $ 232 + i) | i <- [0..23 :: Int] ]
   in HM.fromList (ansi ++ cube ++ gray)
 
 -- | Look up an xterm-256 color name, returning its palette index (0 = default/unknown).
@@ -418,7 +418,7 @@ stepCell buf front acc@(PresentAcc lastStyle lastCursor b) y x idx = do
           b2 = if lastCursor /= (y, x)
                  then b1 <> TB.fromText (cursorAt y x)
                  else b1
-          b3 = b2 <> TB.singleton (chr (fromIntegral ch))
+          b3 = b2 <> TB.singleton (chr $ fromIntegral ch)
       VSM.write front idx cell
       pure (PresentAcc lastStyle' (y, x + 1) b3)
 
@@ -538,7 +538,7 @@ bufferStr = do
     cs <- forM [0 .. w - 1] $ \x -> do
       Cell c _ _ <- VSM.read buf (y * w + x)
       pure (if c == 0 then ' ' else chr (fromIntegral c))
-    pure (T.dropWhileEnd (== ' ') (T.pack cs))
+    pure $ T.dropWhileEnd (== ' ') $ T.pack cs
   pure (T.intercalate "\n" rows)
 
 -- | Write text + padding into the cell buffer at (x, y), padding to `len`.
@@ -549,14 +549,14 @@ padC x y len fg bg s _attr = do
       yi = fromIntegral y
       li = fromIntegral len
       chars = T.unpack s
-      padded = take li (chars ++ repeat ' ')
+      padded = take li $ chars ++ repeat ' '
   when (yi >= 0 && yi < h) $ do
     zipWithM_
       (\i ch ->
         let cx = xi + i
         in when (cx >= 0 && cx < w) $
              VSM.write buf (yi * w + cx)
-               (Cell (fromIntegral (fromEnum ch)) fg bg))
+               (Cell (fromIntegral $ fromEnum ch) fg bg))
       [0 ..] padded
 
 -- | Print string at position (for backwards compat)
@@ -690,17 +690,17 @@ printPadBuf buf w h x y padW fg bg s right_ = do
     then do
       -- pad spaces on left
       forM_ [0 .. pad - 1] $ \i ->
-        setCell buf w h (cx0 + i) y (fromIntegral (fromEnum ' ')) fg bg
+        setCell buf w h (cx0 + i) y (fromIntegral $ fromEnum ' ') fg bg
       -- then text
       forM_ (zip [0..] (take len chars)) $ \(i, ch) ->
-        setCell buf w h (cx0 + pad + i) y (fromIntegral (fromEnum ch)) fg bg
+        setCell buf w h (cx0 + pad + i) y (fromIntegral $ fromEnum ch) fg bg
     else do
       -- text first
       forM_ (zip [0..] (take len chars)) $ \(i, ch) ->
-        setCell buf w h (cx0 + i) y (fromIntegral (fromEnum ch)) fg bg
+        setCell buf w h (cx0 + i) y (fromIntegral $ fromEnum ch) fg bg
       -- pad spaces on right
       forM_ [0 .. pad - 1] $ \i ->
-        setCell buf w h (cx0 + len + i) y (fromIntegral (fromEnum ' ')) fg bg
+        setCell buf w h (cx0 + len + i) y (fromIntegral $ fromEnum ' ') fg bg
 
 -- | Unified table render. Pure Haskell replacement for C FFI.
 renderTable
@@ -736,13 +736,13 @@ renderTable
   = do
   (screenW, screenH, buf) <- readIORef screenBuf
   let nCols = V.length names  -- total column count
-      nRows = if r1 > r0 then fromIntegral (r1 - r0) else 0 :: Int
+      nRows = if r1 > r0 then fromIntegral $ r1 - r0 else 0 :: Int
 
   -- sparkline: active if any non-empty string
   let sparkOn = V.any (not . T.null) sparklines
 
-  let stFg si = fromMaybe 0 (styles V.!? (si * 2))
-      stBg si = fromMaybe 0 (styles V.!? (si * 2 + 1))
+  let stFg si = fromMaybe 0 $ styles V.!? (si * 2)
+      stBg si = fromMaybe 0 $ styles V.!? (si * 2 + 1)
 
   -- build selection bitsets
   let toIS v = V.foldl' (\acc x -> IS.insert (fromIntegral x) acc) IS.empty v
@@ -759,7 +759,7 @@ renderTable
       baseWidthsV = V.generate nCols $ \c ->
         if IS.member c hidBits then 0
         else let cached = if c < V.length inWidths
-                          then fromIntegral (inWidths V.! c) else 0 :: Int
+                          then fromIntegral $ inWidths V.! c else 0 :: Int
                  dw = computeDataWidth c
                  base = (max dw _MIN_HDR_WIDTH) + 2
              in max base cached
@@ -798,8 +798,8 @@ renderTable
         let goKey c x acc
               | c >= nKeysI || c >= nDispCols || x >= screenW = (acc, c, x)
               | otherwise =
-                  let origIdx = fromIntegral (colIdxs V.! c)
-                      cw = min (allWidthsV V.! origIdx) (screenW - x)
+                  let origIdx = fromIntegral $ colIdxs V.! c
+                      cw = min (allWidthsV V.! origIdx) $ screenW - x
                   in goKey (c + 1) (x + cw + 1) ((c, x, cw) : acc)
             (keyList, _visKeyCount, x1) = goKey 0 0 []
             visKeys = length keyList
@@ -807,11 +807,11 @@ renderTable
             goNonKey c x acc
               | c >= nDispCols || x >= screenW = acc
               | otherwise =
-                  let origIdx = fromIntegral (colIdxs V.! c)
-                      cw = min (allWidthsV V.! origIdx) (screenW - x)
+                  let origIdx = fromIntegral $ colIdxs V.! c
+                      cw = min (allWidthsV V.! origIdx) $ screenW - x
                   in goNonKey (c + 1) (x + cw + 1) ((c, x, cw) : acc)
             nonKeyList = goNonKey nonKeyStart x1 []
-        in (V.fromList (reverse keyList ++ reverse nonKeyList), visKeys)
+        in (V.fromList $ reverse keyList ++ reverse nonKeyList, visKeys)
       (layoutV, visKeys) = buildLayout
 
   let nVisCols = V.length layoutV
@@ -832,9 +832,9 @@ renderTable
                     Nothing -> layoutV
                     Just cvi ->
                       let (di, _, cw) = layoutV V.! cvi
-                          origIdx = fromIntegral (colIdxs V.! di)
-                          base = max 3 (baseWidthsV V.! origIdx + fromIntegral widthAdj)
-                          expand = min slack (max 0 (base - cw))
+                          origIdx = fromIntegral $ colIdxs V.! di
+                          base = max 3 $ baseWidthsV V.! origIdx + fromIntegral widthAdj
+                          expand = min slack $ max 0 $ base - cw
                       in if expand <= 0 then layoutV
                          else V.imap (\i (d, xx, ww) ->
                                 if i == cvi then (d, xx, ww + expand)
@@ -848,7 +848,7 @@ renderTable
   forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
     let (dispIdx, xPos, cw) = layoutV2 V.! c
         origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
-        name = fromMaybe "" (names V.!? origIdx)
+        name = fromMaybe "" $ names V.!? origIdx
         isSel = IS.member origIdx colBits
         isCur = origIdx == fromIntegral curCol
         isGrp = dispIdx < nKeysI
@@ -860,8 +860,8 @@ renderTable
         bg = if isGrp then stBg _STYLE_GROUP else stBg si
 
     -- leading space
-    setCell buf screenW screenH xPos 0 (fromIntegral (fromEnum ' ')) fg bg
-    setCell buf screenW screenH xPos yFoot (fromIntegral (fromEnum ' ')) fg bg
+    setCell buf screenW screenH xPos 0 (fromIntegral $ fromEnum ' ') fg bg
+    setCell buf screenW screenH xPos yFoot (fromIntegral $ fromEnum ' ') fg bg
 
     -- column name
     let hw = max 0 (cw - 2)
@@ -872,9 +872,9 @@ renderTable
     -- type char
     let tc = if origIdx < V.length fmts
              then typeCharFmt (fmts V.! origIdx)
-             else typeCharColType (fromMaybe ColTypeOther (colTypes V.!? origIdx))
-    setCell buf screenW screenH (xPos + cw - 1) 0 (fromIntegral (fromEnum tc)) fg bg
-    setCell buf screenW screenH (xPos + cw - 1) yFoot (fromIntegral (fromEnum tc)) fg bg
+             else typeCharColType (fromMaybe ColTypeOther $ colTypes V.!? origIdx)
+    setCell buf screenW screenH (xPos + cw - 1) 0 (fromIntegral $ fromEnum tc) fg bg
+    setCell buf screenW screenH (xPos + cw - 1) yFoot (fromIntegral $ fromEnum tc) fg bg
 
     -- separator after column
     let sX = xPos + cw
@@ -892,7 +892,7 @@ renderTable
     forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
       let (dispIdx, xPos, cw) = layoutV2 V.! c
           origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
-          sp = fromMaybe "" (sparklines V.!? origIdx)
+          sp = fromMaybe "" $ sparklines V.!? origIdx
       printPadBuf buf screenW screenH xPos 1 cw spFg spBg sp False
       let sX = xPos + cw
       when (sX < screenW) $ do
@@ -909,7 +909,7 @@ renderTable
           let (dispIdx, _, _) = layoutV2 V.! c
               origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
               fmt = if origIdx < V.length fmts then fmts V.! origIdx else '\0'
-              typ = fromMaybe ColTypeOther (colTypes V.!? origIdx)
+              typ = fromMaybe ColTypeOther $ colTypes V.!? origIdx
               -- Get text column for this origIdx
               textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
               -- Get heat doubles column for this origIdx
@@ -967,7 +967,7 @@ renderTable
                 else if hkKind hc == HeatStr && not (testBit heatMode 1) then (fgBase, bgBase)
                 else
                   let textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
-                      cellText = fromMaybe "" (textCol V.!? ri)
+                      cellText = fromMaybe "" $ textCol V.!? ri
                   in if hkKind hc == HeatNum
                      then if hkDate hc
                           then if T.null cellText then (fgBase, bgBase)
@@ -977,26 +977,26 @@ renderTable
                           else -- numeric: use heatDoubles
                             let hdCol = if origIdx < V.length heatDoubles
                                         then heatDoubles V.! origIdx else V.empty
-                                val = fromMaybe (0/0) (hdCol V.!? ri)
+                                val = fromMaybe (0/0) $ hdCol V.!? ri
                             in if isNaN val then (fgBase, bgBase)
                                else let t = (val - hkMn hc) / (hkMx hc - hkMn hc)
                                     in (_HEAT_FG, heatColor t)
                      else -- string hash
                        if T.null cellText then (fgBase, bgBase)
-                       else (_HEAT_FG, heatColor (heatStrHash01 cellText))
+                       else (_HEAT_FG, heatColor $ heatStrHash01 cellText)
 
       -- get cell text
       let textCol = if origIdx < V.length texts then texts V.! origIdx else V.empty
-          cellText = fromMaybe "" (textCol V.!? ri)
-          isNum = maybe False isNumeric (colTypes V.!? origIdx)
+          cellText = fromMaybe "" $ textCol V.!? ri
+          isNum = maybe False isNumeric $ colTypes V.!? origIdx
 
       -- leading space
-      setCell buf screenW screenH xPos y (fromIntegral (fromEnum ' ')) fg bg
+      setCell buf screenW screenH xPos y (fromIntegral $ fromEnum ' ') fg bg
       let contentW = max 0 (cw - 2)
       when (contentW > 0) $
         printPadBuf buf screenW screenH (xPos + 1) y contentW fg bg cellText isNum
       -- trailing space
-      setCell buf screenW screenH (xPos + cw - 1) y (fromIntegral (fromEnum ' ')) fg bg
+      setCell buf screenW screenH (xPos + cw - 1) y (fromIntegral $ fromEnum ' ') fg bg
 
       -- separator
       let sX = xPos + cw
@@ -1011,7 +1011,7 @@ renderTable
     let (dispIdx, xPos, cw) = layoutV2 V.! c
         origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
     when (origIdx == fromIntegral curCol) $ do
-      let name = fromMaybe "" (names V.!? origIdx)
+      let name = fromMaybe "" $ names V.!? origIdx
           nameLen = T.length name
           colW = cw - 2
       when (nameLen > colW) $ do
@@ -1020,19 +1020,19 @@ renderTable
         if moveDir > 0
           then do
             let endX = xPos + cw - 1
-                startX = max 0 (endX - nameLen)
+                startX = max 0 $ endX - nameLen
                 tipW = endX - startX
                 skip = nameLen - tipW
                 visChars = drop skip chars
             forM_ (zip [0..] (take tipW visChars)) $ \(i, ch) ->
               setCell buf screenW screenH (startX + i) 0
-                (fromIntegral (fromEnum ch)) fg (stBg _STYLE_CURSOR)
+                (fromIntegral $ fromEnum ch) fg (stBg _STYLE_CURSOR)
           else do
             let maxW = screenW - xPos - 1
                 tipW = min nameLen maxW
             forM_ (zip [0..] (take tipW chars)) $ \(i, ch) ->
               setCell buf screenW screenH (xPos + 1 + i) 0
-                (fromIntegral (fromEnum ch)) fg (stBg _STYLE_CURSOR)
+                (fromIntegral $ fromEnum ch) fg (stBg _STYLE_CURSOR)
 
   -- output widths (base widths, no widthAdj, 0 for hidden)
   pure (V.map fromIntegral baseWidthsV)

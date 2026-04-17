@@ -15,6 +15,12 @@ Haskell tree is free to diverge in structure, abstraction, and idiom.
   `Prql.pipe` / `requery`.
 - **Don't disable tests to make them pass.** If a test fails, fix the code
   or the test — don't mark it `pending`.
+- **Prefer `$` to redundant parens.** Write `f $ g x` instead of `f (g x)`
+  when `(g x)` is the last/only argument and contains a function
+  application or operator. Nest: `guard $ not $ T.null x`, not
+  `guard (not (T.null x))`. Don't use `$` for tuples (`(x, y)`),
+  list literals, operator sections, or when the parens are changing
+  precedence — there the parens are load-bearing.
 - **Short names.** Identifiers we define (functions, types, fields,
   modules) should be at most 2 words — `queryMeta`, not `queryMetadataFromTable`.
   Stdlib/library names like `readProcessWithExitCode` are out of our

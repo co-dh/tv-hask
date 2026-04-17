@@ -219,7 +219,7 @@ query conn sql = mask_ $ do
     C.c_duckdb_destroy_result resSlot
     free resSlot
     touchForeignPtr (connHdl conn)
-  pure (Result resFp names tys rawTys)
+  pure $ Result resFp names tys rawTys
 
 zeroBytes :: Ptr Word8 -> Int -> IO ()
 zeroBytes p n = go 0
@@ -254,7 +254,7 @@ chunks res = go
             touchForeignPtr (resPtr res)
           let c = DataChunk fp res
           rest <- go
-          pure (c : rest)
+          pure $ c : rest
 
 -- | Number of tuples in this chunk.
 chunkSize :: DataChunk -> Int
@@ -275,7 +275,7 @@ chunkColumn chunk colIdx = U.unsafePerformIO $
     valP <- C.c_duckdb_vector_get_validity vec
     let rawT = resRawTypes (chunkOwner chunk) V.! colIdx
         cty  = resColTypes (chunkOwner chunk) V.! colIdx
-    pure (ColumnView cty rawT sz dataP valP chunk)
+    pure $ ColumnView cty rawT sz dataP valP chunk
 {-# NOINLINE chunkColumn #-}
 
 -- ============================================================================
@@ -288,7 +288,7 @@ isValid vp row
   | otherwise = do
       let (q, r) = row `divMod` 64
       w <- peekElemOff vp q
-      pure ((w `shiftR` r) .&. 1 == 1)
+      pure $ (w `shiftR` r) .&. 1 == 1
 
 -- | Read an integer cell. Handles all DuckDB integer widths + bool.
 cellInt :: ColumnView -> Int -> Maybe Int64
@@ -321,7 +321,7 @@ cellInt cv row
                   Just . fromIntegral <$> peekElemOff (castPtr d :: Ptr Word8) row
               | t == DuckDBTypeBoolean -> do
                   b <- peekElemOff (castPtr d :: Ptr Word8) row
-                  pure (Just (if b /= 0 then 1 else 0))
+                  pure $ Just $ if b /= 0 then 1 else 0
               | otherwise -> pure Nothing
 {-# NOINLINE cellInt #-}
 
@@ -342,7 +342,7 @@ cellDbl cv row
                   if t == DuckDBTypeFloat
                     then do
                       f <- peekElemOff (castPtr d :: Ptr Float) row
-                      pure (Just (realToFrac f))
+                      pure $ Just $ realToFrac f
                     else pure Nothing
 {-# NOINLINE cellDbl #-}
 
@@ -376,7 +376,7 @@ cellText cv row
               else do
                 p <- peek (castPtr (base `plusPtr` 8) :: Ptr (Ptr Word8))
                 BS.packCStringLen (castPtr p, len)
-          pure (Just (TE.decodeUtf8 bs))
+          pure $ Just $ TE.decodeUtf8 bs
 {-# NOINLINE cellText #-}
 
 -- ============================================================================
@@ -409,7 +409,7 @@ cellDate cv row
         d <- peekElemOff (castPtr (cvData cv) :: Ptr Int32) row
         let day = addDays (fromIntegral d) (fromGregorian 1970 1 1)
             (y, m, dd) = toGregorian day
-        pure (Just (T.pack (printf "%04d-%02d-%02d" y m dd)))
+        pure $ Just $ T.pack $ printf "%04d-%02d-%02d" y m dd
 {-# NOINLINE cellDate #-}
 
 -- | DuckDB TIME: int64 microseconds since midnight. Format HH:MM:SS.
@@ -423,7 +423,7 @@ cellTime cv row
         let s = us `div` 1000000
             (h, sm) = (s `div` 3600 `mod` 24, s `mod` 3600)
             (mi, se) = (sm `div` 60, sm `mod` 60)
-        pure (Just (T.pack (printf "%02d:%02d:%02d" h mi se)))
+        pure $ Just $ T.pack $ printf "%02d:%02d:%02d" h mi se
 {-# NOINLINE cellTime #-}
 
 -- | DuckDB TIMESTAMP / TIMESTAMP_TZ: int64 microseconds since 1970-01-01.
@@ -442,7 +442,7 @@ cellTs cv row
             (y, m, dd) = toGregorian day
             (h, sm) = (secOfDay `div` 3600, secOfDay `mod` 3600)
             (mi, se) = (sm `div` 60, sm `mod` 60)
-        pure (Just (T.pack (printf "%04d-%02d-%02d %02d:%02d:%02d" y m dd h mi se)))
+        pure $ Just $ T.pack $ printf "%04d-%02d-%02d %02d:%02d:%02d" y m dd h mi se
   where rt = cvRawType cv
 {-# NOINLINE cellTs #-}
 

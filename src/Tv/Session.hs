@@ -79,7 +79,7 @@ sessPath name = do
     then ioError (userError "invalid session name")
     else do
       d <- sessDir
-      pure (d ++ "/" ++ T.unpack safe ++ ".json")
+      pure $ d ++ "/" ++ T.unpack safe ++ ".json"
 
 -- ## ToJson / FromJson instances
 
@@ -244,7 +244,7 @@ objVal _ _ = Nothing
 
 -- | Get sub-Value with null fallback (like Lean's `objValD`).
 objValD :: Value -> Text -> Value
-objValD j k = fromMaybe Null (objVal j k)
+objValD j k = fromMaybe Null $ objVal j k
 
 -- | Restore a single view from JSON, re-executing the query pipeline.
 --   Errors are caught per-view so partial restoration works.
@@ -255,7 +255,7 @@ restoreView noSign_ j = do
   if T.null path_
     then pure Nothing
     else do
-      let vkind_ = fromMaybe VkTbl (jdMaybe j "vkind")
+      let vkind_ = fromMaybe VkTbl $ jdMaybe j "vkind"
           disp_ :: Text
           disp_ = jd j "disp" ""
           prec_ = fromMaybe 3 (jdMaybe j "prec") :: Int
@@ -273,13 +273,13 @@ restoreView noSign_ j = do
               _    -> Just (jd s "col" 0, jd s "val" "")
           qObj = objValD j "query"
           baseDefault = "from `" <> path_ <> "`"
-          base_ = fromMaybe baseDefault (jdMaybe qObj "base")
+          base_ = fromMaybe baseDefault $ jdMaybe qObj "base"
           ops_ = jd qObj "ops" V.empty :: Vector Op
           query_ = Query { base = base_, ops = ops_ }
       tblM <- tryIO $ case vkind_ of
         VkFld p depth -> do
           mv <- Folder.mkView noSign_ p depth
-          pure (fmap (Nav.tbl . View.nav) mv)
+          pure $ fmap (Nav.tbl . View.nav) mv
         _ -> do
           total <- AdbcTable.queryCount query_
           mt <- AdbcTable.requery query_ total
@@ -296,12 +296,12 @@ restoreView noSign_ j = do
                 let nav' = (view ^. #nav)
                          & #hidden       .~ hidden_
                          & #col % #sels  .~ colSels_
-                in pure (Just (view & #vkind    .~ vkind_
-                                    & #disp     .~ disp_
-                                    & #prec     .~ prec_
-                                    & #widthAdj .~ widthAdj_
-                                    & #search   .~ search_
-                                    & #nav      .~ nav'))
+                in pure $ Just $ view & #vkind    .~ vkind_
+                                      & #disp     .~ disp_
+                                      & #prec     .~ prec_
+                                      & #widthAdj .~ widthAdj_
+                                      & #search   .~ search_
+                                      & #nav      .~ nav'
               Nothing -> pure Nothing
   where
     -- | Catch IO exceptions, log, return Nothing (matches Lean's per-view skip).
@@ -347,12 +347,12 @@ load noSign_ name = do
         Left _     -> pure Nothing
         Right json -> do
           let views = jd json "views" V.empty :: Vector Value
-          restored <- fmap (V.mapMaybe id) (V.mapM (restoreView noSign_) views)
+          restored <- fmap (V.mapMaybe id) $ V.mapM (restoreView noSign_) views
           if not (V.null restored)
-            then pure (Just (ViewStack
+            then pure $ Just $ ViewStack
                                { hd = restored V.! 0
                                , tl = V.toList (V.slice 1 (V.length restored - 1) restored)
-                               }))
+                               }
             else pure Nothing
 
 list :: IO (Vector Text)
@@ -365,7 +365,7 @@ list = do
       stems =
         [ T.pack (take (length e - 5) e)
         | e <- entries, ".json" `isSuffixOf` e ]
-  pure (V.fromList stems)
+  pure $ V.fromList stems
   where
     isSuffixOf s xs = length xs >= length s && drop (length xs - length s) xs == s
 
@@ -385,7 +385,7 @@ saveName tm = do
                        (x:_) -> x
                        []    -> ""
           name = sanitize pick
-      pure (if T.null name then Nothing else Just name)
+      pure $ if T.null name then Nothing else Just name
 
 loadName :: Bool -> IO (Maybe Text)
 loadName tm = do
@@ -394,7 +394,7 @@ loadName tm = do
     then Render.statusMsg "no saved sessions" >> pure Nothing
     else do
       m <- Fzf.fzf tm (V.fromList ["--prompt=load session: "]) (T.intercalate "\n" (V.toList existing))
-      pure (fmap T.strip m)
+      pure $ fmap T.strip m
 
 -- | Save session with explicit name (no fzf). Called by socket/dispatch.
 saveWith :: ViewStack AdbcTable -> Text -> IO ()

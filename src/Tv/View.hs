@@ -117,7 +117,7 @@ tabName v = case v ^. #vkind of
     if T.null (v ^. #disp) || T.isPrefixOf "/" p then p else v ^. #disp
   _ ->
     if T.null (v ^. #disp)
-      then case reverse (T.splitOn "/" (v ^. #path)) of
+      then case reverse (T.splitOn "/" $ v ^. #path) of
              (x:_) -> x
              []    -> v ^. #path
       else v ^. #disp
@@ -203,8 +203,8 @@ update v h rowPg =
     names   = Nav.colNames n
     curCol  = Nav.colIdx n
     sortEff asc =
-      let selIdxs = V.mapMaybe (Nav.idxOf names) (n ^. #col % #sels)
-          grpIdxs = V.mapMaybe (Nav.idxOf names) (n ^. #grp)
+      let selIdxs = V.mapMaybe (Nav.idxOf names) $ n ^. #col % #sels
+          grpIdxs = V.mapMaybe (Nav.idxOf names) $ n ^. #grp
       in Just (v, EffectSort curCol selIdxs grpIdxs asc)
 
 {-! ## ViewStack: non-empty view stack -/-}
@@ -245,7 +245,7 @@ dup :: ViewStack t -> ViewStack t
 dup s = ViewStack { hd = s ^. #hd, tl = s ^. #hd : s ^. #tl }
 
 tabNames :: ViewStack t -> Vector Text
-tabNames s = V.fromList (map tabName (s ^. #hd : s ^. #tl))
+tabNames s = V.fromList $ map tabName $ s ^. #hd : s ^. #tl
 
 -- | Pure update by command. q on empty stack -> quit
 --
@@ -276,4 +276,4 @@ updateStack s h = case h of
 
 -- | PRQL pipeline ops string from view's query (for tab line display).
 opsStr :: View AdbcTable -> Text
-opsStr v = Prql.renderOps (Table.query (Nav.tbl (nav v)))
+opsStr v = Prql.renderOps $ Table.query $ Nav.tbl $ nav v

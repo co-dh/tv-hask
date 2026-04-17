@@ -144,7 +144,7 @@ readCsv path_ = do
     action = do
       ap <- absPath path_
       mt <- Table.fileWith ap "read_csv" ""
-      pure (mt >>= \t -> View.fromTbl t path_ 0 V.empty 0)
+      pure $ mt >>= \t -> View.fromTbl t path_ 0 V.empty 0
 
 -- | ATTACH database file and list its tables as a folder view
 attachFile :: Text -> Format -> IO (Maybe (View AdbcTable))
@@ -168,7 +168,7 @@ attachFile ap fmt = do
                         []    -> ap
           pure $ fmap
             (\v -> v & #vkind .~ Types.VkFld ap 1 & #disp .~ disp_)
-            (View.fromTbl adbc ap 0 (V.singleton "name") 0)
+            $ View.fromTbl adbc ap 0 (V.singleton "name") 0
 
 -- | Open any supported data file as a View (attach for DB, reader for data files)
 openFile :: Text -> IO (Maybe (View AdbcTable))
@@ -180,7 +180,7 @@ openFile path_ = do
         then attachFile ap fmt
         else do
           mt <- Table.fileWith ap (reader fmt) (duckdbExt fmt)
-          pure (mt >>= \t -> View.fromTbl t path_ 0 V.empty 0)
+          pure $ mt >>= \t -> View.fromTbl t path_ 0 V.empty 0
     Nothing -> do
       mt <- Table.fromFile ap
-      pure (mt >>= \t -> View.fromTbl t path_ 0 V.empty 0)
+      pure $ mt >>= \t -> View.fromTbl t path_ 0 V.empty 0

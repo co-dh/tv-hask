@@ -103,4 +103,4 @@ fromText content =
 fromStdin :: IO (Either Text Text)
 fromStdin = do
   content <- TIO.getContents
-  pure (fromText content)
+  pure $ fromText content
