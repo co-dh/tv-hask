@@ -223,63 +223,91 @@ fmtIntComma v
       | otherwise        = let (h, rest) = T.splitAt 3 t
                            in h <> "," <> addCommas rest
 
--- | Format a single cell for display. Dispatches on column type:
--- ints get comma formatting, floats use precision control, bools are true/false.
-formatCellDisplay :: QueryResult -> Int -> Int -> Int -> Tc.ColType -> IO T.Text
-formatCellDisplay qr row col prec_ typ =
-  case findChunk qr row of
-    Nothing -> pure ""
-    Just (ch, local) ->
-      let cv = DB.chunkColumn ch (fromIntegral col)
-      in case typ of
-        Tc.ColTypeInt -> pure $ case DB.cellInt cv local of
-          Nothing -> ""
-          Just n  -> fmtIntComma n
-        Tc.ColTypeFloat -> pure $ case DB.cellDbl cv local of
-          Nothing -> ""
-          Just f  -> if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
-        Tc.ColTypeDecimal -> pure $ case DB.cellDbl cv local of
-          Nothing -> ""
-          Just f  -> if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
-        Tc.ColTypeBool -> pure $ case DB.cellInt cv local of
-          Just 0  -> "false"
-          Just _  -> "true"
-          Nothing -> ""
-        _ -> pure $ DB.cellAny cv local
+-- | Format a single cell for display, given a pre-resolved 'ColumnView'
+-- and the local row offset. Dispatches on column type.
+formatCellFromCV :: DB.ColumnView -> Int -> Int -> Tc.ColType -> T.Text
+formatCellFromCV cv local prec_ typ = case typ of
+  Tc.ColTypeInt -> case DB.cellInt cv local of
+    Nothing -> ""
+    Just n  -> fmtIntComma n
+  Tc.ColTypeFloat -> case DB.cellDbl cv local of
+    Nothing -> ""
+    Just f  -> if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
+  Tc.ColTypeDecimal -> case DB.cellDbl cv local of
+    Nothing -> ""
+    Just f  -> if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
+  Tc.ColTypeBool -> case DB.cellInt cv local of
+    Just 0  -> "false"
+    Just _  -> "true"
+    Nothing -> ""
+  _ -> DB.cellAny cv local
 
 -- | Materialize a rectangular cell region as display-formatted text.
 -- Column-major: outer Vector indexed by column, inner by local row.
+--
+-- Perf contract: resolves the starting chunk once and reuses
+-- @chunkColumn@ across every cell that falls inside it. Safe-FFI cost
+-- was dominant (4 safe ccalls per cellRead × N cells); this drops it
+-- to 4 safe ccalls per (chunk, column). Typical visible windows
+-- (≤ 1000 rows) live in one chunk, so the cross-chunk loop runs once.
 fetchRows :: QueryResult -> Int -> Int -> Int -> IO (V.Vector (V.Vector T.Text))
-fetchRows qr r0 r1 prec_ =
+fetchRows qr r0 r1 prec_ = do
   let nc = V.length (colNames qr)
       types = colTypes qr
-  in V.generateM nc $ \c ->
-    V.generateM (max 0 (r1 - r0)) $ \ri ->
-      formatCellDisplay qr (r0 + ri) c prec_
-        (if c < V.length types then types V.! c else Tc.ColTypeOther)
+  if r1 <= r0
+    then pure (V.replicate nc V.empty)
+    else V.generateM nc $ \c -> do
+      let typ = if c < V.length types then types V.! c else Tc.ColTypeOther
+      -- Resolve chunks for this column once; then batch-format inside each.
+      withChunkRuns qr r0 r1 $ \ch local n ->
+        let cv = DB.chunkColumn ch (fromIntegral c)
+        in pure $ V.generate n $ \i -> formatCellFromCV cv (local + i) prec_ typ
 
 -- | Fetch raw doubles for heat mode. NaN for non-numeric or null cells.
+-- Non-numeric columns short-circuit to an empty Vector (the renderer's
+-- 'scanHeat' only reads numeric columns and uses text min/max for
+-- date-like formats), avoiding a per-cell sweep that would always
+-- yield NaN.
 fetchHeatDoubles :: QueryResult -> Int -> Int -> IO (V.Vector (V.Vector Double))
-fetchHeatDoubles qr r0 r1 =
+fetchHeatDoubles qr r0 r1 = do
   let nc = V.length (colNames qr)
       types = colTypes qr
+      isNumTy t = t == Tc.ColTypeInt || t == Tc.ColTypeFloat || t == Tc.ColTypeDecimal
       nan = 0/0 :: Double
-  in V.generateM nc $ \c ->
-    let typ = if c < V.length types then types V.! c else Tc.ColTypeOther
-    in V.generateM (max 0 (r1 - r0)) $ \ri ->
-      let row = r0 + ri
-      in case findChunk qr row of
-        Nothing -> pure nan
-        Just (ch, local) ->
-          let cv = DB.chunkColumn ch (fromIntegral c)
-          in case typ of
-            Tc.ColTypeInt -> pure $ case DB.cellInt cv local of
-              Nothing -> nan
-              Just n  -> fromIntegral n
-            Tc.ColTypeFloat -> pure $ case DB.cellDbl cv local of
-              Nothing -> nan
-              Just f  -> f
-            Tc.ColTypeDecimal -> pure $ case DB.cellDbl cv local of
-              Nothing -> nan
-              Just f  -> f
-            _ -> pure nan
+  if r1 <= r0
+    then pure (V.replicate nc V.empty)
+    else V.generateM nc $ \c -> do
+      let typ = if c < V.length types then types V.! c else Tc.ColTypeOther
+      if not (isNumTy typ)
+        then pure V.empty   -- skip non-numeric; saves 4 safe FFI calls per chunk
+        else withChunkRuns qr r0 r1 $ \ch local n ->
+               let cv = DB.chunkColumn ch (fromIntegral c)
+               in pure $ V.generate n $ \i ->
+                    case typ of
+                      Tc.ColTypeInt -> case DB.cellInt cv (local + i) of
+                        Nothing -> nan
+                        Just v  -> fromIntegral v
+                      _ -> case DB.cellDbl cv (local + i) of
+                        Nothing -> nan
+                        Just v  -> v
+
+-- | Walk the @[r0, r1)@ row range grouped by DuckDB chunk. Calls @f@
+-- once per contiguous run of rows that live in the same chunk;
+-- concatenates the produced vectors. 'chunkColumn' is the expensive
+-- thing — we hand the chunk to the caller so it can hoist it.
+withChunkRuns
+  :: QueryResult -> Int -> Int
+  -> (DB.DataChunk -> Int -> Int -> IO (V.Vector a))
+  -> IO (V.Vector a)
+withChunkRuns qr r0 r1 f = go V.empty r0
+  where
+    go acc row
+      | row >= r1 = pure acc
+      | otherwise = case findChunk qr row of
+          Nothing -> pure acc
+          Just (ch, local) ->
+            let chunkEndGlobal = row - local + DB.chunkSize ch
+                stop           = min r1 chunkEndGlobal
+                n              = stop - row
+            in do chunk <- f ch local n
+                  go (acc V.++ chunk) stop
