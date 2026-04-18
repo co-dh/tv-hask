@@ -33,10 +33,12 @@ wrapText s maxW
           final = if not (T.null cur) || null lns then lns ++ [cur] else lns
       in V.fromList final
 
--- | Render preview box at bottom-left
+-- | Render preview box at bottom-left. Width scales with the screen
+-- (70% up to screenW-4 safety margin) so long cell strings wrap less
+-- and the box no longer looks cramped on wide terminals.
 render :: Int -> Int -> Text -> Int -> IO ()
 render screenH screenW text scroll0 = do
-  let maxW = min 60 (screenW - 4)
+  let maxW = min (screenW - 4) (screenW * 7 `div` 10)
   if maxW < 4 then pure ()
   else do
     let lns = wrapText text maxW
