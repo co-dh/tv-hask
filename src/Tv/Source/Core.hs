@@ -27,6 +27,7 @@ module Tv.Source.Core
     -- HTTP fetching (http-client + TLS)
   , fetchBytes
   , fetchFile
+  , httpMgr
     -- caching / idempotence
   , withCache
   , onceFor
@@ -43,7 +44,7 @@ module Tv.Source.Core
 import Control.Exception (SomeException, try)
 import Control.Monad (forM_, when)
 import qualified Data.ByteString.Lazy as LBS
-import Data.IORef (IORef, newIORef, readIORef, modifyIORef')
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, modifyIORef')
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -225,9 +226,12 @@ httpMgr = do
   case m of
     Just mgr -> pure mgr
     Nothing  -> do
-      mgr <- newTlsManager
-      modifyIORef' mgrRef (const (Just mgr))
-      pure mgr
+      fresh <- newTlsManager
+      -- Race-safe: if another thread already installed one, keep theirs and
+      -- drop ours. The stranded `fresh` has no open connections yet.
+      atomicModifyIORef' mgrRef $ \cur -> case cur of
+        Just existing -> (Just existing, existing)
+        Nothing       -> (Just fresh, fresh)
 
 -- | Run a GET, log outcome, return the Response or Nothing on exception
 -- or non-2xx status. Caller decides what to do with the body.

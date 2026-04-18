@@ -30,8 +30,7 @@ import qualified Data.Text.Read as TR
 import Data.Time.Clock (diffUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import qualified Data.Vector as V
-import Network.HTTP.Client (httpLbs, newManager, parseRequest, responseBody, responseStatus)
-import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Network.HTTP.Client (httpLbs, parseRequest, responseBody, responseStatus)
 import Network.HTTP.Types.Status (statusCode)
 import System.Directory (createDirectoryIfMissing, doesFileExist, getModificationTime, removeFile)
 import System.Exit (ExitCode (..))
@@ -39,6 +38,7 @@ import System.Process (readProcessWithExitCode)
 
 import qualified Tv.Data.DuckDB as DB
 import qualified Tv.Log as Log
+import qualified Tv.Source.Core as Core
 
 -- | Tables that can hang, consume lots of memory, or spawn subprocesses.
 -- Mirrors the Python DANGEROUS_TABLES list; skipped during row counting,
@@ -134,7 +134,7 @@ countOne :: Text -> IO (Text, Maybe Int)
 countOne name = do
   r <- try (readProcessWithExitCode "timeout"
               ["-k", "1", "2", "osqueryi", "--json"
-              , "SELECT count(*) AS n FROM " <> T.unpack name] "")
+              , "SELECT count(*) AS n FROM \"" <> T.unpack name <> "\""] "")
        :: IO (Either SomeException (ExitCode, String, String))
   case r of
     Right (ExitSuccess, out, _) ->
@@ -227,7 +227,7 @@ download url dst = do
       pure False
   where
     go = do
-      mgr <- newManager tlsManagerSettings
+      mgr <- Core.httpMgr
       req <- parseRequest (T.unpack url)
       resp <- httpLbs req mgr
       let sc = statusCode (responseStatus resp)

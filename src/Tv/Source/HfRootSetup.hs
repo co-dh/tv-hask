@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 -- | Populate ~/.cache/tv/hf_datasets.duckdb with a fresh listing of the top
@@ -11,6 +12,7 @@ module Tv.Source.HfRootSetup
   ( run
   , cleanDesc
   , findTag
+  , linkNext
   ) where
 
 import Control.Exception (SomeException, try)
@@ -28,7 +30,6 @@ import Data.Time.Clock.POSIX (getPOSIXTime)
 import qualified Data.Vector as V
 import Network.HTTP.Client (Manager, httpLbs, parseRequest, responseBody, responseHeaders)
 import qualified Network.HTTP.Client as HTTP
-import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Header (HeaderName)
 import System.Directory (createDirectoryIfMissing, removeFile)
 
@@ -97,24 +98,28 @@ checkFresh = do
 -- ============================================================================
 
 -- | Fetch all dataset entries, following Link: rel="next" until exhausted or cap hit.
+-- Accumulates pages in reverse order (O(1) prepend) and flattens once at the end
+-- to avoid O(n²) list concatenation across ~50 pages × 1000 entries.
 fetchAll :: Manager -> IO [A.Value]
-fetchAll mgr = go apiBase [] (0 :: Int)
+fetchAll mgr = go apiBase [] 0 (0 :: Int)
   where
-    go url acc page
-      | length acc >= maxDatasets = pure (take maxDatasets acc)
-      | otherwise = do
-          Log.write "src" $ "hf fetch page " <> T.pack (show (page + 1))
-          r <- try (fetchPage mgr url) :: IO (Either SomeException ([A.Value], Maybe String))
-          case r of
-            Left e -> do
-              Log.write "src" $ "hf fetch err: " <> T.pack (show e)
-              pure acc
-            Right (entries, _) | null entries -> pure acc
-            Right (entries, mNext) -> do
-              let acc' = acc ++ entries
-              case mNext of
-                Just next -> go next acc' (page + 1)
-                Nothing   -> pure acc'
+    flatten = concat . reverse
+    go url pages !total page = do
+      Log.write "src" $ "hf fetch page " <> T.pack (show (page + 1))
+      r <- try (fetchPage mgr url) :: IO (Either SomeException ([A.Value], Maybe String))
+      case r of
+        Left e -> do
+          Log.write "src" $ "hf fetch err: " <> T.pack (show e)
+          pure (flatten pages)
+        Right (entries, _) | null entries -> pure (flatten pages)
+        Right (entries, mNext) ->
+          let pages' = entries : pages
+              total' = total + length entries
+          in if total' >= maxDatasets
+               then pure (take maxDatasets (flatten pages'))
+               else case mNext of
+                      Just next -> go next pages' total' (page + 1)
+                      Nothing   -> pure (flatten pages')
 
 -- | One page: GET, parse body as JSON array, extract Link header next URL.
 fetchPage :: Manager -> String -> IO ([A.Value], Maybe String)
@@ -130,6 +135,13 @@ fetchPage mgr url = do
 
 -- | Parse "Link: <url>; rel=\"next\", <url>; rel=\"prev\"" headers for next URL.
 -- HeaderName has a case-insensitive Eq instance, so `k == "link"` DTRT.
+--
+-- >>> linkNext [("link", "<https://a/p2>; rel=\"next\", <https://a/p0>; rel=\"prev\"")]
+-- Just "https://a/p2"
+-- >>> linkNext [("link", "<https://a/p0>; rel=\"prev\"")]
+-- Nothing
+-- >>> linkNext []
+-- Nothing
 linkNext :: [(HeaderName, BS.ByteString)] -> Maybe String
 linkNext hs =
   let links = [ v | (k, v) <- hs, k == "link" ]
@@ -157,6 +169,13 @@ linkNext hs =
 -- | Strip HTML tags, markdown links, markdown punctuation, collapse whitespace,
 -- cap at 200 chars. Mirrors the Python regex passes (no HTML parser needed for
 -- the dataset card snippets we see).
+--
+-- >>> cleanDesc "<b>Hello</b>   world"
+-- "Hello world"
+-- >>> cleanDesc "see [the docs](https://x.io) for more"
+-- "see the docs for more"
+-- >>> cleanDesc "**bold** _ital_ #hash"
+-- "bold ital hash"
 cleanDesc :: Text -> Text
 cleanDesc = T.take 200 . collapseWs . stripMdChars . stripMdLinks . stripTags
   where
@@ -179,6 +198,13 @@ cleanDesc = T.take 200 . collapseWs . stripMdChars . stripMdLinks . stripTags
     collapseWs = T.strip . T.unwords . T.words
 
 -- | First tag matching a prefix (e.g. "license:mit" with prefix "license:" -> "mit").
+--
+-- >>> findTag "license:" ["foo", "license:mit", "bar"]
+-- "mit"
+-- >>> findTag "license:" ["foo", "bar"]
+-- ""
+-- >>> findTag "language:" ["language:en", "language:fr"]
+-- "en"
 findTag :: Text -> [Text] -> Text
 findTag pfx ts = case mapMaybe (T.stripPrefix pfx) ts of
   (x:_) -> x
@@ -204,7 +230,7 @@ getInt _ _ = 0
 getBool :: Text -> A.Value -> Bool
 getBool k (A.Object o) = case KM.lookup (K.fromText k) o of
   Just (A.Bool b)   -> b
-  Just (A.String s) -> not (T.null s) && s /= "false"
+  Just (A.String s) -> not (T.null s) && T.toLower s /= "false"
   _                 -> False
 getBool _ _ = False
 
@@ -286,7 +312,7 @@ run = do
     then Log.write "src" "hf listing fresh, skipping fetch"
     else do
       Log.write "src" "hf listing stale, fetching"
-      mgr <- HTTP.newManager tlsManagerSettings
+      mgr <- Core.httpMgr
       entries <- fetchAll mgr
       if null entries
         then Log.write "src" "hf fetch yielded 0 entries"
