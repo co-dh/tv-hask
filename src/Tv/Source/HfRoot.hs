@@ -14,17 +14,15 @@ import Tv.Data.DuckDB.Table (AdbcTable, fromTmp, tmpName)
 import qualified Tv.Log as Log
 import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
+import qualified Tv.Source.HfRootSetup as Setup
 
 pfx_ :: Text
 pfx_ = "hf://"
 
 -- Keyed on pfx so re-entering hf:// within one process doesn't re-run
--- the python script (dataset listing is slow).
+-- the populator (dataset listing is slow).
 setupKey :: Text
 setupKey = pfx_
-
-setupCmd :: Text
-setupCmd = "python3 scripts/hf_datasets.py"
 
 attachSqlTmpl :: Text
 attachSqlTmpl = "ATTACH '{home}/.cache/tv/hf_datasets.duckdb' AS hf (READ_ONLY)"
@@ -37,13 +35,13 @@ hfSetup :: IO ()
 hfSetup = Core.onceFor setupKey $ do
   home <- Core.homeText
   let attach = Core.expand attachSqlTmpl (V.singleton ("home", home))
-  -- Try ATTACH first; if the DuckDB file is missing, run the generator.
+  -- Try ATTACH first; if the DuckDB file is missing, run the populator.
   r <- try (Conn.query attach) :: IO (Either SomeException Conn.QueryResult)
   case r of
     Right _ -> Log.write "src" "hf:// attach ok"
     Left _  -> do
-      Log.write "src" "hf:// attach failed, running hf_datasets.py"
-      _ <- Core.runCmd "setup" setupCmd
+      Log.write "src" "hf:// attach failed, running HfRootSetup"
+      Setup.run
       _ <- Conn.query attach
       pure ()
 

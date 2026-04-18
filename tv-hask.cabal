@@ -61,6 +61,7 @@ library
     Tv.Source.S3
     Tv.Source.Ftp
     Tv.Source.HfRoot
+    Tv.Source.HfRootSetup
     Tv.Source.HfDataset
     Tv.Source.Rest
     Tv.Source.Osquery
@@ -91,10 +92,14 @@ library
     filepath >= 1.4,
     containers >= 0.6,
     hashable >= 1.4,
+    http-client >= 0.7,
+    http-client-tls >= 0.3,
+    http-types >= 0.12,
     network >= 3.1,
     optics-core >= 0.4 && < 0.5,
     optics-th >= 0.4 && < 0.5,
     process >= 1.6,
+    scientific >= 0.3,
     text >= 2.0,
     time >= 1.11,
     transformers >= 0.6,
