@@ -723,29 +723,34 @@ setCell buf w h x y ch fg bg
   | x < 0 || y < 0 || x >= w || y >= h = pure ()
   | otherwise = VSM.write buf (y * w + x) (Cell ch fg bg)
 
--- | printPad: write text with padding into screen buffer
--- right=True: right-align (pad on left), right=False: left-align (pad on right)
+-- | printPad: write text with padding into screen buffer.
+-- right=True: right-align (pad on left), right=False: left-align (pad on right).
+-- Called ~40k times per frame during renderTable, so the loops walk
+-- T.unpack's lazy list char-by-char with a strict index instead of
+-- zipping against [0..] — kills the pair/cons allocations the profile
+-- flagged as printPadBuf's cost.
 printPadBuf :: VSM.IOVector Cell -> Int -> Int -> Int -> Int -> Int -> Word32 -> Word32 -> Text -> Bool -> IO ()
-printPadBuf buf w h x y padW fg bg s right_ = do
-  let chars = T.unpack s
-      len = min (length chars) padW
-      pad = padW - len
-      cx0 = x
-  if right_
-    then do
-      -- pad spaces on left
-      forM_ [0 .. pad - 1] $ \i ->
-        setCell buf w h (cx0 + i) y (fromIntegral $ fromEnum ' ') fg bg
-      -- then text
-      forM_ (zip [0..] (take len chars)) $ \(i, ch) ->
-        setCell buf w h (cx0 + pad + i) y (fromIntegral $ fromEnum ch) fg bg
-    else do
-      -- text first
-      forM_ (zip [0..] (take len chars)) $ \(i, ch) ->
-        setCell buf w h (cx0 + i) y (fromIntegral $ fromEnum ch) fg bg
-      -- pad spaces on right
-      forM_ [0 .. pad - 1] $ \i ->
-        setCell buf w h (cx0 + len + i) y (fromIntegral $ fromEnum ' ') fg bg
+printPadBuf buf w h x y padW fg bg s right_ =
+  let sLen = T.length s
+      len  = min sLen padW
+      pad  = padW - len
+      spW  = fromIntegral (fromEnum ' ') :: Word32
+      textStart = if right_ then x + pad else x
+      padStart  = if right_ then x       else x + len
+      writeSpaces !cx !n
+        | n <= 0    = pure ()
+        | otherwise = do
+            setCell buf w h cx y spW fg bg
+            writeSpaces (cx + 1) (n - 1)
+      writeText !cx !n cs0 = goT 0 cs0
+        where
+          goT !i (c:cs) | i < n = do
+            setCell buf w h (cx + i) y (fromIntegral $ fromEnum c) fg bg
+            goT (i + 1) cs
+          goT _ _ = pure ()
+  in do
+    writeSpaces padStart pad
+    writeText textStart len (T.unpack s)
 
 -- | Unified table render. Pure Haskell replacement for C FFI.
 renderTable
