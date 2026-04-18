@@ -46,8 +46,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import qualified Data.Text.Lazy as TL
-import qualified Data.Text.Lazy.Builder as TB
+import qualified Data.ByteString.Builder as BSB
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable.Mutable as VSM
@@ -401,10 +400,13 @@ clear = do
 -- | Fold state for `present`: last emitted style, last cursor position,
 -- and the accumulated output Builder. Strict fields keep the builder
 -- from stacking thunks across the w*h cells (render hot path).
+-- ByteString.Builder (ASCII + charToWord8) beats Text.Builder here
+-- because every byte we emit is ASCII — we avoid T.pack/show allocs
+-- and the final TL.toStrict pass.
 data PresentAcc = PresentAcc
   !(Maybe (Word32, Word32))  -- lastStyle
   !(Int, Int)                -- lastCursor
-  !TB.Builder                -- out
+  !BSB.Builder               -- out
 
 -- | Flush cell buffer to the terminal. No-op in headless mode (tests, -c
 -- mode) so stdout stays clean for `bufferStr` capture.
@@ -421,12 +423,10 @@ present = do
   unless headless $ do
     (w, h, buf) <- readIORef screenBuf
     front <- readIORef frontBuf
-    -- One TIO.hPutStr per frame mirrors termbox2's tb_present flush —
+    -- One hPutBuilder per frame mirrors termbox2's tb_present flush —
     -- keeps the PTY recorder's `drain()` from slicing the frame across
     -- multiple cast frames, which breaks byte parity for multi-step demos.
     let s0 = PresentAcc Nothing (-1, -1) mempty
-        -- Walk row-major, bumping (y, x) explicitly instead of dividing
-        -- idx by w per cell.
         go !acc !y !x !idx
           | y == h    = pure acc
           | x == w    = go acc (y + 1) 0 idx
@@ -434,7 +434,7 @@ present = do
               acc' <- stepCell buf front acc y x idx
               go acc' y (x + 1) (idx + 1)
     PresentAcc _ _ outB <- go s0 0 0 0
-    TIO.hPutStr stdout (TL.toStrict (TB.toLazyText outB))
+    BSB.hPutBuilder stdout outB
     hFlush stdout
 
 stepCell
@@ -453,12 +453,12 @@ stepCell buf front acc@(PresentAcc lastStyle lastCursor b) y x idx = do
           style = (fg, bg)
           (b1, lastStyle') =
             if Just style /= lastStyle
-              then (b <> TB.fromText (sgrFor fg bg), Just style)
+              then (b <> sgrFor fg bg, Just style)
               else (b, lastStyle)
           b2 = if lastCursor /= (y, x)
-                 then b1 <> TB.fromText (cursorAt y x)
+                 then b1 <> cursorAt y x
                  else b1
-          b3 = b2 <> TB.singleton (chr $ fromIntegral ch)
+          b3 = b2 <> BSB.charUtf8 (chr $ fromIntegral ch)
       VSM.write front idx cell
       pure (PresentAcc lastStyle' (y, x + 1) b3)
 
@@ -468,21 +468,25 @@ stepCell buf front acc@(PresentAcc lastStyle lastCursor b) y x idx = do
 -- bold/underline, then color codes. A 0 fg or bg is elided because the
 -- preceding `\x1b[m` already set both to default — emitting `38;5;0` or
 -- `48;5;0` after that would be a no-op but cost extra bytes.
-sgrFor :: Word32 -> Word32 -> Text
+sgrFor :: Word32 -> Word32 -> BSB.Builder
 sgrFor fg bg =
   let color   = fg .&. 0x1FF
       bgColor = bg .&. 0x1FF
-      bold    = if fg .&. 0x01000000 /= 0 then "\x1b[1m" else ""
-      ul      = if fg .&. 0x02000000 /= 0 then "\x1b[4m" else ""
+      bold    = if fg .&. 0x01000000 /= 0 then BSB.byteString "\x1b[1m" else mempty
+      ul      = if fg .&. 0x02000000 /= 0 then BSB.byteString "\x1b[4m" else mempty
       colors  = case (color, bgColor) of
-        (0, 0) -> ""
-        (f, 0) -> T.pack ("\x1b[38;5;" ++ show f ++ "m")
-        (0, b) -> T.pack ("\x1b[48;5;" ++ show b ++ "m")
-        (f, b) -> T.pack ("\x1b[38;5;" ++ show f ++ ";48;5;" ++ show b ++ "m")
-  in "\x1b(B\x1b[m" <> bold <> ul <> colors
+        (0, 0) -> mempty
+        (f, 0) -> BSB.byteString "\x1b[38;5;" <> BSB.wordDec (fromIntegral f) <> BSB.char8 'm'
+        (0, b) -> BSB.byteString "\x1b[48;5;" <> BSB.wordDec (fromIntegral b) <> BSB.char8 'm'
+        (f, b) -> BSB.byteString "\x1b[38;5;" <> BSB.wordDec (fromIntegral f)
+                    <> BSB.byteString ";48;5;" <> BSB.wordDec (fromIntegral b)
+                    <> BSB.char8 'm'
+  in BSB.byteString "\x1b(B\x1b[m" <> bold <> ul <> colors
 
-cursorAt :: Int -> Int -> Text
-cursorAt y x = T.pack ("\x1b[" ++ show (y + 1) ++ ";" ++ show (x + 1) ++ "H")
+cursorAt :: Int -> Int -> BSB.Builder
+cursorAt y x =
+  BSB.byteString "\x1b[" <> BSB.intDec (y + 1)
+    <> BSB.char8 ';' <> BSB.intDec (x + 1) <> BSB.char8 'H'
 
 -- | Pure byte → Event translation (factored out of pollEvent for unit tests).
 -- ASCII control chars map to the termbox key constants so evToKey's keyNames
