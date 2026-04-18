@@ -65,6 +65,7 @@ library
     Tv.Source.HfDataset
     Tv.Source.Rest
     Tv.Source.Osquery
+    Tv.Source.OsquerySetup
     Tv.Source.Pg
     Tv.Sparkline
     Tv.Ops
@@ -84,6 +85,7 @@ library
   build-depends:
     aeson >= 2.0,
     ansi-terminal >= 0.11,
+    async >= 2.2,
     base >= 4.16 && < 5,
     bytestring,
     directory >= 1.3,
