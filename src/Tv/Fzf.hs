@@ -66,8 +66,13 @@ popupArgs inTmux opts input =
 -- caller can service its socket/re-render while the popup has focus.
 runFzf :: [String] -> Text -> IO () -> IO Text
 runFzf argList input poll = do
-  (Just hin, Just hout, _, ph) <- createProcess
-    (proc "fzf" argList) { std_in = CreatePipe, std_out = CreatePipe }
+  -- Pipe stderr too so any fzf warnings/errors don't leak onto the
+  -- shared tty and corrupt the display. In non-tmux mode fzf renders
+  -- inline on the same terminal we write to; a single stray stderr
+  -- line is enough to mangle the highlight region.
+  (Just hin, Just hout, Just herr, ph) <- createProcess
+    (proc "fzf" argList)
+      { std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe }
   TIO.hPutStr hin input
   hFlush hin
   hClose hin
@@ -77,6 +82,13 @@ runFzf argList input poll = do
     out <- TIO.hGetContents hout
     writeIORef outRef out
     writeIORef done True
+  -- Drain stderr in the background so the pipe doesn't fill up and
+  -- block fzf. We don't surface errors; they're dropped on the floor,
+  -- same as the pre-pipe behavior of inheriting stderr and letting the
+  -- user see them — minus the display corruption.
+  _ <- forkIO $ do
+    _ <- TIO.hGetContents herr
+    pure ()
   let loop = do
         d <- readIORef done
         unless d $ do

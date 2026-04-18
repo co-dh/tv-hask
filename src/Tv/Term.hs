@@ -1057,9 +1057,14 @@ pickHeat
   -> (Word32, Word32)
 pickHeat heatMode heatCols c si origIdx ri texts heatDoubles fgBase bgBase
   | heatMode == 0 || V.null heatCols           = base
+  -- Preserve the row / selection overlays on top of heat: otherwise
+  -- the cursor row disappears into the gradient and navigation cues
+  -- vanish. Adding _STYLE_CUR_ROW here is the /bugfix for "curRow
+  -- not obvious in heat mode".
   | si == _STYLE_CURSOR
     || si == _STYLE_SEL_ROW
-    || si == _STYLE_SEL_CUR                    = base
+    || si == _STYLE_SEL_CUR
+    || si == _STYLE_CUR_ROW                    = base
   | otherwise = case heatCols V.!? c of
       Nothing -> base
       Just hc
