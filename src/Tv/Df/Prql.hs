@@ -264,62 +264,41 @@ infixl 1 |>
 
 -- ----------------------------------------------------------------------------
 -- Stage smart constructors — match the dataframe-side verb names.
+-- Every verb just appends one 'Stage' to 'qStages'; keep the plumbing
+-- in 'addStage' and let each verb point-free its Stage constructor.
 -- ----------------------------------------------------------------------------
 
-filter_ :: Expr Bool -> Query -> Query
-filter_ e q = q { qStages = qStages q ++ [StFilter e] }
+addStage :: Stage -> Query -> Query
+addStage s q = q { qStages = qStages q ++ [s] }
 
-derive :: [NamedExpr] -> Query -> Query
-derive bs q = q { qStages = qStages q ++ [StDerive bs] }
+filter_      :: Expr Bool            -> Query -> Query
+derive       :: [NamedExpr]          -> Query -> Query
+aggregate    :: [NamedExpr]          -> Query -> Query   -- scalar aggregate (no group keys)
+groupAgg     :: [Text] -> [NamedExpr] -> Query -> Query
+sortBy       :: [(Text, SortDir)]    -> Query -> Query
+take_        :: Int                  -> Query -> Query
+select       :: [Text]               -> Query -> Query
+exclude      :: [Text]               -> Query -> Query   -- DuckDB @* EXCLUDE@ via s-string
+distinct     :: [Text]               -> Query -> Query   -- @[]@ = distinct on all columns
+append       :: Text                 -> Query -> Query   -- union by PRQL base name
+join_        :: JoinKind -> Text -> Expr Bool -> Query -> Query
+window       :: [Stage]              -> Query -> Query   -- @window@ context for sum-over-total etc.
+rawStage     :: Text                 -> Query -> Query   -- escape hatch for idioms the typed stages can't encode
 
--- | Scalar aggregate: @aggregate { … }@ with no group keys. Produces
--- a single output row with the listed bindings.
-aggregate :: [NamedExpr] -> Query -> Query
-aggregate bs q = q { qStages = qStages q ++ [StAggregate bs] }
+filter_         = addStage . StFilter
+derive          = addStage . StDerive
+aggregate       = addStage . StAggregate
+groupAgg ks     = addStage . StGroupAgg ks
+sortBy          = addStage . StSort
+take_           = addStage . StTake
+select          = addStage . StSelect
+exclude         = addStage . StExclude
+distinct        = addStage . StDistinct
+append          = addStage . StAppend
+join_ k tbl pr  = addStage (StJoin k tbl pr)
+window          = addStage . StWindow
+rawStage        = addStage . StRaw
 
-groupAgg :: [Text] -> [NamedExpr] -> Query -> Query
-groupAgg ks aggs q = q { qStages = qStages q ++ [StGroupAgg ks aggs] }
-
-sortAsc :: [Text] -> Query -> Query
-sortAsc cs = sortBy [(c, Asc) | c <- cs]
-
-sortDesc :: [Text] -> Query -> Query
+sortAsc, sortDesc :: [Text] -> Query -> Query
+sortAsc  cs = sortBy [(c, Asc)  | c <- cs]
 sortDesc cs = sortBy [(c, Desc) | c <- cs]
-
-sortBy :: [(Text, SortDir)] -> Query -> Query
-sortBy cs q = q { qStages = qStages q ++ [StSort cs] }
-
-take_ :: Int -> Query -> Query
-take_ n q = q { qStages = qStages q ++ [StTake n] }
-
-select :: [Text] -> Query -> Query
-select cs q = q { qStages = qStages q ++ [StSelect cs] }
-
--- | Drop columns. Emits a PRQL s-string around DuckDB's @* EXCLUDE@.
-exclude :: [Text] -> Query -> Query
-exclude cs q = q { qStages = qStages q ++ [StExclude cs] }
-
--- | Deduplicate. @[]@ means distinct on all columns; a non-empty list
--- keeps one row per combination of the given columns.
-distinct :: [Text] -> Query -> Query
-distinct cs q = q { qStages = qStages q ++ [StDistinct cs] }
-
--- | Concatenate another table (union) by its PRQL base name.
-append :: Text -> Query -> Query
-append tbl q = q { qStages = qStages q ++ [StAppend tbl] }
-
--- | Join another table with a predicate expression. The other table's
--- base is passed as PRQL text (usually just a table identifier).
-join_ :: JoinKind -> Text -> Expr Bool -> Query -> Query
-join_ k tbl pr q = q { qStages = qStages q ++ [StJoin k tbl pr] }
-
--- | Wrap stages in PRQL's @window@ context — the wrapped stages see
--- the outer frame as their grouping, so @std.sum@ inside window derive
--- acts as a window function. Used to compute percentages over totals.
-window :: [Stage] -> Query -> Query
-window stages q = q { qStages = qStages q ++ [StWindow stages] }
-
--- | Append a raw PRQL stage. Escape hatch for idioms the typed stages
--- can't express (rare remaining cases — see the architecture doc).
-rawStage :: Text -> Query -> Query
-rawStage t q = q { qStages = qStages q ++ [StRaw t] }
