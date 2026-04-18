@@ -225,9 +225,31 @@ dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
       Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
       Nothing -> FileFormat.viewFile testMode path_
 
+helpText :: Text
+helpText = T.unlines
+  [ "tv — terminal viewer for tabular data"
+  , ""
+  , "Usage: tv [options] [path]"
+  , ""
+  , "  path                CSV, Parquet, JSON, SQLite, DuckDB, XLSX, Avro,"
+  , "                      folder, or URL (hf://, s3://, ftp://, osquery://)."
+  , "                      Reads from stdin when omitted."
+  , ""
+  , "Options:"
+  , "  -c KEYS             Test mode: replay KEYS, render once, exit."
+  , "  -s NAME             Restore session NAME (~/.cache/tv/sessions/NAME.json)."
+  , "  +n                  no-sign mode for S3 and similar sources."
+  , "  -h, --help          Show this help and exit."
+  , ""
+  , "Keys: press `I` inside tv for the in-app quick reference,"
+  , "or Space to open the fuzzy command menu."
+  ]
+
 -- main entry point: init backend, parse args, run app
 appMain :: [Text] -> IO ()
-appMain args = do
+appMain args
+  | any (`elem` (["-h", "--help"] :: [Text])) args = TIO.putStr helpText
+  | otherwise = do
   let cli = parseArgs args
       CliArgs { path = path_, keys = keys_, noSign = noSign_ } = cli
   envTest  <- maybe False (const True) <$> lookupEnv "TV_TEST_MODE"
