@@ -58,34 +58,9 @@ import Tv.View (View, ViewStack)
 import qualified Tv.View as View
 import qualified Tv.Nav as Nav
 
--- | Strip base path prefix to get relative entry name
-stripBase :: Text -> Text -> Text
-stripBase base path_ =
-  if T.isPrefixOf base path_
-    then
-      let rest = T.drop (T.length base) path_
-      in if T.isPrefixOf "/" rest then T.drop 1 rest else rest
-    else if T.isPrefixOf "./" path_ then T.drop 2 path_
-    else path_
-
--- | Format date: "2024-01-05+12:34:56.123" -> "2024-01-05 12:34:56"
-fmtDate :: Text -> Text
-fmtDate s =
-  let replaced = T.replace "+" " " s
-      head_ = case T.splitOn "." replaced of
-                (x:_) -> x
-                []    -> ""
-  in T.take 19 head_
-
--- | Format type: f->file, d->dir, l->symlink
-fmtType :: Text -> Text
-fmtType s = case s of
-  "f" -> "file"
-  "d" -> "dir"
-  "l" -> "symlink"
-  x   -> x
-
--- | List directory with find command, returns tab-separated output
+-- | List directory with find command, returns tab-separated output.
+-- Row format: name, size, modified ("YYYY-MM-DD HH:MM:SS" truncated from
+-- find's %T+ "YYYY-MM-DD+HH:MM:SS.NNN"), and type spelled out.
 listDir :: Text -> Int -> IO Text
 listDir path_ depth = do
   let p = if T.null path_ then "." else path_
@@ -95,19 +70,23 @@ listDir path_ depth = do
       hdr = "name\tsize\tmodified\ttype"
       parentEntry = "..\t0\t\tdir"
       body = map mkRow (drop 1 lines_)
+      -- strip leading base so the displayed path is relative to p
+      rel full
+        | T.isPrefixOf p full =
+            let r = T.drop (T.length p) full
+            in if T.isPrefixOf "/" r then T.drop 1 r else r
+        | T.isPrefixOf "./" full = T.drop 2 full
+        | otherwise              = full
       mkRow line =
         let parts = T.splitOn "\t" line
             at i = getD parts i ""
-            lastD = case reverse parts of
-                      (x:_) -> x
-                      []    -> ""
+            lastD = case reverse parts of { (x:_) -> x; _ -> "" }
+            typ   = case at 0 of
+                      "f" -> "file"; "d" -> "dir"; "l" -> "symlink"; x -> x
+            dt    = T.take 19 $ case T.splitOn "." (T.replace "+" " " (at 2)) of
+                      (x:_) -> x; _ -> ""
         in if length parts >= 4
-             then
-               let typ = fmtType (at 0)
-                   sz  = at 1
-                   dt  = fmtDate (at 2)
-                   pp  = stripBase p lastD
-               in T.intercalate "\t" [pp, sz, dt, typ]
+             then T.intercalate "\t" [rel lastD, at 1, dt, typ]
              else line
   pure (hdr <> "\n" <> parentEntry
          <> (if null body then "" else "\n" <> T.intercalate "\n" body))

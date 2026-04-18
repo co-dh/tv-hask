@@ -136,9 +136,6 @@ clearScreen = TIO.putStr "\x1b[2J\x1b[H"
 altEnter :: IO ()
 altEnter = TIO.putStr "\x1b[?1049h\x1b[2J\x1b[H"
 
-altLeave :: IO ()
-altLeave = TIO.putStr "\x1b[?1049l"
-
 -- | Restore terminal after plot mode: sane + leave alt screen + re-init TUI
 exitPlot :: IO ()
 exitPlot = do
@@ -151,12 +148,6 @@ exitPlot = do
 setRaw :: IO ()
 setRaw = do
   _ <- Log.run "stty" "stty" ["-F", "/dev/tty", "raw", "-echo"]
-  pure ()
-
--- | Restore terminal to normal mode
-setSane :: IO ()
-setSane = do
-  _ <- Log.run "stty" "stty" ["-F", "/dev/tty", "sane"]
   pure ()
 
 -- | Read one byte from /dev/tty (caller must be in raw mode)
@@ -514,11 +505,6 @@ run :: ViewStack AdbcTable -> PlotKind -> IO (Maybe (ViewStack AdbcTable))
 run s kind = do
   Log.write "plot" ("run entered, kind=" <> T.pack (show kind))
   if singleCol kind then runSingle s kind else runGroup s kind
-
--- Silence unused-import warnings for altLeave/setSane (Lean defines them
--- as private helpers but the current run path uses exitPlot instead).
-_unused :: IO ()
-_unused = altLeave >> setSane
 
 plotCmd :: PlotKind -> HandlerFn
 plotCmd k = onStk (`run` k)
