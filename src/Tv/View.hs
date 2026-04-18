@@ -130,9 +130,12 @@ doRender
 doRender v vs styles heatMode sparklines = do
   let names = v ^. #nav % #tblNames
   let extraHidden = V.mapMaybe (Nav.idxOf names) (v ^. #sameHide)
+  -- VkCorr is useless without a color gradient: force numeric heat
+  -- regardless of the AppState toggle.
+  let heatMode' = if (v ^. #vkind) == VkCorr then 1 else heatMode
   (vs', widths_) <-
     Render.render (v ^. #nav) vs (v ^. #widths) styles (v ^. #prec) (v ^. #widthAdj)
-      (v ^. #vkind) heatMode sparklines extraHidden
+      (v ^. #vkind) heatMode' sparklines extraHidden
   pure (vs', v & #widths .~ widths_)
 
 -- | Create View from AdbcTable + path (returns Nothing if empty).

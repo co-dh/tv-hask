@@ -21,7 +21,7 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Optics.Core ((%), (&), (.~), (^.))
-import Tv.App.Types (Action (..), AppState (stk), HandlerFn, onStk, tryStk, viewUp)
+import Tv.App.Types (AppState (stk), HandlerFn, onStk, tryStk, viewUp)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd (..), ViewKind (..))
@@ -144,14 +144,5 @@ commands = V.fromList $
   , hdl (mkEntry CmdMetaStats     "s" "S"     "Compute stats for selected numeric cols" True "colMeta")
         (\a ci _ -> if View.cur (stk a) ^. #vkind == VkColMeta then tryStk a ci (stats (stk a)) else viewUp a ci)
   , hdl (mkEntry CmdMetaCorr      "s" "C"     "Correlation matrix for selected numeric cols" True "colMeta")
-        (\a ci _ ->
-           if View.cur (stk a) ^. #vkind /= VkColMeta then viewUp a ci
-           else do
-             act <- tryStk a ci (corr (stk a))
-             pure $ case act of
-               -- corr view is worthless without heat; enable numeric heat
-               -- so the user sees the gradient immediately.
-               ActOk a' | View.cur (stk a') ^. #vkind == VkCorr ->
-                 ActOk (a' & #heatMode .~ 1)
-               _ -> act)
+        (\a ci _ -> if View.cur (stk a) ^. #vkind == VkColMeta then tryStk a ci (corr (stk a)) else viewUp a ci)
   ] ++ [ hdl (mkEntry c "" k lbl True "") (selByH flt) | (c, k, lbl, flt) <- metaSels ]
