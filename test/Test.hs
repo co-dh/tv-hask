@@ -107,6 +107,11 @@ test_meta_corr = do
   -- linear cols x, 10x, 100x -> all correlations 1.0
   assert (contains out "1.0") "correlation value shown in cell"
 
+test_sample :: Assertion
+test_sample = do
+  out <- run "?" "data/basic.csv"
+  assert (contains (fst (footer out)) "[sample]") "? pushes sample view"
+
 -- ============================================================================
 -- === Freq tests (CSV) ===
 -- ============================================================================
@@ -1335,6 +1340,7 @@ ciTests = testGroup "ci"
   , testCase "meta_no_garbage" test_meta_no_garbage
   , testCase "meta_stats" test_meta_stats
   , testCase "meta_corr" test_meta_corr
+  , testCase "sample" test_sample
   , testCase "freq_shows" test_freq_shows
   , testCase "freq_after_meta" test_freq_after_meta
   , testCase "freq_by_key" test_freq_by_key

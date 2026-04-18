@@ -42,6 +42,7 @@ library
     Tv.Data.DuckDB
     Tv.Data.Text
     Tv.Diff
+    Tv.Eda
     Tv.Export
     Tv.FileFormat
     Tv.Filter

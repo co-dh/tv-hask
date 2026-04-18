@@ -494,6 +494,9 @@ data Cmd
   | CmdMetaSelSingle
   | CmdMetaStats
   | CmdMetaCorr
+  | CmdSample
+  | CmdDupes
+  | CmdCrosstab
   | CmdFreqOpen
   | CmdFreqFilter
   | CmdFolderPush
@@ -569,6 +572,9 @@ instance StrEnum Cmd where
   toString CmdMetaSelSingle  = "meta.selSingle"
   toString CmdMetaStats      = "meta.stats"
   toString CmdMetaCorr       = "meta.corr"
+  toString CmdSample         = "tbl.sample"
+  toString CmdDupes          = "tbl.dupes"
+  toString CmdCrosstab       = "tbl.crosstab"
   toString CmdFreqOpen       = "freq.open"
   toString CmdFreqFilter     = "freq.filter"
   toString CmdFolderPush     = "folder.push"
@@ -596,6 +602,7 @@ instance StrEnum Cmd where
     , CmdPrecDec, CmdPrecInc, CmdPrecZero, CmdPrecMax
     , CmdCellUp, CmdCellDn, CmdHeat0, CmdHeat1, CmdHeat2, CmdHeat3
     , CmdMetaPush, CmdMetaSetKey, CmdMetaSelNull, CmdMetaSelSingle, CmdMetaStats, CmdMetaCorr
+    , CmdSample, CmdDupes, CmdCrosstab
     , CmdFreqOpen, CmdFreqFilter
     , CmdFolderPush, CmdFolderEnter, CmdFolderParent, CmdFolderDel
     , CmdFolderDepthDec, CmdFolderDepthInc

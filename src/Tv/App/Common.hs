@@ -40,6 +40,7 @@ import Tv.App.Types
 import qualified Tv.CmdConfig as CmdConfig
 import Tv.CmdConfig (Entry(..), CmdInfo(..), mkEntry, hdl)
 import qualified Tv.Diff as Diff
+import qualified Tv.Eda as Eda
 import qualified Tv.Export as Export
 import qualified Tv.Filter as Filter
 import qualified Tv.Folder as Folder
@@ -124,7 +125,7 @@ commands :: Vector (Entry, Maybe HandlerFn)
 commands = Nav.commands <> Filter.commands <> Ops.commands
   <> Plot.commands <> Meta.commands <> Folder.commands
   <> Export.commands <> Session.commands
-  <> Transpose.commands <> Diff.commands <> localCmds
+  <> Transpose.commands <> Diff.commands <> Eda.commands <> localCmds
 
 -- | Commit a rendered frame (used by live-preview closures after a state mutation).
 --   Reads current AppState from ref, re-renders with the supplied styles, writes
