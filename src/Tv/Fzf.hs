@@ -12,6 +12,7 @@ module Tv.Fzf
   , fzfIdx
   , parseSel
   , cmdMode
+  , gatePoll
   ) where
 
 import Control.Concurrent (forkIO, threadDelay)
@@ -65,8 +66,13 @@ popupArgs inTmux opts input =
 -- caller can service its socket/re-render while the popup has focus.
 runFzf :: [String] -> Text -> IO () -> IO Text
 runFzf argList input poll = do
-  (Just hin, Just hout, _, ph) <- createProcess
-    (proc "fzf" argList) { std_in = CreatePipe, std_out = CreatePipe }
+  -- Pipe stderr too so any fzf warnings/errors don't leak onto the
+  -- shared tty and corrupt the display. In non-tmux mode fzf renders
+  -- inline on the same terminal we write to; a single stray stderr
+  -- line is enough to mangle the highlight region.
+  (Just hin, Just hout, Just herr, ph) <- createProcess
+    (proc "fzf" argList)
+      { std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe }
   TIO.hPutStr hin input
   hFlush hin
   hClose hin
@@ -76,6 +82,13 @@ runFzf argList input poll = do
     out <- TIO.hGetContents hout
     writeIORef outRef out
     writeIORef done True
+  -- Drain stderr in the background so the pipe doesn't fill up and
+  -- block fzf. We don't surface errors; they're dropped on the floor,
+  -- same as the pre-pipe behavior of inheriting stderr and letting the
+  -- user see them — minus the display corruption.
+  _ <- forkIO $ do
+    _ <- TIO.hGetContents herr
+    pure ()
   let loop = do
         d <- readIORef done
         unless d $ do
@@ -87,9 +100,21 @@ runFzf argList input poll = do
   _ <- waitForProcess ph
   pure out
 
+-- | Suppress a live-preview poll outside of tmux. When fzf runs in
+-- tmux we get a popup pane, so callers can safely re-render the main
+-- terminal from their @poll@ callback. Without tmux, fzf takes over
+-- the same tty with @--height=N@ inline; any 'Term.present' issued by
+-- the callback would interleave with fzf's own redraws and scramble
+-- the display. See @/bugfix@ — pressing @/@ without tmux produced a
+-- junk screen because the @search.preview@ socket message triggered a
+-- re-render on top of fzf.
+gatePoll :: Bool -> IO () -> IO ()
+gatePoll inTmux poll = if inTmux then poll else pure ()
+
 -- | Core fzf: testMode returns first line, else spawn fzf
 -- Uses --tmux popup if in tmux (keeps table visible), otherwise compact at bottom
--- poll: optional callback invoked in loop while fzf runs (tmux only, for live socket dispatch)
+-- poll: optional callback invoked in loop while fzf runs. Automatically
+-- muted outside tmux to avoid painting over fzf's inline UI.
 fzfCore :: Bool -> Vector Text -> Text -> IO () -> IO Text
 fzfCore tm opts input poll = do
   if tm
@@ -98,7 +123,7 @@ fzfCore tm opts input poll = do
       inTmux <- fmap (maybe False (const True)) $ lookupEnv "TMUX"
       let argList = map T.unpack (V.toList (popupArgs inTmux opts input))
       unless inTmux Term.shutdown
-      out <- runFzf argList input poll
+      out <- runFzf argList input (gatePoll inTmux poll)
       -- Clear after re-init: fzf inline renders below termbox area, leaving residue
       unless inTmux $ do
         _ <- Term.init

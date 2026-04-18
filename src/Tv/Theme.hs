@@ -91,8 +91,8 @@ defaultDark = V.fromList
   , c "black", c "rgb354"        -- 1: selRow
   , c "black", c "rgb435"        -- 2: selColCurRow
   , c "brMagenta", c "default"   -- 3: selCol
-  , c "default", c "gray2"       -- 4: curRow
-  , c "default", c "gray6"       -- 5: curCol
+  , c "default", c "gray5"       -- 4: curRow (was gray2 — too dark to see)
+  , c "default", c "gray8"       -- 5: curCol (was gray6)
   , c "default", c "default"     -- 6: default
   , c "green", c "rgb112"        -- 7: header
   , c "default", c "gray5"       -- 8: group
