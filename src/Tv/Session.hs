@@ -124,6 +124,8 @@ vkToJ vk = case vk of
     mkObj [("kind", String "freqV"), ("cols", Array (V.map String cols)), ("total", Number (fromIntegral total))]
   VkColMeta ->
     mkObj [("kind", String "colMeta")]
+  VkCorr ->
+    mkObj [("kind", String "corr")]
   VkFld path_ depth ->
     mkObj [("kind", String "fld"), ("path", String path_), ("depth", Number (fromIntegral depth))]
   where

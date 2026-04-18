@@ -17,6 +17,7 @@ module Tv.Data.DuckDB.Ops
   , toText
   , queryMeta
   , queryMetaStats
+  , queryCorrMatrix
   , metaIdxs
   , metaNames
   , quoteId
@@ -191,6 +192,54 @@ queryMetaImpl withStats selSet t = do
                           <> " AS (" <> metaSql <> ")")
           qr_ <- Conn.query ("SELECT * FROM " <> tblName)
           Just <$> Table.ofResult qr_ (Prql.defaultQuery { Prql.base = "from " <> tblName }) 0
+
+-- | Pearson correlation matrix for the given columns against the base
+-- table. Produces a square table: one row per column, one data column
+-- per column, cells are CORR(row_col, col_col) rounded to 3 dp.
+-- Non-numeric column names are silently dropped from the input.
+queryCorrMatrix :: AdbcTable -> Vector Text -> IO (Maybe AdbcTable)
+queryCorrMatrix t rawSel = do
+  let typeOf nm = fromMaybe ColTypeOther $ V.find (== nm) (Table.colNames t)
+                    *> (fmap (Table.colTypes t V.!) (V.findIndex (== nm) (Table.colNames t)))
+      sel = V.filter (\nm -> isNumeric (typeOf nm)) rawSel
+  if V.length sel < 2
+    then pure Nothing
+    else do
+      mBase <- Prql.compile (Prql.base (Table.query t))
+      case mBase of
+        Nothing -> pure Nothing
+        Just baseSql -> do
+          let sql = corrSql (T.stripEnd baseSql) sel
+          tblName <- Table.tmpName "corr"
+          _ <- Conn.query ("CREATE OR REPLACE TEMP TABLE " <> tblName
+                           <> " AS (" <> sql <> ")")
+          qr_ <- Conn.query ("SELECT * FROM " <> tblName)
+          Just <$> Table.ofResult qr_
+            (Prql.defaultQuery { Prql.base = "from " <> tblName }) 0
+
+-- | Build one-scan SQL for an N×N correlation matrix. All CORR() calls
+-- share the same WITH __src scan; rows are N literal labels pivoted out
+-- of the single aggregate row via UNION ALL so the result schema stays
+-- (col, <col_1>, <col_2>, …).
+corrSql :: Text -> Vector Text -> Text
+corrSql baseSql sel =
+  let n = V.length sel
+      name i = fromMaybe "" (sel V.!? i)
+      qn i = quoteId (name i)
+      aggField i j = "CAST(ROUND(CORR(" <> qn i <> ", " <> qn j <> "), 3) AS VARCHAR)"
+                     <> " AS c_" <> T.pack (show i) <> "_" <> T.pack (show j)
+      aggCols = T.intercalate ", "
+        [ aggField i j | i <- [0 .. n - 1], j <- [0 .. n - 1] ]
+      row i = "SELECT '" <> escSql (name i) <> "' AS \"col\", "
+              <> T.intercalate ", "
+                   [ "c_" <> T.pack (show i) <> "_" <> T.pack (show j)
+                     <> " AS " <> quoteId (name j)
+                   | j <- [0 .. n - 1] ]
+              <> " FROM __corr"
+      rows = T.intercalate " UNION ALL " [ row i | i <- [0 .. n - 1] ]
+  in "WITH __src AS (" <> baseSql <> "), "
+     <> "__corr AS (SELECT " <> aggCols <> " FROM __src) "
+     <> rows
 
 -- | Query row indices matching PRQL filter on meta table
 metaIdxs :: Text -> Text -> IO (Vector Int)

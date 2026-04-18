@@ -100,6 +100,13 @@ test_meta_stats = do
   -- column a is [1..5]: mean 3.0, stddev √2.
   assert (contains out "3.0") "stats computed for numeric col (mean 3.0 shown)"
 
+test_meta_corr :: Assertion
+test_meta_corr = do
+  out <- run "MTjTjTC" "data/numeric.csv"
+  assert (contains (fst (footer out)) "[corr]") "C pushes corr view"
+  -- linear cols x, 10x, 100x -> all correlations 1.0
+  assert (contains out "1.0") "correlation value shown in cell"
+
 -- ============================================================================
 -- === Freq tests (CSV) ===
 -- ============================================================================
@@ -1327,6 +1334,7 @@ ciTests = testGroup "ci"
   , testCase "meta_col_info" test_meta_col_info
   , testCase "meta_no_garbage" test_meta_no_garbage
   , testCase "meta_stats" test_meta_stats
+  , testCase "meta_corr" test_meta_corr
   , testCase "freq_shows" test_freq_shows
   , testCase "freq_after_meta" test_freq_after_meta
   , testCase "freq_by_key" test_freq_by_key

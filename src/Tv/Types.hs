@@ -337,6 +337,7 @@ data ViewKind
   = VkTbl                                           -- table view
   | VkFreqV (Vector Text) Int                       -- frequency view with total distinct groups
   | VkColMeta                                       -- column metadata
+  | VkCorr                                          -- correlation matrix (heat-colored)
   | VkFld Text Int                                  -- folder browser: path + find depth
   deriving (Eq, Show)
 
@@ -347,6 +348,7 @@ instance A.FromJSON ViewKind where
     case kind of
       "freqV"   -> VkFreqV <$> o A..: "cols" <*> o A..: "total"
       "colMeta" -> pure VkColMeta
+      "corr"    -> pure VkCorr
       "fld"     -> VkFld <$> o A..: "path" <*> o A..: "depth"
       _         -> pure VkTbl
 
@@ -356,6 +358,7 @@ instance A.FromJSON ViewKind where
 instance StrEnum ViewKind where
   toString (VkFreqV _ _) = "freqV"
   toString VkColMeta     = "colMeta"
+  toString VkCorr        = "corr"
   toString (VkFld _ _)   = "fld"
   toString VkTbl         = "tbl"
 
@@ -490,6 +493,7 @@ data Cmd
   | CmdMetaSelNull
   | CmdMetaSelSingle
   | CmdMetaStats
+  | CmdMetaCorr
   | CmdFreqOpen
   | CmdFreqFilter
   | CmdFolderPush
@@ -564,6 +568,7 @@ instance StrEnum Cmd where
   toString CmdMetaSelNull    = "meta.selNull"
   toString CmdMetaSelSingle  = "meta.selSingle"
   toString CmdMetaStats      = "meta.stats"
+  toString CmdMetaCorr       = "meta.corr"
   toString CmdFreqOpen       = "freq.open"
   toString CmdFreqFilter     = "freq.filter"
   toString CmdFolderPush     = "folder.push"
@@ -590,7 +595,7 @@ instance StrEnum Cmd where
     , CmdTblDiff, CmdInfoTog
     , CmdPrecDec, CmdPrecInc, CmdPrecZero, CmdPrecMax
     , CmdCellUp, CmdCellDn, CmdHeat0, CmdHeat1, CmdHeat2, CmdHeat3
-    , CmdMetaPush, CmdMetaSetKey, CmdMetaSelNull, CmdMetaSelSingle, CmdMetaStats
+    , CmdMetaPush, CmdMetaSetKey, CmdMetaSelNull, CmdMetaSelSingle, CmdMetaStats, CmdMetaCorr
     , CmdFreqOpen, CmdFreqFilter
     , CmdFolderPush, CmdFolderEnter, CmdFolderParent, CmdFolderDel
     , CmdFolderDepthDec, CmdFolderDepthInc

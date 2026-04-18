@@ -11,6 +11,7 @@ module Tv.Meta
   ( push
   , setKey
   , stats
+  , corr
   , commands
   ) where
 
@@ -20,7 +21,7 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Optics.Core ((%), (&), (.~), (^.))
-import Tv.App.Types (AppState (stk), HandlerFn, onStk, tryStk, viewUp)
+import Tv.App.Types (Action (..), AppState (stk), HandlerFn, onStk, tryStk, viewUp)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd (..), ViewKind (..))
@@ -95,6 +96,29 @@ stats s
                             (v & #vkind .~ VkColMeta & #disp .~ "meta+stats"))
                    mV
 
+-- | Pearson correlation matrix across the selected numeric columns.
+-- Pushes a new view tagged VkCorr with one row per column and one data
+-- column per column — cells are CORR to 3 dp, ideal for heat mode 1
+-- (the dispatcher enables it automatically for this view kind).
+corr :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
+corr s
+  | View.cur s ^. #vkind /= VkColMeta = pure (Just s)
+  | not (View.hasParent s)            = pure (Just s)
+  | otherwise = do
+      colNames <- Ops.metaNames (tblName s) (View.cur s ^. #nav % #row % #sels)
+      case View.pop s of
+        Nothing -> pure (Just s)
+        Just parent -> do
+          mAdbc <- Ops.queryCorrMatrix (View.tbl parent) colNames
+          case mAdbc of
+            Nothing -> pure (Just s)
+            Just adbc ->
+              let mV = View.fromTbl adbc (View.cur s ^. #path) 0 mempty 0
+              in pure $ fmap
+                   (\v -> View.setCur s
+                            (v & #vkind .~ VkCorr & #disp .~ "corr"))
+                   mV
+
 -- | Set key cols from meta view selections, pop to parent, select cols
 setKey :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 setKey s =
@@ -119,4 +143,15 @@ commands = V.fromList $
         (\a ci _ -> if View.cur (stk a) ^. #vkind == VkColMeta then tryStk a ci (setKey (stk a)) else viewUp a ci)
   , hdl (mkEntry CmdMetaStats     "s" "S"     "Compute stats for selected numeric cols" True "colMeta")
         (\a ci _ -> if View.cur (stk a) ^. #vkind == VkColMeta then tryStk a ci (stats (stk a)) else viewUp a ci)
+  , hdl (mkEntry CmdMetaCorr      "s" "C"     "Correlation matrix for selected numeric cols" True "colMeta")
+        (\a ci _ ->
+           if View.cur (stk a) ^. #vkind /= VkColMeta then viewUp a ci
+           else do
+             act <- tryStk a ci (corr (stk a))
+             pure $ case act of
+               -- corr view is worthless without heat; enable numeric heat
+               -- so the user sees the gradient immediately.
+               ActOk a' | View.cur (stk a') ^. #vkind == VkCorr ->
+                 ActOk (a' & #heatMode .~ 1)
+               _ -> act)
   ] ++ [ hdl (mkEntry c "" k lbl True "") (selByH flt) | (c, k, lbl, flt) <- metaSels ]
