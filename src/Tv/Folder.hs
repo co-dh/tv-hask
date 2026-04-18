@@ -26,6 +26,7 @@ module Tv.Folder
   , commands
   ) where
 
+import Control.Exception (SomeException, try)
 import Data.Char (ord)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -33,8 +34,8 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word32)
+import System.Directory (canonicalizePath, doesDirectoryExist, findExecutable)
 import System.Exit (ExitCode(..))
-import System.Process (readProcessWithExitCode)
 
 import Optics.Core ((&), (.~))
 
@@ -147,8 +148,11 @@ mkView noSign_ path_ depth = case Source.findSource path_ of
         let grp = maybe V.empty V.singleton (Source.grpCol src)
         pure $ fldView adbc path_ depth (Remote.dispName path_) grp
   Nothing -> do
-      (ec, rpOut, _) <- readProcessWithExitCode "realpath" [T.unpack path_] ""
-      let absPath = if ec == ExitSuccess then T.strip (T.pack rpOut) else path_
+      -- canonicalizePath throws on missing paths; fall back to the input on error
+      rp <- try (canonicalizePath (T.unpack path_)) :: IO (Either SomeException FilePath)
+      let absPath = case rp of
+            Right p -> T.pack p
+            Left _  -> path_
           disp = case reverse (T.splitOn "/" absPath) of
                    (x:_) -> x
                    []    -> absPath
@@ -286,8 +290,8 @@ enter tm noSign_ s = do
             Just _  -> pure (Just s)
             Nothing -> do
               let fullPath = joinPath curDir_ p
-              (ec, _, _) <- readProcessWithExitCode "test" ["-d", T.unpack fullPath] ""
-              if ec == ExitSuccess
+              isDir <- doesDirectoryExist (T.unpack fullPath)
+              if isDir
                 then tryView noSign_ s fullPath (curDepth s) True
                 else openLocal tm s fullPath p (T.unpack fullPath)
         _ -> pure Nothing
@@ -295,14 +299,14 @@ enter tm noSign_ s = do
 -- | Get trash command (trash-put or gio trash)
 trashCmd :: IO (Maybe (String, [String]))
 trashCmd = do
-  (ec1, _, _) <- readProcessWithExitCode "which" ["trash-put"] ""
-  if ec1 == ExitSuccess
-    then pure (Just ("trash-put", []))
-    else do
-      (ec2, _, _) <- readProcessWithExitCode "which" ["gio"] ""
-      if ec2 == ExitSuccess
-        then pure (Just ("gio", ["trash"]))
-        else pure Nothing
+  mTp <- findExecutable "trash-put"
+  case mTp of
+    Just _  -> pure (Just ("trash-put", []))
+    Nothing -> do
+      mGio <- findExecutable "gio"
+      case mGio of
+        Just _  -> pure (Just ("gio", ["trash"]))
+        Nothing -> pure Nothing
 
 -- | Get full paths of selected rows, or current row if none selected
 selPaths :: View AdbcTable -> IO (Vector Text)

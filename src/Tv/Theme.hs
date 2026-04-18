@@ -33,7 +33,9 @@ import qualified Data.Vector as V
 import Data.Word (Word32)
 import System.Environment (getExecutablePath, lookupEnv)
 import System.IO.Unsafe (unsafePerformIO)
-import System.Process (readProcessWithExitCode)
+import System.Posix.Files
+  (getFileStatus, fileMode, setFileMode, ownerExecuteMode, groupExecuteMode, otherExecuteMode)
+import Data.Bits ((.|.))
 import Text.Read (readMaybe)
 
 
@@ -240,7 +242,9 @@ run tm cur applyAndRender = do
       script <- Tmp.tmpPath "theme-pick.sh"
       TIO.writeFile script
         (T.pack ("#!/bin/sh\necho \"theme.preview $1\" | socat - UNIX-CONNECT:" ++ sockPath))
-      _ <- readProcessWithExitCode "chmod" ["+x", script] ""
+      -- add +x to existing mode so fzf can exec this preview script
+      st <- getFileStatus script
+      setFileMode script (fileMode st .|. ownerExecuteMode .|. groupExecuteMode .|. otherExecuteMode)
       let items = V.imap (\i _ -> T.pack (show i) <> "\t" <> themeName i) themes
           poll :: IO ()
           poll = do
