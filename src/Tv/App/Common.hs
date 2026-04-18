@@ -108,7 +108,7 @@ runMenu a = do
                   Nothing -> pure ()
               Nothing -> pure ()
           Nothing -> pure ()
-  handler <- Fzf.cmdMode (cmdCache a) (View.vkind (View.cur (stk a))) poll
+  handler <- Fzf.cmdMode (testMode a) (cmdCache a) (View.vkind (View.cur (stk a))) poll
   a' <- readIORef ref
   _ <- Socket.pollCmd  -- drain stale command from fzf focus
   case handler of

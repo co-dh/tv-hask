@@ -179,17 +179,19 @@ parseSel sel =
   let h = T.stripEnd (headD "" (T.splitOn " | " sel))
   in if T.null h then Nothing else Just h
 
--- | Command mode: space -> flat fzf menu -> return handler name
--- poll: callback invoked while fzf popup is open (for external socket dispatch + re-render)
-cmdMode :: CmdCache -> ViewKind -> IO () -> IO (Maybe Text)
-cmdMode cc vk poll = do
+-- | Command mode: space -> flat fzf menu -> return handler name.
+-- tm forwards the app's testMode to fzfCore. Hardcoding False here made
+-- every `-c " "` test spawn real fzf, which grabs /dev/tty and blocks
+-- the user's terminal during `cabal test`.
+cmdMode :: Bool -> CmdCache -> ViewKind -> IO () -> IO (Maybe Text)
+cmdMode tm cc vk poll = do
   let items = flatItems cc vk
   if V.null items
     then pure Nothing
     else do
       let input = T.intercalate "\n" (V.toList items)
           opts  = V.fromList ["--prompt=cmd "]
-      out <- fzfCore False opts input poll
+      out <- fzfCore tm opts input poll
       if T.null out
         then pure Nothing
         else pure $ parseSel out
