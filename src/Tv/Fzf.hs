@@ -39,8 +39,10 @@ import qualified Tv.Term as Term
 
 -- | Build fzf argv: popup geometry fitted to content, prepended to caller opts.
 -- inTmux picks between --tmux=bottom popup and inline --height; width floors 50
--- (typing room), caps 80; height caps 15. visLines strips the hidden index field
+-- (typing room), caps 120; height caps 15. visLines strips the hidden index field
 -- when --with-nth=2 is set so measurement matches what fzf actually renders.
+-- Width also accounts for --header=/--prompt= strings — the filter prompt (\)
+-- uses a 70-char header that got truncated when all input rows were short.
 popupArgs :: Bool -> Vector Text -> Text -> Vector Text
 popupArgs inTmux opts input =
   let lines_ = filter (not . T.null) (T.splitOn "\n" input)
@@ -50,8 +52,15 @@ popupArgs inTmux opts input =
                           _ : rest -> T.intercalate "\t" rest
                           _        -> l) lines_
         else lines_
-      maxW = foldl' (\m l -> max m (T.length l)) 0 visLines
-      popupW = min (max (maxW + 4) 50) 80
+      rowsW = foldl' (\m l -> max m (T.length l)) 0 visLines
+      optFieldW pfx = V.foldl'
+        (\m o -> case T.stripPrefix pfx o of
+                   Just v  -> max m (T.length v)
+                   Nothing -> m) 0 opts
+      hdrW    = optFieldW "--header="
+      promptW = optFieldW "--prompt="
+      maxW    = maximum [rowsW, hdrW, promptW]
+      popupW  = min (max (maxW + 4) 50) 120
       baseArgs = if inTmux
         then V.fromList
                [ T.pack ("--tmux=bottom," ++ show popupW ++ "," ++ show popupH)
