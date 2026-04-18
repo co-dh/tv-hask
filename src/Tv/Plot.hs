@@ -318,6 +318,42 @@ rScript dataPath pngPath kind xName yName hasCat catName hasFacet facetName xTyp
        <> fillScale <> timeScale <> titleR <> "\n"
        <> "ggsave('" <> pngPath <> "', p, width = 12, height = 7, dpi = 100)\n"
 
+-- | Candlestick R script. Expects a 5-column TSV: x, open, high, low, close.
+-- Wick (low..high) drawn with linerange; body (min(O,C)..max(O,C)) with
+-- a thicker linerange, colored green (close >= open) or red (close < open).
+rScriptCandle :: Text -> Text -> Text -> ColType -> Text -> Text
+rScriptCandle dataPath pngPath xName xType title =
+  let xq = "`" <> xName <> "`"
+      convX = case xType of
+        ColTypeTime ->
+          "d$" <> xq <> " <- as.POSIXct(paste('1970-01-01', d$" <> xq <> "))\n"
+        ColTypeTimestamp ->
+          "d$" <> xq <> " <- as.POSIXct(d$" <> xq <> ")\n"
+        ColTypeDate ->
+          "d$" <> xq <> " <- as.Date(d$" <> xq <> ")\n"
+        _ ->
+          "tryCatch(d$" <> xq <> " <- as.numeric(d$" <> xq
+            <> "), warning=function(w) NULL)\n"
+      timeScale = if xType == ColTypeTime
+                    then " + scale_x_datetime(date_labels = '%H:%M:%S')" else ""
+      titleR = if T.null title
+                 then ""
+                 else " + ggtitle('" <> title
+                        <> "') + theme(plot.title = element_text(hjust = 0.5))"
+  in "library(ggplot2)\n"
+     <> "d <- read.delim('" <> dataPath
+     <> "', header=TRUE, sep='\\t', colClasses='character', check.names=FALSE)\n"
+     <> "for (cn in c('open','high','low','close')) d[[cn]] <- as.numeric(d[[cn]])\n"
+     <> convX
+     <> "d$dir <- ifelse(d$close >= d$open, 'up', 'down')\n"
+     <> "p <- ggplot(d, aes(x = " <> xq <> ")) + "
+     <> "geom_linerange(aes(ymin = low, ymax = high), color = 'gray40') + "
+     <> "geom_linerange(aes(ymin = pmin(open, close), ymax = pmax(open, close), color = dir), linewidth = 2.5) + "
+     <> "scale_color_manual(values = c(up = 'forestgreen', down = 'firebrick'), guide = 'none') + "
+     <> "labs(x = '" <> xName <> "', y = 'price') + theme_minimal()"
+     <> timeScale <> titleR <> "\n"
+     <> "ggsave('" <> pngPath <> "', p, width = 12, height = 7, dpi = 100)\n"
+
 -- | Run Rscript to render plot; returns error message on failure
 renderR :: Text -> IO (Maybe Text)
 renderR script = do
@@ -348,6 +384,58 @@ exportWithHeaders t xName yName catName_ xIsTime step truncLen_ = do
             Nothing -> xName <> "\t" <> yName
       TIO.writeFile datPath (header <> "\n" <> content)
       pure (Just cats)
+
+-- | Export OHLC + prepend header for R's read.delim. Matches the
+-- prepend trick in 'exportWithHeaders' since copyPlot doesn't write
+-- column names.
+exportCandleWithHeaders
+  :: AdbcTable -> Text -> (Text, Text, Text, Text) -> IO Bool
+exportCandleWithHeaders t xName (o, h, l, c) = do
+  ok <- Table.plotExportOhlc t xName o h l c
+  if not ok then pure False else do
+    datPath <- Table.plotDatPath
+    content <- TIO.readFile datPath
+    let header = xName <> "\topen\thigh\tlow\tclose"
+    TIO.writeFile datPath (header <> "\n" <> content)
+    pure True
+
+-- | Candlestick run: grp must be [x, open, high, low, close] (5 cols).
+-- Quits back to the TUI after the first render; no interactive downsample
+-- loop because OHLC data is already time-bucketed.
+runCandle :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
+runCandle s = do
+  let n  = View.nav (View.cur s)
+      gp = Nav.grp n
+  if V.length gp < 5
+    then err s "candle: group 5 columns first — x, open, high, low, close (!)"
+    else do
+      let [xName, oName, hName, lName, cName] = V.toList (V.take 5 gp)
+          tbl    = Nav.tbl n
+          names  = Nav.colNames n
+      case Nav.idxOf names xName of
+        Nothing -> err s ("candle: x column '" <> xName <> "' not found")
+        Just xIdx -> do
+          xType0 <- pure (Ops.colType tbl xIdx)
+          xType  <- sniffXType tbl xIdx xType0
+          Term.shutdown
+          altEnter
+          setRaw
+          pngPath <- Tmp.tmpPath "plot_candle.png"
+          datPath <- Table.plotDatPath
+          ok <- exportCandleWithHeaders tbl xName (oName, hName, lName, cName)
+          if not ok
+            then do exitPlot; err s "candle: data export failed"
+            else do
+              let script = rScriptCandle (T.pack datPath) (T.pack pngPath)
+                             xName xType ("Candlestick: " <> xName)
+              renderErr <- renderR script
+              renderFrame pngPath (V.singleton (Interval "all" 1)) 0 renderErr
+              -- wait for q to exit
+              let waitQ = do c <- readKey
+                             if c == 'q' then pure () else waitQ
+              waitQ
+              exitPlot
+              pure (Just s)
 
 -- | Render plot image and interval bar (clear → image → interval selector if needed)
 renderFrame :: String -> Vector Interval -> Int -> Maybe Text -> IO ()
@@ -535,7 +623,10 @@ runGroup s kind = do
 run :: ViewStack AdbcTable -> PlotKind -> IO (Maybe (ViewStack AdbcTable))
 run s kind = do
   Log.write "plot" ("run entered, kind=" <> T.pack (show kind))
-  if singleCol kind then runSingle s kind else runGroup s kind
+  case kind of
+    PlotCandle -> runCandle s
+    _ | singleCol kind -> runSingle s kind
+      | otherwise      -> runGroup s kind
 
 plotCmd :: PlotKind -> HandlerFn
 plotCmd k = onStk (`run` k)
@@ -559,5 +650,5 @@ commands = V.fromList
   , hdl (mkEntry CmdPlotVol      "cg" "" "Finance: rolling 20-period volatility"  False "") (plotCmd PlotVol)
   , hdl (mkEntry CmdPlotQQ       "c"  "" "Finance: Q-Q plot vs normal"            False "") (plotCmd PlotQQ)
   , hdl (mkEntry CmdPlotBB       "cg" "" "Finance: Bollinger bands (SMA ± 2σ)"    False "") (plotCmd PlotBB)
-    -- candlestick needs a separate 4-column path; deferred.
+  , hdl (mkEntry CmdPlotCandle   "g"  "" "Finance: OHLC candlestick (grp = x,O,H,L,C)" False "") (plotCmd PlotCandle)
   ]

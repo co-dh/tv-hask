@@ -42,6 +42,7 @@ module Tv.Data.DuckDB.Table
   , excludeCols
   , fetchMore
   , plotExport
+  , plotExportOhlc
   , plotDatPath
   , fromTsv
   , fromJson
@@ -419,6 +420,35 @@ plotExport t xName yName catName_ xIsTime _step truncLen = do
       case catName_ of
         Just cn -> Just <$> uniqCats baseR cn
         Nothing -> pure (Just V.empty)
+
+-- | Export 5-column TSV (x, open, high, low, close) for candlestick R rendering.
+-- Output columns are renamed to literal 'open'/'high'/'low'/'close' so the
+-- R template is agnostic to the source column names.
+plotExportOhlc
+  :: AdbcTable
+  -> Text   -- xName
+  -> Text   -- openName
+  -> Text   -- highName
+  -> Text   -- lowName
+  -> Text   -- closeName
+  -> IO Bool
+plotExportOhlc t xName openName highName lowName closeName = do
+  let baseR = Prql.queryRender (query t)
+      q     = Prql.quote
+      prqlStr = baseR
+        <> " | select { " <> q xName
+        <> ", open = " <> q openName
+        <> ", high = " <> q highName
+        <> ", low = "  <> q lowName
+        <> ", close = " <> q closeName
+        <> " }"
+  Log.write "prql" prqlStr
+  mSql <- Prql.compile prqlStr
+  case mSql of
+    Nothing -> pure False
+    Just sql -> do
+      copyPlot sql
+      pure True
 
 -- | Ingest content via DuckDB reader into a temp table (private helper)
 fromIngest :: Text -> Text -> Text -> IO (Maybe AdbcTable)
