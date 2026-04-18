@@ -100,7 +100,8 @@ library
     transformers >= 0.6,
     unix >= 2.7,
     unordered-containers >= 0.2,
-    vector >= 0.13
+    vector >= 0.13,
+    zlib >= 0.6
 
 executable tv
   import: shared
