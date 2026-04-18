@@ -312,9 +312,19 @@ shutdown :: IO ()
 shutdown = do
   on <- readIORef initedRef
   when on $ do
-    -- Inverse of init: SGR reset, show cursor, exit keypad/cursor-keys
-    -- modes, restore title stack, leave alt screen.
-    TIO.hPutStr stdout "\x1b[m\x1b[?25h\x1b[?1l\x1b>\x1b[23;0;0t\x1b[?1049l"
+    -- Byte-for-byte match of termbox2's tb_deinit (c/termbox2.h:3172)
+    -- for the xterm-256color cap table (c/termbox2.h:918-934):
+    -- SHOW_CURSOR, SGR0, CLEAR_SCREEN, EXIT_CA, EXIT_KEYPAD, EXIT_MOUSE.
+    -- The CLEAR_SCREEN-before-EXIT_CA step matters: without it, alt-screen
+    -- residue can leak into the main screen on some terminals, and fzf
+    -- then renders inline on top of leftover tv content.
+    TIO.hPutStr stdout $
+      "\x1b[?12l\x1b[?25h"     -- SHOW_CURSOR: blink off + show
+      <> "\x1b(B\x1b[m"         -- SGR0: charset + attr reset
+      <> "\x1b[H\x1b[2J"        -- CLEAR_SCREEN: home + erase display
+      <> "\x1b[?1049l\x1b[23;0;0t" -- EXIT_CA: leave alt screen + restore title
+      <> "\x1b[?1l\x1b>"        -- EXIT_KEYPAD: cursor-keys off + keypad off
+      <> "\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l" -- EXIT_MOUSE
     hSetEcho stdin True
     hFlush stdout
     mOrig <- readIORef origTios
