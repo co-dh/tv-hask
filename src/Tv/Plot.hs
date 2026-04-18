@@ -9,7 +9,6 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 module Tv.Plot
   ( maxPoints
   , Interval(..)
@@ -58,7 +57,6 @@ import qualified Tv.Log as Log
 import qualified Tv.Tmp as Tmp
 import Tv.View (ViewStack)
 import qualified Tv.View as View
-import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- $setup
 -- >>> :set -XOverloadedStrings
@@ -79,10 +77,6 @@ data Interval = Interval
   { label    :: Text  -- display label (e.g. "1s", "1m", "2x")
   , truncLen :: Int   -- SUBSTRING length for time; step for non-time
   }
-makeFieldLabelsNoPrefix ''Interval
-
-intervalDefault :: Interval
-intervalDefault = Interval { label = "", truncLen = 0 }
 
 -- truncLen = bucket size in seconds for time_bucket
 timeIntervals :: Vector Interval
@@ -406,7 +400,7 @@ plotLoop tbl kind xName yName exportCat xIsTime baseStep pngPath intervals scrip
           nr_ <- readIORef needRenderRef
           when nr_ $ do
             idx <- readIORef idxRef
-            let iv = fromMaybe intervalDefault $ intervals V.!? idx
+            let iv = fromMaybe (Interval "" 0) $ intervals V.!? idx
             Log.write "plot" $
               "kind=" <> T.pack (show kind)
                 <> " interval=" <> label iv

@@ -5,7 +5,6 @@
   Literal port of Tc/Tc/Theme.lean.
 -}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 module Tv.Theme
   ( State(..)
   , styleNames
@@ -37,8 +36,6 @@ import System.IO.Unsafe (unsafePerformIO)
 import System.Process (readProcessWithExitCode)
 import Text.Read (readMaybe)
 
-import Optics.Core ((&), (.~))
-import Optics.TH (makeFieldLabelsNoPrefix)
 
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Socket as Socket
@@ -51,7 +48,6 @@ data State = State
   { styles   :: Vector Word32
   , themeIdx :: Int
   }
-makeFieldLabelsNoPrefix ''State
 
 
 -- | Style names → index into styles array. Styles 0-8 used by C render, 9+ by Lean UI.
@@ -224,7 +220,7 @@ applyIdx :: State -> Int -> IO State
 applyIdx s idx = do
   sty <- loadIdx idx
   writeIORef stylesRef sty
-  pure (s & #styles .~ sty & #themeIdx .~ idx)
+  pure (s { styles = sty, themeIdx = idx })
 
 -- end State
 

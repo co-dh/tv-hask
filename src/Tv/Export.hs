@@ -7,10 +7,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Export
-  ( -- Tc.ExportFmt namespace
-    ext
-  , copyOpt
-    -- Tc.Export namespace
+  ( copyOpt
   , pickFmt
   , exportView
   , run
@@ -35,13 +32,6 @@ import qualified Tv.Log as Log
 import Tv.View (ViewStack)
 import qualified Tv.View as View
 
--- ============================================================================
--- Tc.ExportFmt namespace
--- ============================================================================
-
--- | File extension for an export format (== toString)
-ext :: ExportFmt -> Text
-ext f = toString f
 
 -- | DuckDB COPY option clause for an export format
 copyOpt :: ExportFmt -> Text
@@ -84,7 +74,7 @@ run s fmt = do
                 (x : _) | not (T.null x) -> x
                 _                        -> name0
   d <- Log.dir
-  let path = T.pack d <> "/tv_export_" <> stem <> "." <> ext fmt
+  let path = T.pack d <> "/tv_export_" <> stem <> "." <> toString fmt
   exportView (View.tbl s) path fmt
   Render.statusMsg ("exported " <> path)
   pure s
