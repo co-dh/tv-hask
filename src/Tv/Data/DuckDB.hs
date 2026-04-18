@@ -51,7 +51,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Calendar (addDays, fromGregorian, toGregorian)
-import Text.Printf (printf)
+import qualified Numeric
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word16, Word32, Word64, Word8)
@@ -392,7 +392,7 @@ cellAny cv row = case cvType cv of
   -- 3-decimal precision matches Lean's format_cell_view
   -- (`format_struct_cell` passes decimals=3). Used by status-bar aggregates
   -- and any generic cellStr consumer.
-  ColTypeFloat     -> maybe "" (T.pack . printf "%.3f") (cellDbl cv row)
+  ColTypeFloat     -> maybe "" (T.pack . (\d -> Numeric.showFFloat (Just 3) d "")) (cellDbl cv row)
   ColTypeStr       -> fromMaybe "" (cellText cv row)
   ColTypeDate      -> fromMaybe "" (cellDate cv row)
   ColTypeTime      -> fromMaybe "" (cellTime cv row)
@@ -409,7 +409,7 @@ cellDate cv row
         d <- peekElemOff (castPtr (cvData cv) :: Ptr Int32) row
         let day = addDays (fromIntegral d) (fromGregorian 1970 1 1)
             (y, m, dd) = toGregorian day
-        pure $ Just $ T.pack $ printf "%04d-%02d-%02d" y m dd
+        pure $ Just $ fmtYmd (fromIntegral y) m dd
 {-# NOINLINE cellDate #-}
 
 -- | DuckDB TIME: int64 microseconds since midnight. Format HH:MM:SS.
@@ -420,10 +420,10 @@ cellTime cv row
       ok <- isValid (cvValidity cv) row
       if not ok then pure Nothing else do
         us <- peekElemOff (castPtr (cvData cv) :: Ptr Int64) row
-        let s = us `div` 1000000
+        let s = fromIntegral us `div` 1000000 :: Int
             (h, sm) = (s `div` 3600 `mod` 24, s `mod` 3600)
             (mi, se) = (sm `div` 60, sm `mod` 60)
-        pure $ Just $ T.pack $ printf "%02d:%02d:%02d" h mi se
+        pure $ Just $ fmtHms h mi se
 {-# NOINLINE cellTime #-}
 
 -- | DuckDB TIMESTAMP / TIMESTAMP_TZ: int64 microseconds since 1970-01-01.
@@ -436,15 +436,41 @@ cellTs cv row
       ok <- isValid (cvValidity cv) row
       if not ok then pure Nothing else do
         us <- peekElemOff (castPtr (cvData cv) :: Ptr Int64) row
-        let totalSec = us `div` 1000000
+        let totalSec = fromIntegral us `div` 1000000 :: Int
             (days, secOfDay) = totalSec `divMod` 86400
             day = addDays (fromIntegral days) (fromGregorian 1970 1 1)
             (y, m, dd) = toGregorian day
             (h, sm) = (secOfDay `div` 3600, secOfDay `mod` 3600)
             (mi, se) = (sm `div` 60, sm `mod` 60)
-        pure $ Just $ T.pack $ printf "%04d-%02d-%02d %02d:%02d:%02d" y m dd h mi se
+        pure $ Just (fmtYmd (fromIntegral y) m dd <> T.singleton ' ' <> fmtHms h mi se)
   where rt = cvRawType cv
 {-# NOINLINE cellTs #-}
+
+-- | Pack a decimal digit 0..9 as a Char. Faster than `show`.
+digit :: Int -> Char
+digit d = toEnum (fromEnum '0' + d)
+
+-- | "HH:MM:SS" zero-padded. Drop-in for printf "%02d:%02d:%02d"
+-- without the printf/String overhead that dominated cellTime in profiles.
+fmtHms :: Int -> Int -> Int -> Text
+fmtHms h m s = T.pack
+  [ digit (h `div` 10), digit (h `mod` 10), ':'
+  , digit (m `div` 10), digit (m `mod` 10), ':'
+  , digit (s `div` 10), digit (s `mod` 10)
+  ]
+
+-- | "YYYY-MM-DD" zero-padded. Same rationale as fmtHms.
+fmtYmd :: Int -> Int -> Int -> Text
+fmtYmd y m d = T.pack
+  [ digit (y `div` 1000 `mod` 10)
+  , digit (y `div` 100  `mod` 10)
+  , digit (y `div` 10   `mod` 10)
+  , digit (y            `mod` 10)
+  , '-'
+  , digit (m `div` 10), digit (m `mod` 10)
+  , '-'
+  , digit (d `div` 10), digit (d `mod` 10)
+  ]
 
 duckTypeToCol :: DuckDBType -> ColType
 duckTypeToCol t
