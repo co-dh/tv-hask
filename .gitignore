@@ -33,3 +33,12 @@ cabal.project.local
 test.log
 doc/__pycache__/
 .tmp/
+
+# Large test fixtures — not committed; TestLargeData uses withFixture to skip
+# when absent. Copy from /home/dh/repo/Tc/data to run them locally.
+data/sample.csv
+data/sample.parquet
+data/1.parquet
+data/2.parquet
+data/1_time.parquet
+data/nyse
