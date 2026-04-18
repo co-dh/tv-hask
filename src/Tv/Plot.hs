@@ -171,9 +171,12 @@ plotTitle kind xName yName hasCat catName =
        else k <> ": " <> yName <> " vs " <> xName
               <> (if hasCat then " by " <> catName else "")
 
--- | Single-column plots: no group needed, just cursor on a numeric column
+-- | Single-column plots: no group needed, just cursor on a numeric column.
+-- Returns and QQ live here because they consume just one numeric vector
+-- (returns = diff/lag of y; QQ = sample quantiles of y).
 singleCol :: PlotKind -> Bool
-singleCol kind = kind == PlotHist || kind == PlotDensity
+singleCol kind = kind `elem`
+  [PlotHist, PlotDensity, PlotReturns, PlotQQ]
 
 -- | Plot types that use category column as the x-axis (box/violin)
 catAsX :: PlotKind -> Bool
@@ -240,7 +243,33 @@ rScript dataPath pngPath kind xName yName hasCat catName hasFacet facetName xTyp
             then "tryCatch(d[['" <> xName <> "']] <- as.numeric(d[['" <> xName
                    <> "']]), warning=function(w) NULL)\n"
             else ""
+      -- Finance pre-transforms: compute new d$ columns before ggplot so
+      -- the plot itself stays a plain aes+geom. All use base R (c, diff,
+      -- cumprod, cummax, filter, embed) — no extra dep on tidyquant.
+      yc = "d[['" <> yName <> "']]"
+      preXform = case kind of
+        PlotReturns  ->
+          "d[['" <> yName <> "']] <- c(NA, diff(" <> yc <> ") / head(" <> yc <> ", -1))\n"
+          <> "d <- d[!is.na(d[['" <> yName <> "']]), ]\n"
+        PlotCumRet   ->
+          "r <- c(0, diff(" <> yc <> ") / head(" <> yc <> ", -1))\n"
+          <> "d[['" <> yName <> "']] <- cumprod(1 + r) - 1\n"
+        PlotDrawdown ->
+          "m <- cummax(" <> yc <> ")\n"
+          <> "d[['" <> yName <> "']] <- (m - " <> yc <> ") / m\n"
+        PlotMA       ->
+          "d$ma <- as.vector(stats::filter(" <> yc <> ", rep(1/20, 20), sides = 1))\n"
+        PlotVol      ->
+          "r <- c(NA, diff(" <> yc <> ") / head(" <> yc <> ", -1))\n"
+          <> "d[['" <> yName <> "']] <- as.vector(stats::filter((r - mean(r, na.rm=TRUE))^2, rep(1/20, 20), sides = 1))\n"
+          <> "d[['" <> yName <> "']] <- sqrt(d[['" <> yName <> "']])\n"
+        PlotBB       ->
+          "m <- as.vector(stats::filter(" <> yc <> ", rep(1/20, 20), sides = 1))\n"
+          <> "sd20 <- as.vector(stats::filter((" <> yc <> " - m)^2, rep(1/20, 20), sides = 1))\n"
+          <> "d$ma <- m; d$upper <- m + 2 * sqrt(sd20); d$lower <- m - 2 * sqrt(sd20)\n"
+        _ -> ""
       aes
+        | kind == PlotQQ = "aes(sample = " <> yR <> ")"
         | singleCol kind = "aes(x = " <> yR <> ")"
         | catAsX kind =
             if hasCat
@@ -262,6 +291,14 @@ rScript dataPath pngPath kind xName yName hasCat catName hasFacet facetName xTyp
         PlotDensity -> "geom_density(fill = 'steelblue', alpha = 0.5)"
         PlotStep    -> "geom_step(linewidth = 0.5)"
         PlotViolin  -> "geom_violin() + geom_boxplot(width = 0.1, fill = 'white')"
+        PlotReturns -> "geom_histogram(bins = 40, fill = 'steelblue', color = 'white')"
+        PlotCumRet  -> "geom_line(linewidth = 0.5, color = 'steelblue') + scale_y_continuous(labels = scales::percent)"
+        PlotDrawdown -> "geom_area(alpha = 0.5, fill = 'firebrick') + scale_y_reverse(labels = scales::percent)"
+        PlotMA      -> "geom_line(linewidth = 0.4, alpha = 0.6) + geom_line(aes(y = ma), color = 'orange', linewidth = 0.8, na.rm = TRUE)"
+        PlotVol     -> "geom_line(linewidth = 0.5, color = 'orange', na.rm = TRUE)"
+        PlotQQ      -> "geom_qq(alpha = 0.6) + geom_qq_line(color = 'firebrick')"
+        PlotBB      -> "geom_ribbon(aes(ymin = lower, ymax = upper), fill = 'steelblue', alpha = 0.2, na.rm = TRUE) + geom_line(aes(y = ma), color = 'steelblue', linewidth = 0.5, na.rm = TRUE) + geom_line(linewidth = 0.4)"
+        PlotCandle  -> ""  -- handled elsewhere; needs 4-column pipeline
       timeScale = if xType == ColTypeTime
                     then " + scale_x_datetime(date_labels = '%H:%M:%S')" else ""
       facet = if hasFacet
@@ -273,7 +310,7 @@ rScript dataPath pngPath kind xName yName hasCat catName hasFacet facetName xTyp
                  then ""
                  else " + ggtitle('" <> title
                         <> "') + theme(plot.title = element_text(hjust = 0.5))"
-  in "library(ggplot2)\n" <> readData <> convY <> convX
+  in "library(ggplot2)\n" <> readData <> convY <> convX <> preXform
        <> "p <- ggplot(d, " <> aes <> colorAes <> fillAes <> ") + "
        <> geom <> facet <> " + "
        <> "labs(x = '" <> xName <> "', y = '" <> yName
@@ -514,4 +551,13 @@ commands = V.fromList
   , hdl (mkEntry CmdPlotHist    "c"  "" "Histogram (c=numeric column)"           False "") (plotCmd PlotHist)
   , hdl (mkEntry CmdPlotDensity "c"  "" "Density (c=numeric column)"             False "") (plotCmd PlotDensity)
   , hdl (mkEntry CmdPlotViolin  "cg" "" "Violin (g=x categorical, c=y numeric)"  False "") (plotCmd PlotViolin)
+    -- finance plots: single numeric y column, time x
+  , hdl (mkEntry CmdPlotReturns  "c"  "" "Finance: returns histogram"             False "") (plotCmd PlotReturns)
+  , hdl (mkEntry CmdPlotCumRet   "cg" "" "Finance: cumulative returns line"       False "") (plotCmd PlotCumRet)
+  , hdl (mkEntry CmdPlotDrawdown "cg" "" "Finance: drawdown curve"                False "") (plotCmd PlotDrawdown)
+  , hdl (mkEntry CmdPlotMA       "cg" "" "Finance: price with 20-period SMA"      False "") (plotCmd PlotMA)
+  , hdl (mkEntry CmdPlotVol      "cg" "" "Finance: rolling 20-period volatility"  False "") (plotCmd PlotVol)
+  , hdl (mkEntry CmdPlotQQ       "c"  "" "Finance: Q-Q plot vs normal"            False "") (plotCmd PlotQQ)
+  , hdl (mkEntry CmdPlotBB       "cg" "" "Finance: Bollinger bands (SMA ± 2σ)"    False "") (plotCmd PlotBB)
+    -- candlestick needs a separate 4-column path; deferred.
   ]

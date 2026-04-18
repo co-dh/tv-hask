@@ -373,31 +373,58 @@ data PlotKind
   | PlotDensity
   | PlotStep
   | PlotViolin
+    -- finance: all operate on one numeric y column
+  | PlotReturns     -- histogram of simple returns (y_t/y_{t-1} - 1)
+  | PlotCumRet      -- cumulative returns line (1+r).cumprod()
+  | PlotDrawdown    -- drawdown curve: (runmax - y) / runmax
+  | PlotMA          -- price line with 20-period SMA overlay
+  | PlotVol         -- rolling 20-period stddev of returns
+  | PlotQQ          -- Q-Q plot of y against normal quantiles
+  | PlotBB          -- Bollinger bands: SMA ± 2σ
+  | PlotCandle      -- OHLC candlestick (needs 4 numeric cols)
   deriving (Eq, Show)
 
 instance StrEnum PlotKind where
-  toString PlotLine    = "line"
-  toString PlotBar     = "bar"
-  toString PlotScatter = "scatter"
-  toString PlotHist    = "hist"
-  toString PlotBox     = "box"
-  toString PlotArea    = "area"
-  toString PlotDensity = "density"
-  toString PlotStep    = "step"
-  toString PlotViolin  = "violin"
+  toString PlotLine     = "line"
+  toString PlotBar      = "bar"
+  toString PlotScatter  = "scatter"
+  toString PlotHist     = "hist"
+  toString PlotBox      = "box"
+  toString PlotArea     = "area"
+  toString PlotDensity  = "density"
+  toString PlotStep     = "step"
+  toString PlotViolin   = "violin"
+  toString PlotReturns  = "returns"
+  toString PlotCumRet   = "cumret"
+  toString PlotDrawdown = "drawdown"
+  toString PlotMA       = "ma"
+  toString PlotVol      = "vol"
+  toString PlotQQ       = "qq"
+  toString PlotBB       = "bb"
+  toString PlotCandle   = "candle"
   all = V.fromList
     [ PlotLine, PlotBar, PlotScatter, PlotHist, PlotBox
-    , PlotArea, PlotDensity, PlotStep, PlotViolin ]
-  ofStringQ "line"    = Just PlotLine
-  ofStringQ "bar"     = Just PlotBar
-  ofStringQ "scatter" = Just PlotScatter
-  ofStringQ "hist"    = Just PlotHist
-  ofStringQ "box"     = Just PlotBox
-  ofStringQ "area"    = Just PlotArea
-  ofStringQ "density" = Just PlotDensity
-  ofStringQ "step"    = Just PlotStep
-  ofStringQ "violin"  = Just PlotViolin
-  ofStringQ _         = Nothing
+    , PlotArea, PlotDensity, PlotStep, PlotViolin
+    , PlotReturns, PlotCumRet, PlotDrawdown, PlotMA
+    , PlotVol, PlotQQ, PlotBB, PlotCandle ]
+  ofStringQ "line"     = Just PlotLine
+  ofStringQ "bar"      = Just PlotBar
+  ofStringQ "scatter"  = Just PlotScatter
+  ofStringQ "hist"     = Just PlotHist
+  ofStringQ "box"      = Just PlotBox
+  ofStringQ "area"     = Just PlotArea
+  ofStringQ "density"  = Just PlotDensity
+  ofStringQ "step"     = Just PlotStep
+  ofStringQ "violin"   = Just PlotViolin
+  ofStringQ "returns"  = Just PlotReturns
+  ofStringQ "cumret"   = Just PlotCumRet
+  ofStringQ "drawdown" = Just PlotDrawdown
+  ofStringQ "ma"       = Just PlotMA
+  ofStringQ "vol"      = Just PlotVol
+  ofStringQ "qq"       = Just PlotQQ
+  ofStringQ "bb"       = Just PlotBB
+  ofStringQ "candle"   = Just PlotCandle
+  ofStringQ _          = Nothing
 
 data ExportFmt
   = ExportCsv
@@ -470,6 +497,14 @@ data Cmd
   | CmdPlotHist
   | CmdPlotDensity
   | CmdPlotViolin
+  | CmdPlotReturns
+  | CmdPlotCumRet
+  | CmdPlotDrawdown
+  | CmdPlotMA
+  | CmdPlotVol
+  | CmdPlotQQ
+  | CmdPlotBB
+  | CmdPlotCandle
   | CmdTblMenu
   | CmdStkSwap
   | CmdStkPop
@@ -548,6 +583,14 @@ instance StrEnum Cmd where
   toString CmdPlotHist       = "plot.hist"
   toString CmdPlotDensity    = "plot.density"
   toString CmdPlotViolin     = "plot.violin"
+  toString CmdPlotReturns    = "plot.returns"
+  toString CmdPlotCumRet     = "plot.cumret"
+  toString CmdPlotDrawdown   = "plot.drawdown"
+  toString CmdPlotMA         = "plot.ma"
+  toString CmdPlotVol        = "plot.vol"
+  toString CmdPlotQQ         = "plot.qq"
+  toString CmdPlotBB         = "plot.bb"
+  toString CmdPlotCandle     = "plot.candle"
   toString CmdTblMenu        = "tbl.menu"
   toString CmdStkSwap        = "stk.swap"
   toString CmdStkPop         = "stk.pop"
@@ -597,6 +640,8 @@ instance StrEnum Cmd where
     , CmdColSplit, CmdColDerive, CmdColSearch
     , CmdPlotArea, CmdPlotLine, CmdPlotScatter, CmdPlotBar, CmdPlotBox
     , CmdPlotStep, CmdPlotHist, CmdPlotDensity, CmdPlotViolin
+    , CmdPlotReturns, CmdPlotCumRet, CmdPlotDrawdown, CmdPlotMA
+    , CmdPlotVol, CmdPlotQQ, CmdPlotBB, CmdPlotCandle
     , CmdTblMenu, CmdStkSwap, CmdStkPop, CmdStkDup, CmdTblQuit, CmdTblXpose
     , CmdTblDiff, CmdInfoTog
     , CmdPrecDec, CmdPrecInc, CmdPrecZero, CmdPrecMax
@@ -626,4 +671,12 @@ plotKind CmdPlotStep    = Just PlotStep
 plotKind CmdPlotHist    = Just PlotHist
 plotKind CmdPlotDensity = Just PlotDensity
 plotKind CmdPlotViolin  = Just PlotViolin
+plotKind CmdPlotReturns = Just PlotReturns
+plotKind CmdPlotCumRet  = Just PlotCumRet
+plotKind CmdPlotDrawdown = Just PlotDrawdown
+plotKind CmdPlotMA      = Just PlotMA
+plotKind CmdPlotVol     = Just PlotVol
+plotKind CmdPlotQQ      = Just PlotQQ
+plotKind CmdPlotBB      = Just PlotBB
+plotKind CmdPlotCandle  = Just PlotCandle
 plotKind _              = Nothing
