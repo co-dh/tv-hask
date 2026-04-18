@@ -115,6 +115,7 @@ executable tv
   main-is: Main.hs
   hs-source-dirs: app
   ghc-options: -threaded
+  ld-options: -Wl,-s,--gc-sections
   build-depends:
     base >= 4.16 && < 5,
     tv-hask
