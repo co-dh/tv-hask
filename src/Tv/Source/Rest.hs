@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
--- | REST (rest://) backend: curl a JSON URL, read as a table.
+-- | REST (rest://) backend: fetch a JSON URL over HTTPS, read as a table.
 module Tv.Source.Rest (rest) where
 
+import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import qualified Data.Text as T
 
@@ -15,8 +16,9 @@ import qualified Tv.Source.Core as Core
 pfx_ :: Text
 pfx_ = "rest://"
 
-cmdTmpl :: Text
-cmdTmpl = "curl -sfL https://{1+}"
+-- | Build the https:// URL from a rest:// path ("rest://api.x.com/y" → "https://api.x.com/y").
+restUrl :: Text -> Text
+restUrl path_ = "https://" <> T.drop (T.length pfx_) path_
 
 -- | REST paths are URIs — no download, just passed to FileFormat / re-entered.
 restOpen :: Bool -> Text -> IO OpenResult
@@ -36,12 +38,12 @@ rest = Source
 listRest :: Text -> IO (Maybe AdbcTable)
 listRest path_ = do
   Core.checkShell path_ "path"
-  let vars = Core.mkVars pfx_ path_ "" (Core.fromPath path_) ""
-      cmd  = Core.expand cmdTmpl vars
-  mFile <- Core.writeCmdOut "list" cmd
-  case mFile of
-    Nothing      -> pure Nothing
-    Just tmpFile -> do
+  mBody <- Core.fetchBytes (restUrl path_)
+  case mBody of
+    Nothing   -> pure Nothing
+    Just body -> do
+      tmpFile <- Tmp.tmpPath "src-list.json"
+      LBS.writeFile tmpFile body
       tbl <- tmpName "src"
       _ <- Conn.query
              ( "CREATE TEMP TABLE " <> tbl
