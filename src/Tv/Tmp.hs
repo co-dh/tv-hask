@@ -1,5 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
--- | Per-process temporary directory under /tmp/tv-XXXXXX.
+-- | Per-process temporary directory under <tmpdir>/tv-<pid>.
 module Tv.Tmp
   ( tmpDir
   , tmpPath
@@ -12,15 +11,20 @@ import Control.Concurrent (myThreadId)
 import Control.Exception (SomeException, try)
 import Data.Char (isDigit)
 import Data.IORef (IORef, newIORef, readIORef)
-import qualified Data.Text as T
-import System.Directory (removeFile, removePathForcibly)
+import System.Directory
+  (createDirectoryIfMissing, getTemporaryDirectory, removeFile, removePathForcibly)
 import System.IO.Unsafe (unsafePerformIO)
-import System.Process (readProcessWithExitCode)
+import System.Posix.Process (getProcessID)
 
+-- | Per-process temp dir: <tmpdir>/tv-<pid>. Unique per process (pid is
+-- unique among live processes), so multiple tv runs don't collide.
 tmpDir :: IORef String
 tmpDir = unsafePerformIO $ do
-  (_, out, _) <- readProcessWithExitCode "mktemp" ["-d", "/tmp/tv-XXXXXX"] ""
-  newIORef $ T.unpack $ T.strip $ T.pack out
+  base <- getTemporaryDirectory
+  pid <- getProcessID
+  let d = base ++ "/tv-" ++ show pid
+  createDirectoryIfMissing True d
+  newIORef d
 {-# NOINLINE tmpDir #-}
 
 tmpPath :: String -> IO String

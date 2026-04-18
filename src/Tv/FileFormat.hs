@@ -26,6 +26,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import System.Directory (canonicalizePath, findExecutable)
 import System.Exit (ExitCode(..))
 import System.IO (stdout)
 import System.Process
@@ -85,13 +86,13 @@ isData = isJust . find
 isTxt :: Text -> Bool
 isTxt p = T.isSuffixOf ".txt" (stripGz p)
 
--- | Resolve absolute path via realpath
+-- | Resolve absolute path; falls back to the input on error (missing file).
 absPath :: Text -> IO Text
 absPath path_ = do
-  (ec, out, _) <- readProcessWithExitCode "realpath" [T.unpack path_] ""
-  pure $ case ec of
-    ExitSuccess -> T.strip (T.pack out)
-    _           -> path_
+  r <- try (canonicalizePath (T.unpack path_)) :: IO (Either SomeException FilePath)
+  pure $ case r of
+    Right p -> T.pack p
+    Left _  -> path_
 
 -- | Spawn interactive process (bat/less/zcat)
 spawn :: String -> [String] -> IO ()
@@ -121,8 +122,7 @@ viewFile tm path_ = do
             else TIO.hPutStr stdout =<< TIO.readFile (T.unpack path_)
     else do
       Term.shutdown
-      (whichEc, _, _) <- readProcessWithExitCode "which" ["bat"] ""
-      let hasBat = whichEc == ExitSuccess
+      hasBat <- isJust <$> findExecutable "bat"
       if gz
         then spawn "sh" ["-c", T.unpack ("zcat '" <> esc <> "' | "
                <> (if hasBat then "bat --paging=always" else "less"))]

@@ -29,6 +29,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import System.Directory (findExecutable)
 import System.IO (IOMode(..), hClose, openFile, hGetChar)
 import System.Process
   ( CreateProcess(..), StdStream(..), proc
@@ -103,10 +104,10 @@ getIntervals xType baseStep = case xType of
 -- | Try running cmd with args, return true if it ran successfully
 tryDisplay :: String -> [String] -> IO Bool
 tryDisplay cmd args = do
-  (whichEc, _, _) <- readProcessWithExitCode "which" [cmd] ""
-  case whichEc of
-    ExitFailure _ -> pure False
-    ExitSuccess -> do
+  mExe <- findExecutable cmd
+  case mExe of
+    Nothing -> pure False
+    Just _  -> do
       (_, _, _, ph) <- createProcess
         (proc cmd args) { std_in = Inherit, std_out = Inherit, std_err = Inherit }
       rc <- waitForProcess ph

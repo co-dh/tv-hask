@@ -14,7 +14,6 @@ import System.Exit (ExitCode (..))
 import qualified Tv.Data.DuckDB.Conn as Conn
 import Tv.Data.DuckDB.Table (AdbcTable, fromTmp, tmpName)
 import qualified Tv.FileFormat as FileFormat
-import qualified Tv.Log as Log
 import qualified Tv.Remote as Remote
 import qualified Tv.Render as Render
 import qualified Tv.Tmp as Tmp
@@ -46,7 +45,6 @@ hfVars path_ = do
   Core.checkShell path_ "path"
   tmpDir <- Tmp.tmpPath "src"
   createDirectoryIfMissing True tmpDir
-  _ <- Log.run "src" "mkdir" ["-p", tmpDir]
   let tmpT = T.pack tmpDir
   pure (Core.mkVars pfx_ path_ tmpT (Core.fromPath path_) "", tmpT)
 
