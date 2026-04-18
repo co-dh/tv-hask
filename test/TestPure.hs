@@ -11,9 +11,10 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 import Data.IORef (newIORef, readIORef, modifyIORef')
+import System.Timeout (timeout)
 
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (testCase, (@?=))
+import Test.Tasty.HUnit (testCase, assertFailure, (@?=))
 import Test.Tasty.QuickCheck (testProperty, forAll, choose, Property, (===), (==>))
 
 import Optics.Core ((^.), (.~), (&), (%))
@@ -24,8 +25,6 @@ import qualified Tv.View as View
 import qualified Tv.Term as Term
 import qualified Tv.Fzf as Fzf
 import Tv.Types (Cmd(..), ColType(..), ViewKind(..))
-import System.Timeout (timeout)
-import Test.Tasty.HUnit (assertFailure)
 
 data MockTable = MockTable
   { mockRows  :: Int
