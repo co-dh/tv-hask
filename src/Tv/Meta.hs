@@ -10,6 +10,7 @@
 module Tv.Meta
   ( push
   , setKey
+  , stats
   , commands
   ) where
 
@@ -71,6 +72,29 @@ metaSels =
 selByH :: Text -> HandlerFn
 selByH flt = onStk (fmap Just . (`selBy` flt))
 
+-- | Recompute the meta view with expensive aggregates (mean/std/p25/p50/p75)
+-- for the currently-selected rows whose column is numeric. Non-selected or
+-- non-numeric rows keep NULL in the heavy columns — one-scan cost is bounded
+-- by the selection, not the full table width.
+stats :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
+stats s
+  | View.cur s ^. #vkind /= VkColMeta = pure (Just s)
+  | not (View.hasParent s)            = pure (Just s)
+  | otherwise = do
+      colNames <- Ops.metaNames (tblName s) (View.cur s ^. #nav % #row % #sels)
+      case View.pop s of
+        Nothing -> pure (Just s)
+        Just parent -> do
+          mAdbc <- Ops.queryMetaStats (View.tbl parent) colNames
+          case mAdbc of
+            Nothing -> pure (Just s)
+            Just adbc ->
+              let mV = View.fromTbl adbc (View.cur s ^. #path) 0 mempty 0
+              in pure $ fmap
+                   (\v -> View.setCur s
+                            (v & #vkind .~ VkColMeta & #disp .~ "meta+stats"))
+                   mV
+
 -- | Set key cols from meta view selections, pop to parent, select cols
 setKey :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 setKey s =
@@ -93,4 +117,6 @@ commands = V.fromList $
   [ hdl (mkEntry CmdMetaPush      ""  "M"     "Open column metadata view"       True  "")        (onStk push)
   , hdl (mkEntry CmdMetaSetKey    "s" "<ret>" "Set selected rows as key columns" True  "colMeta")
         (\a ci _ -> if View.cur (stk a) ^. #vkind == VkColMeta then tryStk a ci (setKey (stk a)) else viewUp a ci)
+  , hdl (mkEntry CmdMetaStats     "s" "S"     "Compute stats for selected numeric cols" True "colMeta")
+        (\a ci _ -> if View.cur (stk a) ^. #vkind == VkColMeta then tryStk a ci (stats (stk a)) else viewUp a ci)
   ] ++ [ hdl (mkEntry c "" k lbl True "") (selByH flt) | (c, k, lbl, flt) <- metaSels ]

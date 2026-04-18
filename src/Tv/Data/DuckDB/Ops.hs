@@ -16,6 +16,7 @@ module Tv.Data.DuckDB.Ops
     -- * Meta / helpers
   , toText
   , queryMeta
+  , queryMetaStats
   , metaIdxs
   , metaNames
   , quoteId
@@ -37,13 +38,14 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word64)
+import qualified Data.HashSet as Set
 
 import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Prql as Prql
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable(..))
 import Data.List (nub)
-import Tv.Types (ColType(..), colText, escSql)
+import Tv.Types (ColType(..), colText, escSql, isNumeric)
 import qualified Tv.Log as Log
 
 -- ----------------------------------------------------------------------------
@@ -116,24 +118,52 @@ quoteId s = "\"" <> T.replace "\"" "\"\"" s <> "\""
 -- | SQL: per-column stats via UNION ALL (for non-parquet sources).
 -- Cannot use DuckDB SUMMARIZE: its null_percentage uses approximate counting
 -- which miscounts NULLs for some column types, giving wrong null_pct values.
-statsSql :: Text -> Vector Text -> Vector ColType -> Text
-statsSql baseSql names types =
+--
+-- 'withStats' controls whether expensive aggregates (mean/std/percentiles)
+-- are emitted. 'selSet' gates those aggregates row-by-row: only selected
+-- numeric columns run the heavy scans; others get NULL placeholders so
+-- the schema stays uniform.
+statsSql :: Bool -> Set.HashSet Text -> Text -> Vector Text -> Vector ColType -> Text
+statsSql withStats selSet baseSql names types =
   let one i =
-        let nm = escSql (fromMaybe "" (names V.!? i))
-            tp = escSql (T.pack (show (fromMaybe ColTypeOther (types V.!? i))))
-            q  = quoteId (fromMaybe "" (names V.!? i))
-        in "SELECT '" <> nm <> "' AS \"column\", '" <> tp <> "' AS coltype, "
+        let nm = fromMaybe "" (names V.!? i)
+            tp = fromMaybe ColTypeOther (types V.!? i)
+            q  = quoteId nm
+            heavy = withStats && isNumeric tp && Set.member nm selSet
+            extras =
+              if not withStats then ""
+              else if heavy
+                then ", CAST(AVG(" <> q <> ") AS VARCHAR) AS mean"
+                  <> ", CAST(STDDEV_POP(" <> q <> ") AS VARCHAR) AS std"
+                  <> ", CAST(QUANTILE_CONT(" <> q <> ", 0.25) AS VARCHAR) AS p25"
+                  <> ", CAST(QUANTILE_CONT(" <> q <> ", 0.50) AS VARCHAR) AS p50"
+                  <> ", CAST(QUANTILE_CONT(" <> q <> ", 0.75) AS VARCHAR) AS p75"
+                else ", NULL::VARCHAR AS mean, NULL::VARCHAR AS std"
+                  <> ", NULL::VARCHAR AS p25, NULL::VARCHAR AS p50, NULL::VARCHAR AS p75"
+        in "SELECT '" <> escSql nm <> "' AS \"column\", '"
+           <> escSql (T.pack (show tp)) <> "' AS coltype, "
            <> "CAST(COUNT(" <> q <> ") AS BIGINT) AS cnt, "
            <> "CAST(COUNT(DISTINCT " <> q <> ") AS BIGINT) AS dist, "
            <> "CAST(ROUND((1.0 - COUNT(" <> q <> ")::FLOAT / NULLIF(COUNT(*),0)) * 100) AS BIGINT) AS null_pct, "
-           <> "CAST(MIN(" <> q <> ") AS VARCHAR) AS mn, CAST(MAX(" <> q <> ") AS VARCHAR) AS mx FROM __src"
+           <> "CAST(MIN(" <> q <> ") AS VARCHAR) AS mn, CAST(MAX(" <> q <> ") AS VARCHAR) AS mx"
+           <> extras <> " FROM __src"
       unions = T.intercalate " UNION ALL "
                  (map one [0 .. V.length names - 1])
   in "WITH __src AS (" <> baseSql <> ") " <> unions
 
 -- | Query meta: parquet uses file metadata (instant), others use SQL aggregation.
 queryMeta :: AdbcTable -> IO (Maybe AdbcTable)
-queryMeta t = do
+queryMeta = queryMetaImpl False Set.empty
+
+-- | Query meta with expensive stats (mean/std/p25/p50/p75) for the given
+-- columns — only those are scanned for the heavy aggregates; the rest
+-- get NULLs so the schema stays uniform. Bypasses the parquet_metadata
+-- fast path because it doesn't carry the needed aggregates.
+queryMetaStats :: AdbcTable -> Vector Text -> IO (Maybe AdbcTable)
+queryMetaStats t sel = queryMetaImpl True (V.foldr Set.insert Set.empty sel) t
+
+queryMetaImpl :: Bool -> Set.HashSet Text -> AdbcTable -> IO (Maybe AdbcTable)
+queryMetaImpl withStats selSet t = do
   let names = Table.colNames t
       types = Table.colTypes t
   if V.null names
@@ -144,13 +174,15 @@ queryMeta t = do
               Just p | T.isSuffixOf ".parquet" p -> Just p
               _ -> Nothing
       mMetaSql <- case parquetPath of
-        Just p -> Prql.compile (metaPrql p)
-        Nothing -> do
+        -- parquet_metadata covers the cheap cols only; when stats are
+        -- requested, fall through to the aggregate path.
+        Just p | not withStats -> Prql.compile (metaPrql p)
+        _ -> do
           mBase <- Prql.compile (Prql.base (Table.query t))
           case mBase of
             Nothing -> pure Nothing
             Just baseSql ->
-              pure $ Just $ statsSql (T.stripEnd baseSql) names types
+              pure $ Just $ statsSql withStats selSet (T.stripEnd baseSql) names types
       case mMetaSql of
         Nothing -> pure Nothing
         Just metaSql -> do

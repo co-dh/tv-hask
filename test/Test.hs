@@ -93,6 +93,13 @@ test_meta_no_garbage = do
   out <- run "M" "data/basic.csv"
   assert (not (contains (fst (footer out)) "\xE2")) "Meta tab has no garbage chars"
 
+test_meta_stats :: Assertion
+test_meta_stats = do
+  out <- run "MTjTS" "data/basic.csv"
+  assert (contains (fst (footer out)) "meta+stats") "S pushes stats view"
+  -- column a is [1..5]: mean 3.0, stddev √2.
+  assert (contains out "3.0") "stats computed for numeric col (mean 3.0 shown)"
+
 -- ============================================================================
 -- === Freq tests (CSV) ===
 -- ============================================================================
@@ -1319,6 +1326,7 @@ ciTests = testGroup "ci"
   , testCase "meta_shows" test_meta_shows
   , testCase "meta_col_info" test_meta_col_info
   , testCase "meta_no_garbage" test_meta_no_garbage
+  , testCase "meta_stats" test_meta_stats
   , testCase "freq_shows" test_freq_shows
   , testCase "freq_after_meta" test_freq_after_meta
   , testCase "freq_by_key" test_freq_by_key

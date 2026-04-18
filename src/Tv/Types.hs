@@ -489,6 +489,7 @@ data Cmd
   | CmdMetaSetKey
   | CmdMetaSelNull
   | CmdMetaSelSingle
+  | CmdMetaStats
   | CmdFreqOpen
   | CmdFreqFilter
   | CmdFolderPush
@@ -562,6 +563,7 @@ instance StrEnum Cmd where
   toString CmdMetaSetKey     = "meta.setKey"
   toString CmdMetaSelNull    = "meta.selNull"
   toString CmdMetaSelSingle  = "meta.selSingle"
+  toString CmdMetaStats      = "meta.stats"
   toString CmdFreqOpen       = "freq.open"
   toString CmdFreqFilter     = "freq.filter"
   toString CmdFolderPush     = "folder.push"
@@ -588,7 +590,7 @@ instance StrEnum Cmd where
     , CmdTblDiff, CmdInfoTog
     , CmdPrecDec, CmdPrecInc, CmdPrecZero, CmdPrecMax
     , CmdCellUp, CmdCellDn, CmdHeat0, CmdHeat1, CmdHeat2, CmdHeat3
-    , CmdMetaPush, CmdMetaSetKey, CmdMetaSelNull, CmdMetaSelSingle
+    , CmdMetaPush, CmdMetaSetKey, CmdMetaSelNull, CmdMetaSelSingle, CmdMetaStats
     , CmdFreqOpen, CmdFreqFilter
     , CmdFolderPush, CmdFolderEnter, CmdFolderParent, CmdFolderDel
     , CmdFolderDepthDec, CmdFolderDepthInc
