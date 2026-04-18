@@ -10,6 +10,8 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
+import Data.IORef (newIORef, readIORef, modifyIORef')
+
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (testCase, (@?=))
 import Test.Tasty.QuickCheck (testProperty, forAll, choose, Property, (===), (==>))
@@ -19,6 +21,7 @@ import Optics.Core ((^.), (.~), (&), (%))
 import qualified Tv.Nav as Nav
 import qualified Tv.View as View
 import qualified Tv.Term as Term
+import qualified Tv.Fzf as Fzf
 import Tv.Types (Cmd(..), ColType(..))
 
 data MockTable = MockTable
@@ -207,9 +210,38 @@ propertyTests = testGroup "properties"
   , testProperty "dispOrder indices round-trip idxOf"  propDispOrderIdx
   ]
 
+-- Regression: pressing `/` without tmux used to paint the preview on
+-- top of fzf's inline UI, making the screen unreadable. The fix
+-- gates 'Tv.Fzf.gatePoll' on tmux — outside tmux, the poll callback
+-- must never run.
+test_gatePoll_nontmux_mutes :: IO ()
+test_gatePoll_nontmux_mutes = do
+  count <- newIORef (0 :: Int)
+  let bumpPoll = modifyIORef' count (+ 1)
+  Fzf.gatePoll False bumpPoll
+  Fzf.gatePoll False bumpPoll
+  n <- readIORef count
+  n @?= 0
+
+test_gatePoll_tmux_runs :: IO ()
+test_gatePoll_tmux_runs = do
+  count <- newIORef (0 :: Int)
+  let bumpPoll = modifyIORef' count (+ 1)
+  Fzf.gatePoll True bumpPoll
+  Fzf.gatePoll True bumpPoll
+  n <- readIORef count
+  n @?= 2
+
+fzfTests :: TestTree
+fzfTests = testGroup "Fzf.gatePoll"
+  [ testCase "non-tmux mutes poll"  test_gatePoll_nontmux_mutes
+  , testCase "tmux preserves poll"  test_gatePoll_tmux_runs
+  ]
+
 tests :: TestTree
 tests = testGroup "TestPure"
   [ opticsTests
   , resizeTests
   , propertyTests
+  , fzfTests
   ]
