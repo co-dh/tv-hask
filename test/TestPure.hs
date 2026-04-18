@@ -18,11 +18,14 @@ import Test.Tasty.QuickCheck (testProperty, forAll, choose, Property, (===), (==
 
 import Optics.Core ((^.), (.~), (&), (%))
 
+import qualified Tv.CmdConfig as CmdConfig
 import qualified Tv.Nav as Nav
 import qualified Tv.View as View
 import qualified Tv.Term as Term
 import qualified Tv.Fzf as Fzf
-import Tv.Types (Cmd(..), ColType(..))
+import Tv.Types (Cmd(..), ColType(..), ViewKind(..))
+import System.Timeout (timeout)
+import Test.Tasty.HUnit (assertFailure)
 
 data MockTable = MockTable
   { mockRows  :: Int
@@ -232,10 +235,25 @@ test_gatePoll_tmux_runs = do
   n <- readIORef count
   n @?= 2
 
+-- Regression: Fzf.cmdMode hardcoded testMode=False, so pressing space
+-- in tests spawned a real fzf popup that grabbed /dev/tty and blocked
+-- the user's terminal until they escaped. The contract is that with
+-- testMode on, cmdMode returns the first menu handler without invoking
+-- fzf at all.
+test_cmdMode_testmode_skips_fzf :: IO ()
+test_cmdMode_testmode_skips_fzf = do
+  let cc = CmdConfig.buildCache $ V.singleton
+        (CmdConfig.mkEntry CmdStkSwap "" "S" "Swap views" False "")
+  mR <- timeout 2000000 $ Fzf.cmdMode True cc VkTbl (pure ())
+  case mR of
+    Nothing -> assertFailure "cmdMode True blocked — should return without spawning fzf"
+    Just r  -> r @?= Just "stk.swap"
+
 fzfTests :: TestTree
-fzfTests = testGroup "Fzf.gatePoll"
-  [ testCase "non-tmux mutes poll"  test_gatePoll_nontmux_mutes
-  , testCase "tmux preserves poll"  test_gatePoll_tmux_runs
+fzfTests = testGroup "Fzf"
+  [ testCase "gatePoll non-tmux mutes poll" test_gatePoll_nontmux_mutes
+  , testCase "gatePoll tmux preserves poll" test_gatePoll_tmux_runs
+  , testCase "cmdMode testMode skips fzf"   test_cmdMode_testmode_skips_fzf
   ]
 
 tests :: TestTree
