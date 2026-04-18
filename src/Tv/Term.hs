@@ -56,9 +56,13 @@ import Foreign.C.Types (CInt(..))
 import Foreign.Marshal.Alloc (allocaBytes)
 import Foreign.Ptr (Ptr)
 import Foreign.Storable (Storable(..))
+import Control.Exception (SomeException, try)
 import System.IO (stdin, stdout, hSetBuffering, hSetEcho, hFlush,
-                  hIsTerminalDevice, BufferMode(..), hGetChar, hWaitForInput)
-import System.Posix.IO (stdInput)
+                  hIsTerminalDevice,
+                  BufferMode(..), Handle, hGetChar, hWaitForInput)
+import qualified GHC.IO.Handle.FD as HandleFD
+import System.Posix.IO (stdInput, openFd, defaultFileFlags, OpenMode(ReadOnly))
+import System.Posix.Types (Fd)
 import qualified System.Posix.Terminal as PT
 import System.IO.Unsafe (unsafePerformIO)
 import Tv.Types (ColType(..), isNumeric)
@@ -231,14 +235,36 @@ headlessRef :: IORef Bool
 headlessRef = unsafePerformIO (newIORef False)
 {-# NOINLINE headlessRef #-}
 
--- | isatty(stdin)
-isattyStdin :: IO Bool
-isattyStdin = hIsTerminalDevice stdin
+-- | Where the TUI reads keys and queries termios. Defaults to stdin / fd 0
+-- for the normal case; 'reopenTty' swaps to a fresh /dev/tty handle when
+-- stdin was consumed by a pipe (`ls | tv`). Lean solves this with
+-- freopen("/dev/tty", "r", stdin), but Haskell can't resurrect a
+-- semi-closed Handle — after hGetContents hits EOF, every subsequent
+-- stdin op throws "handle is closed". Redirecting through a ref keeps
+-- stdin untouched.
+inputHandle :: IORef Handle
+inputHandle = unsafePerformIO (newIORef stdin)
+{-# NOINLINE inputHandle #-}
 
--- | Try to (re)open /dev/tty on stdin so the program can still drive a TUI
--- when its stdin was redirected. Returns True on success.
+inputFd :: IORef Fd
+inputFd = unsafePerformIO (newIORef stdInput)
+{-# NOINLINE inputFd #-}
+
+-- | isatty on the current input source.
+isattyStdin :: IO Bool
+isattyStdin = readIORef inputHandle >>= hIsTerminalDevice
+
+-- | Open /dev/tty as the TUI's input handle/fd. Returns True on success.
 reopenTty :: IO Bool
-reopenTty = hIsTerminalDevice stdin
+reopenTty = do
+  r <- try $ do
+    fd  <- openFd "/dev/tty" ReadOnly defaultFileFlags
+    tty <- HandleFD.fdToHandle (fromIntegral fd)
+    writeIORef inputHandle tty
+    writeIORef inputFd fd
+  pure $ case r :: Either SomeException () of
+    Right _ -> True
+    Left _  -> False
 
 -- | Initialize terminal: raw-ish mode, query size via TIOCGWINSZ, allocate
 -- screen buffer, and emit the termbox2 init sequence (enter alt screen,
@@ -250,15 +276,17 @@ init = do
   already <- readIORef initedRef
   if already then pure 0
   else do
-    hSetBuffering stdin NoBuffering
+    inH  <- readIORef inputHandle
+    inFd <- readIORef inputFd
+    hSetBuffering inH NoBuffering
     hSetBuffering stdout NoBuffering
-    hSetEcho stdin False
-    isTty <- hIsTerminalDevice stdin
+    hSetEcho inH False
+    isTty <- hIsTerminalDevice inH
     -- cbreak-ish: ICANON off so bytes arrive unbuffered. Leaves OPOST on
     -- so NL→CRLF translation on stdout still works (termbox2 turns it off
     -- in cfmakeraw, but we don't emit bare `\n` during rendering).
     when isTty $ do
-      orig <- PT.getTerminalAttributes stdInput
+      orig <- PT.getTerminalAttributes inFd
       writeIORef origTios (Just orig)
       let ta = foldl PT.withoutMode orig
                  [ PT.ProcessInput, PT.EnableEcho, PT.EchoLF
@@ -266,7 +294,7 @@ init = do
                  , PT.StartStopOutput, PT.StartStopInput
                  ]
           ta' = PT.withMinInput (PT.withTime ta 0) 1
-      PT.setTerminalAttributes stdInput ta' PT.WhenFlushed
+      PT.setTerminalAttributes inFd ta' PT.WhenFlushed
     (w, h) <- if isTty
                 then termSize
                 else pure (80, 24)
@@ -325,11 +353,13 @@ shutdown = do
       <> "\x1b[?1049l\x1b[23;0;0t" -- EXIT_CA: leave alt screen + restore title
       <> "\x1b[?1l\x1b>"        -- EXIT_KEYPAD: cursor-keys off + keypad off
       <> "\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l" -- EXIT_MOUSE
-    hSetEcho stdin True
+    inH  <- readIORef inputHandle
+    inFd <- readIORef inputFd
+    hSetEcho inH True
     hFlush stdout
     mOrig <- readIORef origTios
     case mOrig of
-      Just orig -> PT.setTerminalAttributes stdInput orig PT.WhenFlushed
+      Just orig -> PT.setTerminalAttributes inFd orig PT.WhenFlushed
       Nothing   -> pure ()
     writeIORef origTios Nothing
     writeIORef initedRef False
@@ -511,31 +541,32 @@ toEvents s = case s of
 -- or SS3 sequence; if none arrives within 100 ms, treat it as a lone Esc.
 pollEvent :: IO Event
 pollEvent = do
-  c <- hGetChar stdin
+  inH <- readIORef inputHandle
+  c <- hGetChar inH
   if c /= '\x1B'
     then pure (toEvent c)
     else do
-      more <- hWaitForInput stdin 100
+      more <- hWaitForInput inH 100
       if not more
         then pure (toEvent '\x1B')
         else do
-          c2 <- hGetChar stdin
+          c2 <- hGetChar inH
           case c2 of
-            '[' -> readCsi
-            'O' -> do c3 <- hGetChar stdin; pure (toEvents ['\x1B', 'O', c3])
+            '[' -> readCsi inH
+            'O' -> do c3 <- hGetChar inH; pure (toEvents ['\x1B', 'O', c3])
             _   -> pure (toEvent '\x1B')
   where
     -- A CSI tail is either a single letter final byte (arrows, home, end)
     -- or any run of digit parameters terminated by `~` (pgup, pgdn, …).
-    readCsi = do
-      c <- hGetChar stdin
+    readCsi inH = do
+      c <- hGetChar inH
       if c >= '0' && c <= '9'
-        then readCsiTilde [c]
+        then readCsiTilde inH [c]
         else pure (toEvents ['\x1B', '[', c])
-    readCsiTilde acc = do
-      c <- hGetChar stdin
+    readCsiTilde inH acc = do
+      c <- hGetChar inH
       if c >= '0' && c <= '9'
-        then readCsiTilde (c : acc)
+        then readCsiTilde inH (c : acc)
         else pure (toEvents ('\x1B' : '[' : reverse acc ++ [c]))
 
 -- | Read termbox internal cell buffer as string (rows separated by newlines).

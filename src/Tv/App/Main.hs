@@ -12,7 +12,7 @@ module Tv.App.Main
   , main
   ) where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, fromException, try)
 import Control.Monad (unless, when)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
@@ -22,6 +22,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.Directory (doesDirectoryExist)
 import System.Environment (getArgs, lookupEnv)
+import System.Exit (ExitCode(..), exitWith)
 import System.IO (stderr)
 
 import qualified Tv.App.Common as Common
@@ -117,7 +118,13 @@ initState stk_ th tm ns =
 -- run app with view
 runApp :: View AdbcTable -> Bool -> Bool -> Bool -> Theme.State -> Vector Text -> IO AppState
 runApp v pipe test_ ns th ks = do
-  _ <- if pipe then Term.reopenTty else pure False
+  when (pipe && not test_) $ do
+    ok <- Term.reopenTty
+    unless ok $ do
+      TIO.hPutStrLn stderr
+        "Error: stdin was piped but /dev/tty is not accessible. \
+        \Run `tv` in an interactive terminal, or pass a file path."
+      exitWith (ExitFailure 1)
   _ <- Term.init
   let stk_ = ViewStack { hd = v, tl = [] }
   withTui test_ (Common.mainLoop (initState stk_ th test_ ns) test_ ks)
@@ -276,4 +283,7 @@ main = do
   r <- try (appMain (map T.pack args)) :: IO (Either SomeException ())
   case r of
     Right _ -> pure ()
-    Left e  -> TIO.hPutStrLn stderr ("Error: " <> T.pack (show e))
+    -- Let ExitCode propagate cleanly (exitWith); only format other errors.
+    Left e  -> case fromException e :: Maybe ExitCode of
+      Just ec -> exitWith ec
+      Nothing -> TIO.hPutStrLn stderr ("Error: " <> T.pack (show e))
