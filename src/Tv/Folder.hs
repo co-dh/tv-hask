@@ -105,17 +105,14 @@ cellStr :: View AdbcTable -> Int -> IO Text
 cellStr v colIdx = do
   let rowCur = Nav.cur (Nav.row (View.nav v))
   cols <- Ops.getCols (Nav.tbl (View.nav v)) (V.singleton colIdx) rowCur (rowCur + 1)
-  case cols V.!? 0 of
-    Just c  -> pure (fromMaybe "" (c V.!? 0))
-    Nothing -> pure ""
+  pure $ fromMaybe "" $ cols V.!? 0 >>= (V.!? 0)
 
 -- | Get path column value from current row
 curPath :: View AdbcTable -> IO (Maybe Text)
 curPath v = case View.vkind v of
   VkFld _ _ ->
-    case pathIdx (Nav.colNames (View.nav v)) of
-      Just col -> Just <$> cellStr v col
-      Nothing  -> pure Nothing
+    maybe (pure Nothing) (fmap Just . cellStr v) $
+      pathIdx (Nav.colNames (View.nav v))
   _ -> pure Nothing
 
 -- | Get type column value from current row
@@ -165,29 +162,22 @@ mkView noSign_ path_ depth = case Source.findSource path_ of
 push :: Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 push noSign_ s = do
   mp <- curPath (View.cur s)
-  let path_ = case mp of
-        Just p  -> p
-        Nothing -> case View.vkind (View.cur s) of
-          VkFld p _ -> p
-          _         -> "."
-  m <- mkView noSign_ path_ 1
-  case m of
-    Just v  -> pure (Just (View.push s v))
-    Nothing -> pure Nothing
+  let path_ = fromMaybe (case View.vkind (View.cur s) of
+                           VkFld p _ -> p
+                           _         -> ".") mp
+  fmap (View.push s) <$> mkView noSign_ path_ 1
 
 -- | Join parent path with entry name (works for local, S3, HF)
 joinPath :: Text -> Text -> Text
-joinPath parent_ entry =
-  if parent_ == "." then "./" <> entry
-  else Remote.joinRemote parent_ entry
+joinPath parent_ entry
+  | parent_ == "." = "./" <> entry
+  | otherwise      = Remote.joinRemote parent_ entry
 
 -- | Try to create a view; push or setCur, fallback to original stack
 tryView :: Bool -> ViewStack AdbcTable -> Text -> Int -> Bool -> IO (Maybe (ViewStack AdbcTable))
-tryView noSign_ s path_ depth push_ = do
-  m <- mkView noSign_ path_ depth
-  case m of
-    Just v  -> pure (Just (if push_ then View.push s v else View.setCur s v))
-    Nothing -> pure (Just s)
+tryView noSign_ s path_ depth push_ =
+  Just . maybe s (\v -> if push_ then View.push s v else View.setCur s v)
+    <$> mkView noSign_ path_ depth
 
 -- | Get current folder depth
 curDepth :: ViewStack AdbcTable -> Int
