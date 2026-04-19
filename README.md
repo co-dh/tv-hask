@@ -165,9 +165,9 @@ section for the full list):
 
 ```bash
 # Arch
-sudo pacman -S duckdb r fzf findutils rustup
+sudo pacman -S r fzf findutils rustup unzip github-cli
 rustup default stable
-# Debian/Ubuntu: libduckdb needs DuckDB's tarball; rustc/cargo via rustup.
+# Debian/Ubuntu: install rustc/cargo via rustup; gh from cli.github.com.
 ```
 
 Clone and build:
@@ -175,10 +175,15 @@ Clone and build:
 ```bash
 git clone https://github.com/co-dh/tv-hask
 cd tv-hask
-make prqlc             # clones PRQL + builds vendor/prql/target/release/libprqlc_c.a
-cabal build all        # produces dist-newstyle/.../tv (statically linked to prqlc)
+make prqlc duckdb      # builds libprqlc_c.a + downloads duckdb static libs
+cabal build all        # produces dist-newstyle/.../tv (~85 MB, fully self-contained)
 cabal install          # copies tv to ~/.cabal/bin (add to $PATH)
 ```
+
+`make duckdb` downloads the prebuilt `static-libs-linux-amd64.zip` from
+the latest <https://github.com/duckdb/duckdb> release (~30 MB zip, ~135 MB
+unpacked) and extracts it to `vendor/duckdb/`. No DuckDB source build
+needed.
 
 The `make prqlc` step clones <https://github.com/PRQL/prql> into
 `vendor/prql/` and runs `cargo build --release` on the `prqlc-c` crate
@@ -358,21 +363,23 @@ Install R with ggplot2: `Rscript -e 'install.packages("ggplot2")'`
 
 Required:
 
-| Tool        | Purpose                                    |
-|-------------|--------------------------------------------|
-| `libduckdb` | Query engine (loaded via FFI at runtime)   |
-| `find`      | Folder browsing (GNU findutils `-printf`)  |
-| `fzf`       | Fuzzy search, column jump, command palette |
+| Tool   | Purpose                                    |
+|--------|--------------------------------------------|
+| `find` | Folder browsing (GNU findutils `-printf`)  |
+| `fzf`  | Fuzzy search, column jump, command palette |
 
-PRQL → SQL compilation (`prqlc`) is statically linked into the `tv`
-binary at build time via FFI; no runtime dependency.
+DuckDB and PRQL → SQL compilation are statically linked into the `tv`
+binary at build time via FFI; no runtime dependency on `libduckdb.so`
+or the `prqlc` CLI.
 
 Build-time only:
 
-| Tool      | Purpose                                       |
-|-----------|-----------------------------------------------|
-| `cargo`   | Builds `libprqlc_c.a` from the PRQL Rust crate |
-| `git`     | Clones the PRQL repo on first `make prqlc`    |
+| Tool       | Purpose                                                   |
+|------------|-----------------------------------------------------------|
+| `cargo`    | Builds `libprqlc_c.a` from the PRQL Rust crate            |
+| `git`      | Clones the PRQL repo on first `make prqlc`                |
+| `gh`       | Downloads the DuckDB static-libs release zip              |
+| `unzip`    | Unpacks the DuckDB static-libs zip into `vendor/duckdb/`  |
 
 Optional (feature-specific):
 

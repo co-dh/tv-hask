@@ -123,9 +123,26 @@ executable tv
   -- Static-link the Rust prqlc engine. Header (cbits/prqlc.h) vendored.
   -- Build libprqlc_c.a with `make prqlc` (clones PRQL repo + cargo build).
   -- Rust runtime needs pthread + dl + m + gcc_s.
-  extra-lib-dirs: vendor/lib
+  extra-lib-dirs: vendor/lib, vendor/duckdb
   ld-options: -Wl,--push-state,--whole-archive -lprqlc_c -Wl,--pop-state
-  extra-libraries: pthread, dl, m, gcc_s
+  -- Static-link libduckdb (engine + extensions). vendor/duckdb is searched
+  -- BEFORE system paths so -lduckdb resolves to libduckdb.a (a symlink to
+  -- libduckdb_static.a from duckdb/duckdb static-libs release zip).
+  -- --start-group is needed because the 23 archives have circular refs.
+  -- jemalloc_extension is required: generated_extension_loader.a refs
+  -- JemallocExtension's vtable; excluding it leaves undefined symbols.
+  ld-options: -Wl,-Bstatic,--start-group
+              -lduckdb
+              -lcore_functions_extension -lparquet_extension -licu_extension
+              -lautocomplete_extension -ljson_extension
+              -ltpch_extension -ltpcds_extension -ljemalloc_extension
+              -lduckdb_re2 -lduckdb_fmt -lduckdb_pg_query -lduckdb_zstd
+              -lduckdb_utf8proc -lduckdb_yyjson -lduckdb_mbedtls
+              -lduckdb_miniz -lduckdb_hyperloglog -lduckdb_fastpforlib
+              -lduckdb_fsst -lduckdb_skiplistlib
+              -lduckdb_generated_extension_loader
+              -Wl,--end-group,-Bdynamic
+  extra-libraries: pthread, dl, m, gcc_s, stdc++, atomic
   build-depends:
     base >= 4.16 && < 5,
     tv-hask
