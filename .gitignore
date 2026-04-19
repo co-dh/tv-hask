@@ -42,3 +42,6 @@ data/1.parquet
 data/2.parquet
 data/1_time.parquet
 data/nyse
+
+# Vendored Rust prqlc staticlib (built locally; not portable)
+vendor/

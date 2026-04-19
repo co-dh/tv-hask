@@ -165,8 +165,9 @@ section for the full list):
 
 ```bash
 # Arch
-sudo pacman -S duckdb prqlc r fzf findutils
-# Debian/Ubuntu: libduckdb needs DuckDB's tarball; prqlc its releases page.
+sudo pacman -S duckdb r fzf findutils rustup
+rustup default stable
+# Debian/Ubuntu: libduckdb needs DuckDB's tarball; rustc/cargo via rustup.
 ```
 
 Clone and build:
@@ -174,8 +175,18 @@ Clone and build:
 ```bash
 git clone https://github.com/co-dh/tv-hask
 cd tv-hask
-cabal build all        # produces dist-newstyle/.../tv
+make prqlc             # clones PRQL + builds vendor/prql/target/release/libprqlc_c.a
+cabal build all        # produces dist-newstyle/.../tv (statically linked to prqlc)
 cabal install          # copies tv to ~/.cabal/bin (add to $PATH)
+```
+
+The `make prqlc` step clones <https://github.com/PRQL/prql> into
+`vendor/prql/` and runs `cargo build --release` on the `prqlc-c` crate
+(~40s on first build, cached after). To use a local PRQL checkout
+instead, symlink it before running `make`:
+
+```bash
+ln -s ~/repo/prql vendor/prql && make prqlc
 ```
 
 Run tests (169 tasty + 97 doctest):
@@ -350,9 +361,18 @@ Required:
 | Tool        | Purpose                                    |
 |-------------|--------------------------------------------|
 | `libduckdb` | Query engine (loaded via FFI at runtime)   |
-| `prqlc`     | PRQL → SQL query compilation               |
 | `find`      | Folder browsing (GNU findutils `-printf`)  |
 | `fzf`       | Fuzzy search, column jump, command palette |
+
+PRQL → SQL compilation (`prqlc`) is statically linked into the `tv`
+binary at build time via FFI; no runtime dependency.
+
+Build-time only:
+
+| Tool      | Purpose                                       |
+|-----------|-----------------------------------------------|
+| `cargo`   | Builds `libprqlc_c.a` from the PRQL Rust crate |
+| `git`     | Clones the PRQL repo on first `make prqlc`    |
 
 Optional (feature-specific):
 
