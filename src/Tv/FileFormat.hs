@@ -20,7 +20,6 @@ module Tv.FileFormat
 
 import Codec.Compression.GZip (decompress)
 import Control.Exception (SomeException, try)
-import Control.Monad (void)
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Maybe (isJust)
@@ -29,15 +28,9 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import System.Directory (canonicalizePath, findExecutable)
-import System.Exit (ExitCode(..))
-import System.IO (hClose, stdout)
-import System.Process
-  ( CreateProcess(..), StdStream(..), proc
-  , createProcess, waitForProcess, readProcessWithExitCode
-  )
+import System.Directory (canonicalizePath)
+import System.IO (stdout)
 
-import qualified Tv.Term as Term
 import qualified Tv.Log as Log
 import Tv.View (View)
 import qualified Tv.View as View
@@ -97,58 +90,20 @@ absPath path_ = do
     Right p -> T.pack p
     Left _  -> path_
 
--- | Spawn interactive process inheriting terminal streams (bat/less)
-spawn :: String -> [String] -> IO ()
-spawn cmd args = do
-  (_, _, _, ph) <- createProcess
-    (proc cmd args) { std_in = Inherit, std_out = Inherit, std_err = Inherit }
-  void (waitForProcess ph)
-
--- | Spawn process, feed lazy bytestring into stdin, inherit stdout/stderr
-pipeIn :: String -> [String] -> LBS.ByteString -> IO ExitCode
-pipeIn cmd args bs = do
-  (Just hin, _, _, ph) <- createProcess
-    (proc cmd args) { std_in = CreatePipe, std_out = Inherit, std_err = Inherit }
-  LBS.hPut hin bs
-  hClose hin
-  waitForProcess ph
-
 -- | Read .gz file and return decompressed bytes
 readGz :: Text -> IO LBS.ByteString
 readGz path_ = decompress <$> LBS.readFile (T.unpack path_)
 
--- | View file with bat (if available) or less. .gz decompressed via zlib.
+-- | View file: read it (decompressing .gz via zlib) and dump to stdout.
+-- The `tm` flag is the test-mode marker — ignored now that there's no
+-- external pager to switch on/off. In interactive use the terminal
+-- handles scrollback; users who want paging can pipe (`tv ... | less`).
 viewFile :: Bool -> Text -> IO ()
-viewFile tm path_ = do
-  let gz = T.isSuffixOf ".gz" path_
-  if tm
-    then do
-      r <- try action :: IO (Either SomeException (ExitCode, String, String))
-      case r of
-        Right (ExitSuccess, out, _) -> TIO.hPutStr stdout (T.pack out)
-        _ ->
-          if gz
-            then TIO.hPutStr stdout . T.pack . LBSC.unpack =<< readGz path_
-            else TIO.hPutStr stdout =<< TIO.readFile (T.unpack path_)
-    else do
-      Term.shutdown
-      hasBat <- isJust <$> findExecutable "bat"
-      let viewer = if hasBat then "bat" else "less"
-          viewerArgs = if hasBat then ["--paging=always"] else []
-      if gz
-        then do
-          bs <- readGz path_
-          void (pipeIn viewer viewerArgs bs)
-        else spawn viewer (viewerArgs <> [T.unpack path_])
-      void Term.init
-  where
-    action =
-      if T.isSuffixOf ".gz" path_
-        then do
-          bs <- readGz path_
-          -- bat reads decompressed bytes from stdin; capture its stdout
-          readProcessWithExitCode "bat" ["--paging=never", "--plain"] (LBSC.unpack bs)
-        else readProcessWithExitCode "bat" ["--paging=never", "--plain", T.unpack path_] ""
+viewFile _ path_ = do
+  bs <- if T.isSuffixOf ".gz" path_
+          then readGz path_
+          else LBS.readFile (T.unpack path_)
+  TIO.hPutStr stdout (T.pack (LBSC.unpack bs))
 
 -- | Try to ingest as CSV via DuckDB read_csv (handles .gz). Nothing = not valid CSV.
 readCsv :: Text -> IO (Maybe (View AdbcTable))
