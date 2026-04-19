@@ -37,6 +37,7 @@ module Tv.Source.Core
   , applyStubTypes
     -- exception helpers
   , ignoreErrs
+  , try_
     -- shared home-dir helper
   , homeText
   ) where
@@ -163,6 +164,13 @@ checkShell s label =
 -- | Swallow exceptions from a best-effort IO action.
 ignoreErrs :: IO a -> IO ()
 ignoreErrs m = try m >>= \(_ :: Either SomeException a) -> pure ()
+
+-- | Exception-to-Maybe. Replaces the `try (...) :: IO (Either SomeException x)`
+-- noise at call sites.
+try_ :: forall a. IO a -> IO (Maybe a)
+try_ m = do
+  r <- try m :: IO (Either SomeException a)
+  pure $ either (const Nothing) Just r
 
 homeText :: IO Text
 homeText = T.pack . fromMaybe "/tmp" <$> lookupEnv "HOME"

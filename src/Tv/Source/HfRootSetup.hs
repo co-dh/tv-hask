@@ -1,35 +1,24 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
--- | Populate ~/.cache/tv/hf_datasets.duckdb with a fresh listing of the top
--- Hugging Face datasets (sorted by downloads). Native Haskell populator — no
--- external python/curl/duckdb-CLI subprocess needed.
---
--- Re-runs only when the existing listing is >24h old (or absent). Uses the main
--- DuckDB Conn: ATTACHes the file as writable, rewrites `listing` via
--- read_json_auto on a tmp file, DETACHes. The caller then ATTACHes read-only.
-module Tv.Source.HfRootSetup
-  ( run
-  , cleanDesc
-  , findTag
-  , linkNext
-  ) where
+-- | Populate ~/.cache/tv/hf_datasets.duckdb with the top Hugging Face datasets
+-- (sorted by downloads). Paginates the API, cleans descriptions, writes via
+-- read_json_auto on a temp file. Refreshes when existing listing is >24h old.
+module Tv.Source.HfRootSetup (run, cleanDesc, findTag, linkNext) where
 
-import Control.Exception (SomeException, try)
+import Control.Exception (bracket_)
 import qualified Data.Aeson as A
 import qualified Data.Aeson.Encoding as E
 import qualified Data.Aeson.Key as K
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as BL
-import Data.Maybe (mapMaybe)
+import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import Data.Scientific (toRealFloat)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import qualified Data.Vector as V
-import Network.HTTP.Client (Manager, httpLbs, parseRequest, responseBody, responseHeaders)
-import qualified Network.HTTP.Client as HTTP
+import Network.HTTP.Client (httpLbs, parseRequest, responseBody, responseHeaders, responseTimeout, responseTimeoutMicro)
 import Network.HTTP.Types.Header (HeaderName)
 import System.Directory (createDirectoryIfMissing, removeFile)
 
@@ -40,101 +29,66 @@ import qualified Tv.Source.Core as Core
 apiBase :: String
 apiBase = "https://huggingface.co/api/datasets?limit=1000&sort=downloads&direction=-1&full=true"
 
--- | Hard cap. Matches the Python script: prevents unbounded growth if the API
--- ever yields millions of pages.
 maxDatasets :: Int
 maxDatasets = 50000
 
--- | Cache max age in seconds — refetch if the listing is older than this.
 maxAge :: Double
 maxAge = 24 * 3600
 
-dbPath :: IO Text
-dbPath = do
-  home <- Core.homeText
-  pure $ home <> "/.cache/tv/hf_datasets.duckdb"
+cache :: FilePath -> IO FilePath
+cache name = do
+  d <- (<> "/.cache/tv") . T.unpack <$> Core.homeText
+  createDirectoryIfMissing True d
+  pure (d <> "/" <> name)
 
-tmpJson :: IO Text
-tmpJson = do
-  home <- Core.homeText
-  pure $ home <> "/.cache/tv/tmp_hf_listing.json"
+now_ :: IO Double
+now_ = realToFrac <$> getPOSIXTime
 
--- | Ensure ~/.cache/tv exists.
-ensureDir :: IO ()
-ensureDir = do
-  home <- Core.homeText
-  createDirectoryIfMissing True $ T.unpack home <> "/.cache/tv"
-
--- ============================================================================
--- Freshness check
--- ============================================================================
-
--- | Is the listing <24h old and non-empty? Attaches read-only, queries, detaches.
--- Any failure (file missing, table missing, bad cells) -> not fresh.
+-- | Listing is fresh iff it exists and has updated_at < maxAge seconds old.
+-- Uses a separate ATTACH handle (@hfchk@) so we don't clash with the
+-- read-only @hf@ alias the main source uses at query time.
 checkFresh :: IO Bool
-checkFresh = do
-  p <- dbPath
-  let attach = "ATTACH '" <> p <> "' AS hfchk (READ_ONLY)"
-      detach = "DETACH DATABASE IF EXISTS hfchk"
-  _ <- try (Conn.query detach) :: IO (Either SomeException Conn.QueryResult)
-  r <- try $ do
-    _ <- Conn.query attach
-    Conn.query "SELECT count(*) AS n, max(updated_at) AS ts FROM hfchk.listing"
-  _ <- try (Conn.query detach) :: IO (Either SomeException Conn.QueryResult)
-  case r of
-    Left (_ :: SomeException) -> pure False
-    Right qr -> do
+checkFresh = fmap (fromMaybe False) $ Core.try_ $ do
+  p <- cache "hf_datasets.duckdb"
+  bracket_
+    (q_ ("ATTACH '" <> T.pack p <> "' AS hfchk (READ_ONLY)"))
+    (q_ "DETACH DATABASE IF EXISTS hfchk")
+    $ do
+      qr <- Conn.query "SELECT count(*), max(updated_at) FROM hfchk.listing"
       nr <- Conn.nrows qr
-      if nr == 0
-        then pure False
-        else do
-          n  <- Conn.cellInt   qr 0 0
-          ts <- Conn.cellFloat qr 0 1
-          now <- realToFrac <$> getPOSIXTime
-          pure $ n > 0 && (now - ts) < maxAge
+      if nr == 0 then pure False else do
+        n  <- Conn.cellInt   qr 0 0
+        ts <- Conn.cellFloat qr 0 1
+        t  <- now_
+        pure $ n > 0 && t - ts < maxAge
 
--- ============================================================================
--- HTTP paginated fetch
--- ============================================================================
+-- ## HTTP paginated fetch
 
--- | Fetch all dataset entries, following Link: rel="next" until exhausted or cap hit.
--- Accumulates pages in reverse order (O(1) prepend) and flattens once at the end
--- to avoid O(n²) list concatenation across ~50 pages × 1000 entries.
-fetchAll :: Manager -> IO [A.Value]
-fetchAll mgr = go apiBase [] 0 (0 :: Int)
-  where
-    flatten = concat . reverse
-    go url pages !total page = do
-      Log.write "src" $ "hf fetch page " <> T.pack (show (page + 1))
-      r <- try (fetchPage mgr url) :: IO (Either SomeException ([A.Value], Maybe String))
-      case r of
-        Left e -> do
-          Log.write "src" $ "hf fetch err: " <> T.pack (show e)
-          pure (flatten pages)
-        Right (entries, _) | null entries -> pure (flatten pages)
-        Right (entries, mNext) ->
-          let pages' = entries : pages
-              total' = total + length entries
-          in if total' >= maxDatasets
-               then pure (take maxDatasets (flatten pages'))
-               else case mNext of
-                      Just next -> go next pages' total' (page + 1)
-                      Nothing   -> pure (flatten pages')
+-- | Accumulate pages in reverse (O(1) cons), flatten once at the end.
+fetchAll :: IO [A.Value]
+fetchAll = do
+  mgr <- Core.httpMgr
+  let page url = fmap (fromMaybe ([], Nothing)) $ Core.try_ $ do
+        req <- parseRequest url
+        r <- httpLbs req { responseTimeout = responseTimeoutMicro (60 * 1000000) } mgr
+        let es = fromMaybe [] (A.decode (responseBody r))
+        pure (es, linkNext (responseHeaders r))
+      go url !pages !total !n = do
+        Log.write "src" $ "hf fetch page " <> T.pack (show (n + 1))
+        (es, next) <- page url
+        if null es
+          then pure (concat (reverse pages))
+          else do
+            let pages' = es : pages
+                total' = total + length es
+            if total' >= maxDatasets
+              then pure (take maxDatasets (concat (reverse pages')))
+              else case next of
+                Just u  -> go u pages' total' (n + 1)
+                Nothing -> pure (concat (reverse pages'))
+  go apiBase [] 0 (0 :: Int)
 
--- | One page: GET, parse body as JSON array, extract Link header next URL.
-fetchPage :: Manager -> String -> IO ([A.Value], Maybe String)
-fetchPage mgr url = do
-  req <- parseRequest url
-  resp <- httpLbs req { HTTP.responseTimeout = HTTP.responseTimeoutMicro (60 * 1000000) } mgr
-  let body = responseBody resp
-      entries = case A.decode body :: Maybe [A.Value] of
-        Just es -> es
-        Nothing -> []
-      nextUrl = linkNext (responseHeaders resp)
-  pure (entries, nextUrl)
-
--- | Parse "Link: <url>; rel=\"next\", <url>; rel=\"prev\"" headers for next URL.
--- HeaderName has a case-insensitive Eq instance, so `k == "link"` DTRT.
+-- | Parse @Link@ header for @rel="next"@.
 --
 -- >>> linkNext [("link", "<https://a/p2>; rel=\"next\", <https://a/p0>; rel=\"prev\"")]
 -- Just "https://a/p2"
@@ -143,32 +97,43 @@ fetchPage mgr url = do
 -- >>> linkNext []
 -- Nothing
 linkNext :: [(HeaderName, BS.ByteString)] -> Maybe String
-linkNext hs =
-  let links = [ v | (k, v) <- hs, k == "link" ]
-  in foldr (\b acc -> case acc of Just _ -> acc; Nothing -> parseNext b) Nothing links
+linkNext hs = listToMaybe
+  [ BS.unpack u
+  | (k, v) <- hs, k == "link"
+  , c <- BS.split ',' v
+  , "rel=\"next\"" `BS.isInfixOf` c
+  , let u = BS.takeWhile (/= '>') (BS.drop 1 (BS.dropWhile (/= '<') c))
+  , not (BS.null u)
+  ]
+
+-- ## Entry → row
+
+-- | Pick a field from a JSON object and coerce via @pick@; default when absent.
+get :: (A.Value -> Maybe a) -> a -> Text -> A.Value -> a
+get pick d k (A.Object o) = fromMaybe d (KM.lookup (K.fromText k) o >>= pick)
+get _    d _ _            = d
+
+getT :: Text -> A.Value -> Text
+getT = get (\case A.String s -> Just s; _ -> Nothing) ""
+
+getI :: Text -> A.Value -> Int
+getI = get (\case A.Number s -> Just (truncate (toRealFloat s :: Double)); _ -> Nothing) 0
+
+-- | @gated@ is bool-or-string in the API; any non-empty non-\"false\" → True.
+getB :: Text -> A.Value -> Bool
+getB = get pick False
   where
-    parseNext b =
-      -- Split on "," to get "<url>; rel=\"next\"" chunks; find one ending in rel="next".
-      let chunks = BS.split ',' b
-          match c =
-            let c' = BS.dropWhile (== ' ') c
-            in if ";" `BS.isInfixOf` c' && "rel=\"next\"" `BS.isInfixOf` c'
-                 then extractUrl c'
-                 else Nothing
-      in foldr (\c a -> case a of Just _ -> a; Nothing -> match c) Nothing chunks
-    extractUrl c =
-      -- c looks like "<https://...>; rel=\"next\""
-      let afterLt = BS.drop 1 $ BS.dropWhile (/= '<') c
-          (u, _) = BS.break (== '>') afterLt
-      in if BS.null u then Nothing else Just (BS.unpack u)
+    pick (A.Bool b)   = Just b
+    pick (A.String s) = Just (not (T.null s) && T.toLower s /= "false")
+    pick _            = Nothing
 
--- ============================================================================
--- Row extraction
--- ============================================================================
+getTags :: A.Value -> [Text]
+getTags = get (\case A.Array a -> Just [s | A.String s <- V.toList a]; _ -> Nothing) [] "tags"
 
--- | Strip HTML tags, markdown links, markdown punctuation, collapse whitespace,
--- cap at 200 chars. Mirrors the Python regex passes (no HTML parser needed for
--- the dataset card snippets we see).
+card :: A.Value -> A.Value
+card = get (\case v@(A.Object _) -> Just v; _ -> Nothing) (A.Object KM.empty) "cardData"
+
+-- | Clean HTML/markdown noise from description, collapse whitespace, cap at 200.
 --
 -- >>> cleanDesc "<b>Hello</b>   world"
 -- "Hello world"
@@ -177,27 +142,19 @@ linkNext hs =
 -- >>> cleanDesc "**bold** _ital_ #hash"
 -- "bold ital hash"
 cleanDesc :: Text -> Text
-cleanDesc = T.take 200 . collapseWs . stripMdChars . stripMdLinks . stripTags
+cleanDesc = T.take 200 . T.unwords . T.words . T.filter (`notElem` md) . links . tags
   where
-    -- <...> -> ' '.  Scan char-by-char; inside a tag, drop everything until '>'.
-    stripTags t = T.pack (go (T.unpack t))
-      where
-        go []       = []
-        go ('<':xs) = ' ' : go (drop 1 (dropWhile (/= '>') xs))
-        go (c:xs)   = c : go xs
-    -- [text](url) -> text.  Mirrors the Python regex \[([^\]]*)\]\([^)]*\):
-    -- only rewrites if we find both "]" and the following "(url)" pair.
-    stripMdLinks t = T.pack (goL (T.unpack t))
-      where
-        goL []       = []
-        goL ('[':xs)
-          | (inner, ']':'(':rest) <- break (== ']') xs
-          , (_    , ')':rest2)    <- break (== ')') rest = inner ++ goL rest2
-        goL (c:xs)   = c : goL xs
-    stripMdChars = T.filter (`notElem` ("#*_~`>" :: String))
-    collapseWs = T.strip . T.unwords . T.words
+    md = "#*_~`>" :: String
+    tags t = case T.breakOn "<" t of
+      (a, "") -> a
+      (a, b)  -> a <> " " <> tags (T.drop 1 (T.dropWhile (/= '>') (T.drop 1 b)))
+    links t = case T.breakOn "[" t of
+      (a, "") -> a
+      (a, b)  -> case T.breakOn "](" (T.drop 1 b) of
+        (_, "")       -> a <> b
+        (inner, rest) -> a <> inner <> links (T.drop 1 (T.dropWhile (/= ')') rest))
 
--- | First tag matching a prefix (e.g. "license:mit" with prefix "license:" -> "mit").
+-- | First tag matching a prefix (e.g. "license:mit" + "license:" → "mit").
 --
 -- >>> findTag "license:" ["foo", "license:mit", "bar"]
 -- "mit"
@@ -206,123 +163,57 @@ cleanDesc = T.take 200 . collapseWs . stripMdChars . stripMdLinks . stripTags
 -- >>> findTag "language:" ["language:en", "language:fr"]
 -- "en"
 findTag :: Text -> [Text] -> Text
-findTag pfx ts = case mapMaybe (T.stripPrefix pfx) ts of
-  (x:_) -> x
-  []    -> ""
+findTag p = fromMaybe "" . listToMaybe . mapMaybe (T.stripPrefix p)
 
--- | Get an entry field as Text, defaulting to "".
-getText :: Text -> A.Value -> Text
-getText k (A.Object o) = case KM.lookup (K.fromText k) o of
-  Just (A.String s) -> s
-  _                 -> ""
-getText _ _ = ""
-
--- | Get an entry field as Int, defaulting to 0.
-getInt :: Text -> A.Value -> Int
-getInt k (A.Object o) = case KM.lookup (K.fromText k) o of
-  Just (A.Number s) -> truncate (toRealFloat s :: Double)
-  _                 -> 0
-getInt _ _ = 0
-
--- | Get an entry field as Bool, defaulting to False.
--- The HF API returns the `gated` field as either a bool or a string like
--- "auto" / "manual"; we treat any truthy string as gated=True.
-getBool :: Text -> A.Value -> Bool
-getBool k (A.Object o) = case KM.lookup (K.fromText k) o of
-  Just (A.Bool b)   -> b
-  Just (A.String s) -> not (T.null s) && T.toLower s /= "false"
-  _                 -> False
-getBool _ _ = False
-
--- | Get an entry field as a list of strings (for tags), defaulting to [].
-getStrs :: Text -> A.Value -> [Text]
-getStrs k (A.Object o) = case KM.lookup (K.fromText k) o of
-  Just (A.Array a) -> [ s | A.String s <- V.toList a ]
-  _                -> []
-getStrs _ _ = []
-
--- | Get a nested object field (e.g. cardData); defaults to empty Object.
-getObj :: Text -> A.Value -> A.Value
-getObj k (A.Object o) = case KM.lookup (K.fromText k) o of
-  Just v@(A.Object _) -> v
-  _                   -> A.Object KM.empty
-getObj _ _ = A.Object KM.empty
-
--- | First 19 chars (ISO-8601 date+time without fractional seconds).
-dateHead :: Text -> Text
-dateHead = T.take 19
-
--- | Build a single row JSON object matching the Python schema.
 toRow :: Double -> A.Value -> A.Value
-toRow now e =
-  let tags   = getStrs "tags" e
-      card   = getObj  "cardData" e
-      pretty = getText "pretty_name" card
-      desc0  = if T.null pretty then getText "description" e else pretty
-      licTag = findTag "license:" tags
-      lic    = if T.null licTag then getText "license" card else licTag
-  in obj
-       [ ("id",          A.String (getText "id" e))
-       , ("author",      A.String (getText "author" e))
-       , ("downloads",   intNum (getInt "downloads" e))
-       , ("likes",       intNum (getInt "likes" e))
-       , ("description", A.String (cleanDesc desc0))
-       , ("created",     A.String (dateHead (getText "createdAt" e)))
-       , ("modified",    A.String (dateHead (getText "lastModified" e)))
-       , ("license",     A.String lic)
-       , ("task",        A.String (findTag "task_categories:" tags))
-       , ("language",    A.String (findTag "language:" tags))
-       , ("gated",       A.Bool (getBool "gated" e))
-       , ("updated_at",  A.Number (realToFrac now))
-       ]
+toRow t e = A.object
+  [ "id"          A..= getT "id" e
+  , "author"      A..= getT "author" e
+  , "downloads"   A..= getI "downloads" e
+  , "likes"       A..= getI "likes" e
+  , "description" A..= cleanDesc desc
+  , "created"     A..= T.take 19 (getT "createdAt"    e)
+  , "modified"    A..= T.take 19 (getT "lastModified" e)
+  , "license"     A..= license
+  , "task"        A..= findTag "task_categories:" tags
+  , "language"    A..= findTag "language:"        tags
+  , "gated"       A..= getB "gated" e
+  , "updated_at"  A..= t
+  ]
   where
-    obj ps = A.Object $ KM.fromList [ (K.fromText k, v) | (k, v) <- ps ]
-    intNum n = A.Number (fromIntegral n)
+    tags    = getTags e
+    c       = card e
+    pretty  = getT "pretty_name" c
+    desc    = if T.null pretty then getT "description" e else pretty
+    licTag  = findTag "license:" tags
+    license = if T.null licTag then getT "license" c else licTag
 
--- ============================================================================
--- DuckDB write
--- ============================================================================
+-- ## DuckDB write
 
--- | ATTACH writable, CREATE OR REPLACE TABLE hf.listing AS SELECT * FROM read_json_auto,
--- DETACH. The main Conn is shared, so we name the handle `hfw` to avoid clashing
--- with the read-only `hf` used elsewhere.
+-- | Conn.query returns QueryResult; discard so bracket_ can type at IO ().
+q_ :: Text -> IO ()
+q_ sql = Conn.query sql >> pure ()
+
 writeListing :: FilePath -> IO ()
-writeListing jsonPath = do
-  p <- dbPath
-  let attach = "ATTACH '" <> p <> "' AS hfw"
-      create = "CREATE OR REPLACE TABLE hfw.listing AS SELECT * FROM read_json_auto('"
-             <> T.pack jsonPath <> "')"
-      detach = "DETACH DATABASE IF EXISTS hfw"
-  _ <- try (Conn.query detach) :: IO (Either SomeException Conn.QueryResult)
-  _ <- Conn.query attach
-  _ <- Conn.query create
-  _ <- Conn.query detach
-  pure ()
+writeListing tmp = do
+  p <- cache "hf_datasets.duckdb"
+  bracket_
+    (q_ ("ATTACH '" <> T.pack p <> "' AS hfw"))
+    (q_ "DETACH DATABASE IF EXISTS hfw")
+    (q_ $ "CREATE OR REPLACE TABLE hfw.listing AS SELECT * FROM read_json_auto('"
+        <> T.pack tmp <> "')")
 
--- ============================================================================
--- Top-level entry point
--- ============================================================================
-
--- | Populate the HF listing DuckDB file if stale/missing. No-op when fresh.
+-- | Refetch the HF listing if stale or missing; no-op when fresh.
 run :: IO ()
 run = do
-  ensureDir
   fresh <- checkFresh
-  if fresh
-    then Log.write "src" "hf listing fresh, skipping fetch"
-    else do
-      Log.write "src" "hf listing stale, fetching"
-      mgr <- Core.httpMgr
-      entries <- fetchAll mgr
-      if null entries
-        then Log.write "src" "hf fetch yielded 0 entries"
-        else do
-          now <- realToFrac <$> getPOSIXTime
-          let rows = map (toRow now) entries
-              encoded = E.encodingToLazyByteString $ E.list E.value rows
-          tmp <- tmpJson
-          let tmpS = T.unpack tmp
-          BL.writeFile tmpS encoded
-          writeListing tmpS
-          _ <- try (removeFile tmpS) :: IO (Either SomeException ())
-          Log.write "src" $ "hf listing written: " <> T.pack (show (length rows)) <> " rows"
+  if fresh then Log.write "src" "hf listing fresh, skipping fetch" else do
+    Log.write "src" "hf listing stale, fetching"
+    es <- fetchAll
+    if null es then Log.write "src" "hf fetch yielded 0 entries" else do
+      t   <- now_
+      tmp <- cache "tmp_hf_listing.json"
+      BL.writeFile tmp $ E.encodingToLazyByteString (E.list E.value (map (toRow t) es))
+      writeListing tmp
+      Core.ignoreErrs (removeFile tmp)
+      Log.write "src" $ "hf listing written: " <> T.pack (show (length es)) <> " rows"
