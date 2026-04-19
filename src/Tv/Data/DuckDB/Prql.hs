@@ -41,9 +41,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import System.Exit (ExitCode (..))
-import System.Process (readProcessWithExitCode
-  )
+import qualified Tv.Data.DuckDB.PrqlC as PrqlC
 import Tv.Types
   ( Agg (..)
   , Op (..)
@@ -137,21 +135,14 @@ funcsBytes = $(embedFile "src/Tv/Data/DuckDB/funcs.prql")
 funcs :: Text
 funcs = TE.decodeUtf8 funcsBytes
 
--- | Compile PRQL to SQL by shelling out to the @prqlc@ CLI. Returns
--- @Nothing@ on compile failure (with stderr logged). The @funcs@ prelude
+-- | Compile PRQL to SQL via static-linked libprqlc_c. The @funcs@ prelude
 -- is prepended so user queries can call ds_trunc, freq, etc.
--- Uses readProcessWithExitCode which drains stdout/stderr concurrently,
--- avoiding deadlock when pipe buffers fill.
 compile :: Text -> IO (Maybe Text)
 compile prql = do
-  let full = T.unpack (funcs <> "\n" <> prql)
-  r <- try (readProcessWithExitCode "prqlc"
-              ["compile", "--hide-signature-comment", "-t", "sql.duckdb"] full)
+  let full = funcs <> "\n" <> prql
+  r <- try (PrqlC.compileFFI full "sql.duckdb")
   case r of
     Left (e :: SomeException) -> do
-      Log.errorLog (T.pack ("prqlc spawn failed: " <> show e))
+      Log.errorLog (T.pack ("prqlc FFI failed: " <> show e))
       pure Nothing
-    Right (ExitSuccess, out, _) -> pure $ Just $ T.pack out
-    Right (_, _, err) -> do
-      Log.errorLog ("prqlc: " <> T.pack err)
-      pure Nothing
+    Right out -> pure out

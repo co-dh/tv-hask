@@ -82,6 +82,8 @@ library
     Tv.Socket
     Tv.Tmp
     Tv.View
+  other-modules:
+    Tv.Data.DuckDB.PrqlC
   build-depends:
     aeson >= 2.0,
     ansi-terminal >= 0.11,
@@ -109,6 +111,8 @@ library
     unordered-containers >= 0.2,
     vector >= 0.13,
     zlib >= 0.6
+  c-sources: cbits/prqlc_shim.c
+  include-dirs: cbits
 
 executable tv
   import: shared
@@ -116,6 +120,12 @@ executable tv
   hs-source-dirs: app
   ghc-options: -threaded
   ld-options: -Wl,-s,--gc-sections
+  -- Static-link the Rust prqlc engine. Header (cbits/prqlc.h) vendored.
+  -- Build libprqlc_c.a with `make prqlc` (clones PRQL repo + cargo build).
+  -- Rust runtime needs pthread + dl + m + gcc_s.
+  extra-lib-dirs: vendor/lib
+  ld-options: -Wl,--push-state,--whole-archive -lprqlc_c -Wl,--pop-state
+  extra-libraries: pthread, dl, m, gcc_s
   build-depends:
     base >= 4.16 && < 5,
     tv-hask
@@ -132,6 +142,9 @@ test-suite tv-hask-test
     TestScreen
     TestUtil
   ghc-options: -threaded -rtsopts "-with-rtsopts=-M2G"
+  extra-lib-dirs: vendor/lib
+  ld-options: -Wl,--push-state,--whole-archive -lprqlc_c -Wl,--pop-state
+  extra-libraries: pthread, dl, m, gcc_s
   build-depends:
     base >= 4.16 && < 5,
     tv-hask,
