@@ -123,9 +123,40 @@ executable tv
   -- Static-link the Rust prqlc engine. Header (cbits/prqlc.h) vendored.
   -- Build libprqlc_c.a with `make prqlc` (clones PRQL repo + cargo build).
   -- Rust runtime needs pthread + dl + m + gcc_s.
-  extra-lib-dirs: vendor/lib
+  extra-lib-dirs: vendor/lib, vendor/duckdb
   ld-options: -Wl,--push-state,--whole-archive -lprqlc_c -Wl,--pop-state
-  extra-libraries: pthread, dl, m, gcc_s
+  -- ============================================================
+  -- DO NOT REORDER the ld-options block below. It is delicate.
+  -- ============================================================
+  -- Static-link libduckdb (engine + 8 extensions + 13 sub-libs).
+  -- vendor/duckdb is searched BEFORE system paths so -lduckdb
+  -- resolves to libduckdb.a (a symlink to libduckdb_static.a from
+  -- duckdb/duckdb's static-libs release zip), shadowing /usr/lib/libduckdb.so.
+  --
+  -- Why the toggles:
+  --  -Bstatic forces static even when a co-located .so exists;
+  --  --start-group iterates until all symbols resolve (the 23 archives
+  --    have circular C++ refs between extensions and the engine);
+  --  -Bdynamic is restored at the end so subsequent libs (pthread,
+  --    libstdc++) are still linked dynamically.
+  --
+  -- jemalloc_extension MUST be included: generated_extension_loader.a
+  -- references JemallocExtension's vtable. Excluding it leaves
+  -- undefined symbols at link time.
+  ld-options: -Wl,-Bstatic,--start-group
+              -lduckdb
+              -lcore_functions_extension -lparquet_extension -licu_extension
+              -lautocomplete_extension -ljson_extension
+              -ltpch_extension -ltpcds_extension -ljemalloc_extension
+              -lduckdb_re2 -lduckdb_fmt -lduckdb_pg_query -lduckdb_zstd
+              -lduckdb_utf8proc -lduckdb_yyjson -lduckdb_mbedtls
+              -lduckdb_miniz -lduckdb_hyperloglog -lduckdb_fastpforlib
+              -lduckdb_fsst -lduckdb_skiplistlib
+              -lduckdb_generated_extension_loader
+              -Wl,--end-group,-Bdynamic
+  -- stdc++ is libstdc++ (gnu); on musl/Alpine swap to c++ (libc++).
+  -- atomic is needed for duckdb's atomic<int128_t> on x86_64.
+  extra-libraries: pthread, dl, m, gcc_s, stdc++, atomic
   build-depends:
     base >= 4.16 && < 5,
     tv-hask
