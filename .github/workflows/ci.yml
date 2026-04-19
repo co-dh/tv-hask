@@ -35,21 +35,27 @@ jobs:
           restore-keys: |
             cabal-${{ runner.os }}-ghc9.6.6-
 
+      # Extract pinned versions from the Makefile so a comment-only edit
+      # to the Makefile doesn't invalidate either cache.
+      - name: Read pinned versions
+        id: vers
+        run: |
+          echo "prql=$(awk -F'?= ' '/^PRQL_REF/{print $2}' Makefile)" >> $GITHUB_OUTPUT
+          echo "duckdb=$(awk -F'?= ' '/^DUCKDB_TAG/{print $2}' Makefile)" >> $GITHUB_OUTPUT
+
       # Cache the prqlc Rust crate (cargo build is the slow part: ~40s).
-      # Key on the pinned PRQL_REF in the Makefile.
       - name: Cache prqlc build
         uses: actions/cache@v4
         with:
           path: vendor/prql
-          key: prqlc-${{ runner.os }}-${{ hashFiles('Makefile') }}
+          key: prqlc-${{ runner.os }}-${{ steps.vers.outputs.prql }}
 
-      # Cache the DuckDB static-libs zip + extracted .a files. Pinned via
-      # DUCKDB_TAG in the Makefile, so the key is stable per-version.
+      # Cache the DuckDB static-libs zip + extracted .a files.
       - name: Cache DuckDB staticlibs
         uses: actions/cache@v4
         with:
           path: vendor/duckdb
-          key: duckdb-${{ runner.os }}-${{ hashFiles('Makefile') }}
+          key: duckdb-${{ runner.os }}-${{ steps.vers.outputs.duckdb }}
 
       - name: System packages
         run: |

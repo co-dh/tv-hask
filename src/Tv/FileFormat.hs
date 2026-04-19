@@ -21,11 +21,9 @@ module Tv.FileFormat
 import Codec.Compression.GZip (decompress)
 import Control.Exception (SomeException, try)
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString.Lazy.Char8 as LBSC
 import Data.Maybe (isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.Directory (canonicalizePath)
@@ -98,12 +96,13 @@ readGz path_ = decompress <$> LBS.readFile (T.unpack path_)
 -- The `tm` flag is the test-mode marker — ignored now that there's no
 -- external pager to switch on/off. In interactive use the terminal
 -- handles scrollback; users who want paging can pipe (`tv ... | less`).
+-- Lazy ByteString streamed directly: no String/Text intermediates.
 viewFile :: Bool -> Text -> IO ()
 viewFile _ path_ = do
   bs <- if T.isSuffixOf ".gz" path_
           then readGz path_
           else LBS.readFile (T.unpack path_)
-  TIO.hPutStr stdout (T.pack (LBSC.unpack bs))
+  LBS.hPut stdout bs
 
 -- | Try to ingest as CSV via DuckDB read_csv (handles .gz). Nothing = not valid CSV.
 readCsv :: Text -> IO (Maybe (View AdbcTable))
