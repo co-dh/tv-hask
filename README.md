@@ -363,10 +363,9 @@ Install R with ggplot2: `Rscript -e 'install.packages("ggplot2")'`
 
 Required:
 
-| Tool   | Purpose                                    |
-|--------|--------------------------------------------|
-| `find` | Folder browsing (GNU findutils `-printf`)  |
-| `fzf`  | Fuzzy search, column jump, command palette |
+| Tool  | Purpose                                    |
+|-------|--------------------------------------------|
+| `fzf` | Fuzzy search, column jump, command palette |
 
 DuckDB and PRQL → SQL compilation are statically linked into the `tv`
 binary at build time via FFI; no runtime dependency on `libduckdb.so`
