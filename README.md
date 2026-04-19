@@ -390,6 +390,7 @@ Optional (feature-specific):
 | `viu`       | Display plot PNG in terminal           | `xdg-open`       |
 | `xdg-open`  | Open plot PNG in GUI viewer            | none             |
 | `aws`       | S3 bucket browsing & download          | S3 disabled      |
+| `curl`      | FTP listing and downloads              | FTP disabled     |
 | `bat`       | Syntax-highlighted file preview        | `less`           |
 | `less`      | File preview (pager)                   | none             |
 | `trash-put` | Move files to trash (folder view)      | `gio trash`      |
