@@ -28,14 +28,19 @@ module Tv.Folder
 
 import Control.Exception (SomeException, try)
 import Data.Char (ord)
+import Data.List (isPrefixOf)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Clock.POSIX (POSIXTime, posixSecondsToUTCTime)
+import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word (Word32)
-import System.Directory (canonicalizePath, doesDirectoryExist, findExecutable)
+import System.Directory (canonicalizePath, doesDirectoryExist, findExecutable, listDirectory)
 import System.Exit (ExitCode(..))
+import System.FilePath ((</>))
+import qualified System.Posix.Files as Posix
 
 import Optics.Core ((&), (.~))
 
@@ -59,38 +64,77 @@ import Tv.View (View, ViewStack)
 import qualified Tv.View as View
 import qualified Tv.Nav as Nav
 
--- | List directory with find command, returns tab-separated output.
--- Row format: name, size, modified ("YYYY-MM-DD HH:MM:SS" truncated from
--- find's %T+ "YYYY-MM-DD+HH:MM:SS.NNN"), and type spelled out.
+-- | Per-entry tuple from the directory walk: (type, size, mtime, fullPath).
+type DirEntry = (Char, Int, POSIXTime, FilePath)
+
+-- | List directory contents up to `depth` levels deep. Returns the same
+-- tab-separated format the previous `find -printf` shellout produced:
+-- header line + ".." parent row + one row per descendant.
+-- Row format: name<TAB>size<TAB>modified ("YYYY-MM-DD HH:MM:SS")<TAB>type.
 listDir :: Text -> Int -> IO Text
 listDir path_ depth = do
-  let p = if T.null path_ then "." else path_
-  (_, out, _) <- Log.run "find" "find"
-    [ "-H", T.unpack p, "-maxdepth", show depth, "-printf", "%y\t%s\t%T+\t%p\n" ]
-  let lines_ = filter (not . T.null) (T.splitOn "\n" (T.pack out))
-      hdr = "name\tsize\tmodified\ttype"
+  let p = if T.null path_ then "." else T.unpack path_
+  entries <- walkChildren p depth
+  let hdr         = "name\tsize\tmodified\ttype"
       parentEntry = "..\t0\t\tdir"
-      body = map mkRow (drop 1 lines_)
-      -- strip leading base so the displayed path is relative to p
-      rel full
-        | T.isPrefixOf p full =
-            let r = T.drop (T.length p) full
-            in if T.isPrefixOf "/" r then T.drop 1 r else r
-        | T.isPrefixOf "./" full = T.drop 2 full
-        | otherwise              = full
-      mkRow line =
-        let parts = T.splitOn "\t" line
-            at i = getD parts i ""
-            lastD = case reverse parts of { (x:_) -> x; _ -> "" }
-            typ   = case at 0 of
-                      "f" -> "file"; "d" -> "dir"; "l" -> "symlink"; x -> x
-            dt    = T.take 19 $ case T.splitOn "." (T.replace "+" " " (at 2)) of
-                      (x:_) -> x; _ -> ""
-        in if length parts >= 4
-             then T.intercalate "\t" [rel lastD, at 1, dt, typ]
-             else line
+      body        = map (mkRow p) entries
   pure (hdr <> "\n" <> parentEntry
          <> (if null body then "" else "\n" <> T.intercalate "\n" body))
+
+-- | Format a single entry to the tab-separated row.
+mkRow :: FilePath -> DirEntry -> Text
+mkRow base (ty, sz, mt, fp) =
+  T.intercalate "\t" [relPath base fp, T.pack (show sz), fmtTime mt, typName ty]
+  where
+    typName 'f' = "file"
+    typName 'd' = "dir"
+    typName 'l' = "symlink"
+    typName _   = ""
+    fmtTime t = T.pack $ formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S"
+                        (posixSecondsToUTCTime t)
+
+-- | Strip the leading `base` so the displayed path is relative to it,
+-- matching the previous behavior of stripping the find argument prefix.
+relPath :: FilePath -> FilePath -> Text
+relPath base full
+  | base `isPrefixOf` full =
+      let r = drop (length base) full
+      in T.pack (if "/" `isPrefixOf` r then drop 1 r else r)
+  | "./" `isPrefixOf` full = T.pack (drop 2 full)
+  | otherwise              = T.pack full
+
+-- | Recursively list children of `dir` up to `depth` levels.
+-- Mirrors `find -maxdepth depth` (the root itself is excluded; only
+-- descendants are returned, matching the previous `drop 1 lines_`).
+walkChildren :: FilePath -> Int -> IO [DirEntry]
+walkChildren dir depth
+  | depth <= 0 = pure []
+  | otherwise = do
+      r <- try (listDirectory dir) :: IO (Either SomeException [FilePath])
+      case r of
+        Left _    -> pure []
+        Right xs  -> concat <$> mapM (visit dir depth) xs
+
+visit :: FilePath -> Int -> FilePath -> IO [DirEntry]
+visit dir depth name = do
+  let full = dir </> name
+  r <- try (Posix.getSymbolicLinkStatus full) :: IO (Either SomeException Posix.FileStatus)
+  case r of
+    Left _  -> pure []
+    Right s -> do
+      let me = (typeChar s, fromIntegral (Posix.fileSize s),
+                Posix.modificationTimeHiRes s, full)
+      kids <- if Posix.isDirectory s && depth > 1
+                then walkChildren full (depth - 1)
+                else pure []
+      pure (me : kids)
+
+typeChar :: Posix.FileStatus -> Char
+typeChar s
+  | Posix.isSymbolicLink s = 'l'
+  | Posix.isDirectory s    = 'd'
+  | Posix.isRegularFile s  = 'f'
+  | otherwise              = '?'
 
 -- | Find path column index (tries "path", "name", "id" in order)
 pathIdx :: Vector Text -> Maybe Int

@@ -86,11 +86,11 @@ $(DUCKDB_DIR)/$(DUCKDB_ASSET):
 clean-prqlc:
 	rm -rf $(PRQL_DIR)/target vendor/lib
 
-# Removes extracted .a files but keeps the zip cached. Use
-# clean-duckdb-cache to also discard the downloaded zip.
+# Removes extracted .a files + sentinel but keeps the zip cached. Use
+# clean-duckdb-cache to also discard the downloaded zip. find -mindepth
+# is needed to catch the hidden .fetched marker that ls misses.
 clean-duckdb:
-	cd $(DUCKDB_DIR) 2>/dev/null && \
-	  ls | grep -v '\.zip$$' | xargs rm -rf || true
+	-find $(DUCKDB_DIR) -mindepth 1 -maxdepth 1 ! -name '*.zip' -exec rm -rf {} +
 
 clean-duckdb-cache: clean-duckdb
 	rm -rf $(DUCKDB_DIR)

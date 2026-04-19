@@ -22,7 +22,7 @@ module Tv.Plot
 
 import Control.Exception (SomeException, try)
 import Control.Monad (unless, when)
-import Data.IORef (newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -31,6 +31,10 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.Directory (findExecutable)
 import System.IO (IOMode(..), hClose, openFile, hGetChar)
+import System.IO.Unsafe (unsafePerformIO)
+import qualified System.Posix.IO as Posix
+import qualified System.Posix.Terminal as TermAttrs
+import qualified System.Posix.Types as Posix
 import System.Process
   ( CreateProcess(..), StdStream(..), proc
   , createProcess, waitForProcess, readProcessWithExitCode
@@ -131,19 +135,53 @@ clearScreen = TIO.putStr "\x1b[2J\x1b[H"
 altEnter :: IO ()
 altEnter = TIO.putStr "\x1b[?1049h\x1b[2J\x1b[H"
 
--- | Restore terminal after plot mode: sane + leave alt screen + re-init TUI
+-- | Saved terminal attrs from the most recent setRaw, restored by exitPlot.
+-- Top-level IORef keeps the imperative setRaw/exitPlot pair (multiple call
+-- sites). Empty between plot sessions; populated only while in raw mode.
+savedTtyAttrs :: IORef (Maybe TermAttrs.TerminalAttributes)
+savedTtyAttrs = unsafePerformIO (newIORef Nothing)
+{-# NOINLINE savedTtyAttrs #-}
+
+-- | Open /dev/tty for reading + writing.
+openTty :: IO Posix.Fd
+openTty = Posix.openFd "/dev/tty" Posix.ReadWrite Posix.defaultFileFlags
+
+-- | Restore terminal after plot mode: sane + leave alt screen + re-init TUI.
+-- Sane = restore the attrs setRaw saved (no-op if setRaw wasn't called).
 exitPlot :: IO ()
 exitPlot = do
-  _ <- Log.run "stty" "stty" ["-F", "/dev/tty", "sane"]
+  saved <- readIORef savedTtyAttrs
+  case saved of
+    Just orig -> do
+      fd <- openTty
+      TermAttrs.setTerminalAttributes fd orig TermAttrs.Immediately
+      Posix.closeFd fd
+      writeIORef savedTtyAttrs Nothing
+    Nothing -> pure ()
   TIO.putStr "\x1b[?1049l"
   _ <- Term.init
   pure ()
 
--- | Set terminal to raw mode (single keypress without Enter)
+-- | Set terminal to raw mode (single keypress without Enter). Saves the
+-- previous attrs to savedTtyAttrs so exitPlot can restore them.
 setRaw :: IO ()
 setRaw = do
-  _ <- Log.run "stty" "stty" ["-F", "/dev/tty", "raw", "-echo"]
-  pure ()
+  fd   <- openTty
+  orig <- TermAttrs.getTerminalAttributes fd
+  writeIORef savedTtyAttrs (Just orig)
+  let raw = foldl TermAttrs.withoutMode orig
+              [ TermAttrs.ProcessInput
+              , TermAttrs.EnableEcho
+              , TermAttrs.EchoLF
+              , TermAttrs.KeyboardInterrupts
+              , TermAttrs.ExtendedFunctions
+              , TermAttrs.StartStopOutput
+              , TermAttrs.MapCRtoLF
+              , TermAttrs.IgnoreCR
+              , TermAttrs.ProcessOutput
+              ]
+  TermAttrs.setTerminalAttributes fd raw TermAttrs.Immediately
+  Posix.closeFd fd
 
 -- | Read one byte from /dev/tty (caller must be in raw mode)
 readKey :: IO Char
