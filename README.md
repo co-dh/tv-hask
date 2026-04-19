@@ -390,16 +390,12 @@ Optional (feature-specific):
 | `viu`       | Display plot PNG in terminal           | `xdg-open`       |
 | `xdg-open`  | Open plot PNG in GUI viewer            | none             |
 | `aws`       | S3 bucket browsing & download          | S3 disabled      |
-| `curl`      | Hugging Face Hub file access           | HF disabled      |
-| `jq`        | Parse HF API JSON responses            | HF disabled      |
 | `bat`       | Syntax-highlighted file preview        | `less`           |
 | `less`      | File preview (pager)                   | none             |
 | `trash-put` | Move files to trash (folder view)      | `gio trash`      |
 | `gio`       | Move files to trash (GNOME)            | none             |
 | `stty`      | Terminal raw mode for plot interaction | —                |
 | `osqueryi`  | Osquery table browsing & queries       | osquery disabled |
-| `python3`   | Osquery / HF setup scripts             | those disabled   |
-| `realpath`  | Resolve folder paths                   | —                |
 | `tmux`      | fzf popup mode (`--tmux`)              | fullscreen fzf   |
 | `socat`     | Socket preview in command palette      | preview disabled |
 
