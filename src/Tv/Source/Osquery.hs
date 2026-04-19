@@ -15,15 +15,13 @@ import Tv.Data.DuckDB.Table (AdbcTable, fromTmp, tmpName)
 import qualified Tv.Log as Log
 import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
+import qualified Tv.Source.OsquerySetup as Setup
 
 pfx_ :: Text
 pfx_ = "osquery://"
 
 setupKey :: Text
 setupKey = pfx_
-
-setupCmd :: Text
-setupCmd = "python3 scripts/osquery_tables.py"
 
 attachSqlTmpl :: Text
 attachSqlTmpl = "ATTACH '{home}/.cache/tv/osquery.duckdb' AS osq (READ_ONLY)"
@@ -42,8 +40,8 @@ osqSetup = Core.onceFor setupKey $ do
   case r of
     Right _ -> Log.write "src" "osquery:// attach ok"
     Left _  -> do
-      Log.write "src" "osquery:// attach failed, running osquery_tables.py"
-      _ <- Core.runCmd "setup" setupCmd
+      Log.write "src" "osquery:// attach failed, running OsquerySetup.run"
+      Setup.run
       _ <- Conn.query attach
       pure ()
 

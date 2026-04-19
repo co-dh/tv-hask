@@ -26,6 +26,11 @@ Haskell tree is free to diverge in structure, abstraction, and idiom.
   Stdlib/library names like `readProcessWithExitCode` are out of our
   control; alias them (`import qualified ... as Proc`) if a call site reads
   poorly.
+- **No `$var` / `$(...)` / brace-expansion / quoted-var in Bash tool calls.**
+  Claude Code's permission classifier rejects these and prompts every time.
+  Use `xargs`, `printf | while read`, static literal values, or enumerate
+  commands with `;` instead. Applies to all shell metacharacters requiring
+  expansion — global rule, do not prompt.
 
 ## Field access: OverloadedLabels + optics-core
 

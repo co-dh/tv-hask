@@ -24,6 +24,10 @@ module Tv.Source.Core
   , writeCmdOut
   , loadJsonToTbl
   , loadEnterJson
+    -- HTTP fetching (http-client + TLS)
+  , fetchBytes
+  , fetchFile
+  , httpMgr
     -- caching / idempotence
   , withCache
   , onceFor
@@ -33,13 +37,15 @@ module Tv.Source.Core
   , applyStubTypes
     -- exception helpers
   , ignoreErrs
+  , try_
     -- shared home-dir helper
   , homeText
   ) where
 
 import Control.Exception (SomeException, try)
 import Control.Monad (forM_, when)
-import Data.IORef (IORef, newIORef, readIORef, modifyIORef')
+import qualified Data.ByteString.Lazy as LBS
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, modifyIORef')
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -47,6 +53,10 @@ import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import GHC.Clock (getMonotonicTime)
+import Network.HTTP.Client
+  ( Manager, Request, Response, httpLbs, parseRequest, responseBody, responseStatus )
+import Network.HTTP.Client.TLS (newTlsManager)
+import Network.HTTP.Types.Status (statusCode)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.IO.Unsafe (unsafePerformIO)
@@ -155,6 +165,13 @@ checkShell s label =
 ignoreErrs :: IO a -> IO ()
 ignoreErrs m = try m >>= \(_ :: Either SomeException a) -> pure ()
 
+-- | Exception-to-Maybe. Replaces the `try (...) :: IO (Either SomeException x)`
+-- noise at call sites.
+try_ :: forall a. IO a -> IO (Maybe a)
+try_ m = do
+  r <- try m :: IO (Either SomeException a)
+  pure $ either (const Nothing) Just r
+
 homeText :: IO Text
 homeText = T.pack . fromMaybe "/tmp" <$> lookupEnv "HOME"
 
@@ -202,6 +219,72 @@ loadEnterJson json = do
   loadJsonToTbl tbl tmpFile
   Tmp.rmFile tmpFile
   pure tbl
+
+-- ## HTTP client: lazy process-wide TLS manager.
+-- http-client's Manager pools connections, so sharing one across all
+-- sources gives keepalive + TLS session reuse. `newTlsManager` uses
+-- `tlsManagerSettings` which follows redirects (needed for HF CDN 302s).
+{-# NOINLINE mgrRef #-}
+mgrRef :: IORef (Maybe Manager)
+mgrRef = unsafePerformIO (newIORef Nothing)
+
+httpMgr :: IO Manager
+httpMgr = do
+  m <- readIORef mgrRef
+  case m of
+    Just mgr -> pure mgr
+    Nothing  -> do
+      fresh <- newTlsManager
+      -- Race-safe: if another thread already installed one, keep theirs and
+      -- drop ours. The stranded `fresh` has no open connections yet.
+      atomicModifyIORef' mgrRef $ \cur -> case cur of
+        Just existing -> (Just existing, existing)
+        Nothing       -> (Just fresh, fresh)
+
+-- | Run a GET, log outcome, return the Response or Nothing on exception
+-- or non-2xx status. Caller decides what to do with the body.
+httpGet :: Text -> IO (Maybe LBS.ByteString)
+httpGet url = do
+  Log.write "src" ("http GET: " <> url)
+  mReq <- try (parseRequest (T.unpack url)) :: IO (Either SomeException Request)
+  case mReq of
+    Left e -> do
+      Log.write "src" ("http parse failed: " <> T.pack (show e))
+      pure Nothing
+    Right req -> do
+      mgr <- httpMgr
+      r <- try (httpLbs req mgr)
+             :: IO (Either SomeException (Response LBS.ByteString))
+      case r of
+        Left e -> do
+          Log.write "src" ("http failed: " <> T.pack (show e))
+          pure Nothing
+        Right resp -> do
+          let sc = statusCode (responseStatus resp)
+          if sc >= 200 && sc < 300
+            then pure (Just (responseBody resp))
+            else do
+              Log.write "src"
+                ("http status " <> T.pack (show sc) <> ": " <> url)
+              pure Nothing
+
+-- | Fetch a URL over HTTP/HTTPS, returning body bytes or Nothing on failure.
+fetchBytes :: Text -> IO (Maybe LBS.ByteString)
+fetchBytes = httpGet
+
+-- | Fetch a URL and write the body to a file (download). Returns True on success.
+fetchFile :: Text -> FilePath -> IO Bool
+fetchFile url path_ = do
+  m <- httpGet url
+  case m of
+    Nothing   -> pure False
+    Just body -> do
+      r <- try (LBS.writeFile path_ body) :: IO (Either SomeException ())
+      case r of
+        Left e -> do
+          Log.write "src" ("fetchFile write failed: " <> T.pack (show e))
+          pure False
+        Right _ -> pure True
 
 -- ## Listing cache: keep newest entries; on overflow drop oldest.
 cacheCap, evictKeep :: Int

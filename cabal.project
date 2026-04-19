@@ -1,2 +1,3 @@
 packages: .
 write-ghc-environment-files: always
+split-sections: True
