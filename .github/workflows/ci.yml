@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel in-progress runs on the same branch when a new commit lands.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.6.6'
+          cabal-version: '3.10'
+
+      # Cache cabal store + dist-newstyle. Key on cabal file hash so the
+      # cache invalidates only when deps change. dist-newstyle stays warm
+      # across runs because the cabal-hash matches even after edits to
+      # source files (cabal handles incremental rebuilds).
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/state/cabal
+            dist-newstyle
+          key: cabal-${{ runner.os }}-ghc9.6.6-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+          restore-keys: |
+            cabal-${{ runner.os }}-ghc9.6.6-
+
+      # Cache the prqlc Rust crate (cargo build is the slow part: ~40s).
+      # Key on the pinned PRQL_REF in the Makefile.
+      - name: Cache prqlc build
+        uses: actions/cache@v4
+        with:
+          path: vendor/prql
+          key: prqlc-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      # Cache the DuckDB static-libs zip + extracted .a files. Pinned via
+      # DUCKDB_TAG in the Makefile, so the key is stable per-version.
+      - name: Cache DuckDB staticlibs
+        uses: actions/cache@v4
+        with:
+          path: vendor/duckdb
+          key: duckdb-${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+      - name: System packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fzf findutils unzip
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Build prqlc staticlib
+        run: make prqlc
+
+      - name: Fetch DuckDB staticlibs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: make duckdb
+
+      - name: cabal build
+        run: cabal build all
+
+      - name: cabal test
+        run: cabal test
+
+      # Smoke test: confirm the binary is statically linked and runs.
+      - name: Verify static link
+        run: |
+          BIN=$(cabal -v0 list-bin tv)
+          ls -lh "$BIN"
+          if ldd "$BIN" | grep -E 'libduckdb|libprqlc'; then
+            echo "ERROR: tv has dynamic prqlc/duckdb dep; expected static"
+            exit 1
+          fi
+          echo "Static link verified"
+
+      - name: Upload tv binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv-linux-amd64
+          path: dist-newstyle/build/x86_64-linux/ghc-*/tv-hask-*/x/tv/build/tv/tv
+          retention-days: 14
