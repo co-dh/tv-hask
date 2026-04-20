@@ -183,6 +183,8 @@ jobs:
           key: cabal-alma8-ghc9.6.6-${{ hashFiles('**/*.cabal', 'cabal.project') }}
 
       - name: cabal test
+        env:
+          LIBRARY_PATH: ${{ github.workspace }}/vendor/duckdb:${{ github.workspace }}/vendor/lib
         run: cabal test
 
       # Confirm the binary is statically linked against prqlc/duckdb and
