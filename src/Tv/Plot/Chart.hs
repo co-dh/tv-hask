@@ -700,9 +700,18 @@ layoutBoxOrViolin isViolin title_ xn yn groups =
               strips = zipWith strip (zip grid ds) (drop 1 (zip grid ds))
           in strips ++ snd (singleBoxOverlay i pts)
         | (i, (_, pts)) <- zip [1::Int ..] groups ]
+      catLabels = [(fromIntegral i, T.unpack lab)
+                  | (i, (lab, _)) <- zip [1::Int ..] groups]
+      -- Patch the auto-generated x-axis to show category names at the
+      -- integer positions where each box/violin is drawn (1, 2, ...).
+      -- _axis_labels is [[(x, String)]]; one inner list per label row.
+      catAxis ad = ad { _axis_labels = [catLabels]
+                      , _axis_ticks  = [(x, 0) | (x, _) <- catLabels]
+                      , _axis_grid   = [] }
       lay = layout_title .~ T.unpack title_
           $ layout_x_axis . laxis_title .~ T.unpack xn
           $ layout_y_axis . laxis_title .~ T.unpack yn
+          $ layout_x_axis . laxis_override .~ catAxis
           $ layout_plots .~ (if isViolin then mkViolins else mkBoxBars)
           $ def
       _ = xs
