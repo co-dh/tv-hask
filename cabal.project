@@ -1,3 +1,10 @@
 packages: .
 write-ghc-environment-files: always
 split-sections: True
+
+-- duckdb-ffi's configure runs a test-link for -lduckdb before tv-hask's
+-- stanza is consulted. Declare the vendor path at project scope so the
+-- dep configure step can locate our static libduckdb.a.
+extra-lib-dirs:
+  vendor/duckdb
+  vendor/lib
