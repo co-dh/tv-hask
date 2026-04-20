@@ -25,9 +25,13 @@ chunkBytes = 4096
 
 -- | Send a PNG to the terminal via the kitty graphics protocol. Splits
 -- the base64-encoded payload into chunks framed by APC sequences.
+-- Inside tmux, wraps each APC in a DCS passthrough envelope so tmux
+-- forwards the bytes to the host terminal instead of stripping them.
 displayPng :: FilePath -> IO ()
 displayPng path = do
   bs <- BS.readFile path
+  inTmux <- isJust <$> lookupEnv "TMUX"
+  let emit = emitWith inTmux
   case splitChunks chunkBytes (B64.encode bs) of
     []                -> pure ()
     [only]            -> emit "f=100,a=T" only
@@ -37,11 +41,19 @@ displayPng path = do
       emit "m=0" (last middles)
   hFlush stdout
   where
-    -- Concatenate the APC envelope into one ByteString before hPut so a
-    -- single chunk is one syscall instead of four (matters on slow ttys).
-    emit :: String -> BS.ByteString -> IO ()
-    emit ctrl chunk = BS.hPut stdout $
-      "\x1b_G" <> BS8.pack ctrl <> ";" <> chunk <> "\x1b\\"
+    -- Build one APC chunk; if inside tmux, wrap in tmux's DCS passthrough
+    -- (\x1bPtmux;<body>\x1b\\) with every embedded ESC doubled so tmux
+    -- doesn't terminate the passthrough early.
+    emitWith :: Bool -> String -> BS.ByteString -> IO ()
+    emitWith inTmux ctrl chunk =
+      let apc = "\x1b_G" <> BS8.pack ctrl <> ";" <> chunk <> "\x1b\\"
+          payload = if inTmux then "\x1bPtmux;" <> escTmux apc <> "\x1b\\" else apc
+      in BS.hPut stdout payload
+
+    -- Double every ESC byte (0x1b) so the DCS-passthrough sequence reads
+    -- the literal bytes through to the outer terminal.
+    escTmux :: BS.ByteString -> BS.ByteString
+    escTmux = BS.intercalate "\x1b\x1b" . BS.split 0x1b
 
 -- | Heuristic: detect terminals known to support the kitty graphics
 -- protocol via env vars. Cheap and accurate for the common cases
