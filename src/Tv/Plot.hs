@@ -171,6 +171,9 @@ exitPlot = do
       Posix.closeFd fd
       writeIORef savedTtyAttrs Nothing
     Nothing -> pure ()
+  -- Kitty stores transmitted images outside the screen buffer; clear
+  -- them before leaving the alt screen or they linger over the TUI.
+  Kitty.clearImages
   TIO.putStr "\x1b[?1049l"
   _ <- Term.init
   pure ()
