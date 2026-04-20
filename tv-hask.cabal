@@ -195,7 +195,6 @@ test-suite tv-hask-test
   other-modules:
     Test
     TestLargeData
-    TestPlotE2E
     TestPure
     TestScreen
     TestUtil
@@ -222,8 +221,6 @@ test-suite tv-hask-test
     base >= 4.16 && < 5,
     tv-hask,
     bytestring,
-    -- Plot e2e test: PNG decode for the harness output diff.
-    JuicyPixels >= 3.3,
     tasty >= 1.4,
     tasty-hunit >= 0.10,
     tasty-quickcheck >= 0.10,

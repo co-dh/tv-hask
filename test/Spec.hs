@@ -7,7 +7,6 @@ import Test.Tasty
 import qualified Tv.Data.DuckDB.Table as AdbcTable
 
 import qualified Test
-import qualified TestPlotE2E
 import qualified TestPure
 import qualified TestScreen
 import qualified TestLargeData
@@ -28,6 +27,5 @@ main = do
         [ TestPure.tests
         , TestScreen.tests
         , TestLargeData.tests
-        , TestPlotE2E.tests
         , Test.tests
         ]

@@ -189,10 +189,7 @@ jobs:
           LIBRARY_PATH: ${{ github.workspace }}/vendor/duckdb:${{ github.workspace }}/vendor/lib
           LANG: en_US.UTF-8
           LC_ALL: en_US.UTF-8
-        # Skip plot_render_* tests: they diff Haskell-native Chart
-        # output against an R ggplot reference. R + ggplot2 isn't
-        # installed in the AlmaLinux 8 build image (adds ~5 min).
-        run: cabal test --test-options="-p \"! /plot_render_/\""
+        run: cabal test
 
       # Confirm the binary is statically linked against prqlc/duckdb and
       # its dynamic glibc/libstdc++ refs stay within the RHEL 8 ABI.
