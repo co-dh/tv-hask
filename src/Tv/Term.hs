@@ -25,7 +25,7 @@ module Tv.Term
   , isattyStdin, reopenTty, init, inited, shutdown
     -- screen
   , width, height, clear, present, pollEvent, waitEventTimeout
-  , invalidate
+  , invalidate, checkViewChange
   , toEvent, toEvents, bufferStr
   , padC, renderTable, print
   , _setScreenBufSize
@@ -399,15 +399,40 @@ clear = do
   (_, _, buf) <- readIORef screenBuf
   VSM.set buf emptyCell
 
--- | Force the next 'present' to re-emit every cell by zeroing the front
--- buffer. Used after something writes into the cell buffer in an
--- uncontrolled way (e.g. the picker popup exits and we want the caller's
--- next render to emit contiguous ANSI runs instead of diffing around
--- cells the popup happened to leave unchanged).
+-- | Force the next 'present' to re-emit every cell, including blanks.
+-- Fills the front buffer with a sentinel cell that no real render can
+-- produce (char = 0xFFFF is not in any glyph output), so the diff in
+-- 'present' always fires — back cells that became 'emptyCell' also get
+-- emitted as blanks, erasing any terminal residue from a previous view.
+--
+-- Used on picker exit and after view transitions where the new view's
+-- paint footprint doesn't cover every cell the previous view drew.
 invalidate :: IO ()
 invalidate = do
   front <- readIORef frontBuf
-  VSM.set front emptyCell
+  VSM.set front dirtyCell
+
+-- | Cell value that can't collide with anything a renderer emits.
+dirtyCell :: Cell
+dirtyCell = Cell 0xFFFF 0 0
+
+-- | Track the last-rendered view key (path + vkind string) and fire
+-- 'invalidate' when it changes. Lets callers cheaply guard against
+-- cross-view residue without threading a "previous state" around.
+lastViewKey :: IORef Text
+lastViewKey = unsafePerformIO (newIORef "")
+{-# NOINLINE lastViewKey #-}
+
+-- | Call from the render path with a stable identity for the current
+-- view ('path|vkind' works). Triggers 'invalidate' on change, so the
+-- next present emits every cell (including blanks) and cleans up any
+-- residue left by the prior view's paint footprint.
+checkViewChange :: Text -> IO ()
+checkViewChange k = do
+  prev <- readIORef lastViewKey
+  when (prev /= k) $ do
+    invalidate
+    writeIORef lastViewKey k
 
 -- | Fold state for `present`: last emitted style, last cursor position,
 -- and the accumulated output Builder. Strict fields keep the builder
