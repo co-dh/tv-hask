@@ -156,9 +156,20 @@ executable tv
               -lduckdb_fsst -lduckdb_skiplistlib
               -lduckdb_generated_extension_loader
               -Wl,--end-group,-Bdynamic
-  -- stdc++ is libstdc++ (gnu); on musl/Alpine swap to c++ (libc++).
+  -- Bundle libstdc++ and libgcc so the binary doesn't need a matching
+  -- C++ runtime on the target. DuckDB's prebuilts reference
+  -- GLIBCXX_3.4.26+ which RHEL 8's system libstdc++ lacks. Adds
+  -- ~1-3 MB after --gc-sections. glibc stays dynamic, so the binary
+  -- still needs the build host's glibc or newer.
+  --
+  -- -Bstatic/-Bdynamic wraps the explicit -lstdc++ so only C++ runtime
+  -- goes static while pthread/dl/m/atomic stay dynamic.
+  -- -static-libgcc rewrites libgcc_s.so refs to libgcc.a / libgcc_eh.a
+  -- (covers Rust _Unwind_* from libprqlc_c).
+  ld-options: -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic
+  ghc-options: -optl-static-libgcc
   -- atomic is needed for duckdb's atomic<int128_t> on x86_64.
-  extra-libraries: pthread, dl, m, gcc_s, stdc++, atomic
+  extra-libraries: pthread, dl, m, atomic
   build-depends:
     base >= 4.16 && < 5,
     tv-hask

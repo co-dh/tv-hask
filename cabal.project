@@ -12,10 +12,5 @@ split-sections: True
 -- libduckdb.a, so it must also link libstdc++ and friends — cabal
 -- invokes gcc (not g++) as link driver and won't add them automatically.
 package duckdb-ffi
-  extra-libraries:
-    stdc++
-    gcc_s
-    atomic
-    pthread
-    dl
-    m
+    extra-libraries: stdc++, gcc_s, atomic, pthread, dl, m
+    ghc-options: -optl-Wl,-Bstatic,-lstdc++,-Bdynamic
