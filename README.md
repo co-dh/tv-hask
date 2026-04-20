@@ -42,7 +42,7 @@ mode 3 colors both.
 ### Plotting
 
 Move the cursor to a numeric column, open the Space menu, and pick a plot type.
-Charts are rendered with R/ggplot2 and displayed in the terminal.
+Charts are rendered natively via Chart + Chart-cairo and displayed in the terminal.
 
 ![plot](doc/plot.gif)
 
@@ -208,19 +208,12 @@ cabal test
 
 ### Plot rendering
 
-By default plots are rendered with R/ggplot2 (the existing default).
-Two opt-in env vars switch the renderer or capture the rendered PNG:
+Plots are rendered natively via `Tv.Plot.Chart` (Chart + Chart-cairo).
+One opt-in env var captures the rendered PNG for non-interactive harnesses:
 
-| Env var            | Value                | Effect                                                           |
-|--------------------|----------------------|------------------------------------------------------------------|
-| `TV_PLOT_RENDERER` | `r` (default)        | R/ggplot2 via `Rscript` subprocess                               |
-| `TV_PLOT_RENDERER` | `chart`              | Native Haskell renderer via `Tv.Plot.Chart` (Chart-cairo)        |
-| `TV_PLOT_OUT`      | `/path/to/file.png`  | Copy the rendered PNG to this path (in addition to terminal display) |
-
-`TV_PLOT_OUT` makes the binary writable from non-interactive harnesses
-(see `scripts/gen_plot_e2e.sh` and `test/TestPlotE2E.hs`). Both env vars
-are read in `Tv.Plot.run`; default behaviour is unchanged when neither
-is set.
+| Env var       | Value                | Effect                                                           |
+|---------------|----------------------|------------------------------------------------------------------|
+| `TV_PLOT_OUT` | `/path/to/file.png`  | Copy the rendered PNG to this path (in addition to terminal display) |
 
 ## Run
 
@@ -322,7 +315,7 @@ Everything else (precision, width, themes, clipboard, heatmap, plots, session lo
 
 ### Plot
 
-Renders charts via R/ggplot2. Data is exported from DuckDB, downsampled if large, and rendered to PNG.
+Renders charts natively via Chart + Chart-cairo. Data is exported from DuckDB, downsampled if large, and rendered to PNG.
 
 #### Setup
 
@@ -377,10 +370,6 @@ Plot images are displayed using the best available method:
 2. **viu** — half-block ANSI rendering, works in most terminals
 3. **xdg-open** — opens in system image viewer
 
-#### Requirements
-
-Install R with ggplot2: `Rscript -e 'install.packages("ggplot2")'`
-
 ## Dependencies
 
 DuckDB and PRQL → SQL compilation are statically linked into the `tv`
@@ -400,7 +389,6 @@ Optional (feature-specific):
 
 | Tool        | Feature                                            | Fallback         |
 |-------------|----------------------------------------------------|------------------|
-| `Rscript`   | ggplot2 plot rendering (default)                   | Chart-cairo      |
 | `viu`       | Display plot PNG in non-kitty terminals            | `xdg-open`       |
 | `xdg-open`  | Open plot PNG in GUI viewer                        | none             |
 | `trash-put` | Move files to trash (folder view)                  | `gio trash`      |

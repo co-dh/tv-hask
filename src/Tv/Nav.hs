@@ -65,9 +65,12 @@ import Tv.Types (Cmd(..), ColType(..), toggle)
 clamp :: Int -> Int -> Int -> Int
 clamp val lo hi = if hi <= lo then lo else max lo (min val (hi - 1))
 
--- Adjust offset to keep cursor visible: off <= cur < off + page
+-- Adjust offset to keep cursor visible: off <= cur < off + page.
+-- The lower bound cur+1-page can go negative when page > cur+1 (viewport
+-- taller than the data ahead of the cursor); clamp to 0 so adjOff never
+-- returns a negative offset.
 adjOff :: Int -> Int -> Int -> Int
-adjOff cur off page = clamp off (cur + 1 - page) (cur + 1)
+adjOff cur off page = clamp off (max 0 (cur + 1 - page)) (cur + 1)
 
 -- Clamp cursor by delta, staying in [0, n). Equivalent to Lean's `Fin.clamp`.
 -- Bound `n` passed explicitly since Haskell `Int` has no length-indexing.

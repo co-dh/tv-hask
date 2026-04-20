@@ -1,16 +1,14 @@
 {-
-  Plot: export table data, render via ggplot2 (R), display via kitty graphics or viu.
+  Plot: export table data, render via Tv.Plot.Chart (Chart + Chart-cairo),
+  display via kitty graphics or viu.
   X-axis = first group column, category = second group column (optional),
   Y-axis = current column under cursor (must be numeric).
   Facet = third group column (optional, small multiples).
   Interactive: in-place re-rendering with downsampling interval control.
 
-  Literal port of Tc/Tc/Plot.lean.
-
   Test hooks (env vars, all optional):
-    TV_PLOT_RENDERER  "chart" (default) → Tv.Plot.Chart (cairo); "r" → ggplot2 subprocess
-    TV_PLOT_OUT       file path → also copy the rendered PNG here
-                                  (for non-interactive visual-regression harness)
+    TV_PLOT_OUT  file path → also copy the rendered PNG here
+                             (for non-interactive visual-regression harness)
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -20,7 +18,6 @@ module Tv.Plot
   , plotTitle
   , KeyAction(..)
   , handleKey
-  , rScript
   , run
   , commands
   ) where
@@ -44,7 +41,7 @@ import qualified System.Posix.Terminal as TermAttrs
 import qualified System.Posix.Types as Posix
 import System.Process
   ( CreateProcess(..), StdStream(..), proc
-  , createProcess, waitForProcess, readProcessWithExitCode
+  , createProcess, waitForProcess
   )
 import System.Exit (ExitCode(..))
 
@@ -233,14 +230,6 @@ singleCol :: PlotKind -> Bool
 singleCol kind = kind `elem`
   [PlotHist, PlotDensity, PlotReturns, PlotQQ]
 
--- | Plot types that use category column as the x-axis (box/violin)
-catAsX :: PlotKind -> Bool
-catAsX kind = kind == PlotBox || kind == PlotViolin
-
--- | Plot types that use fill instead of color for category aesthetics
-addsFill :: PlotKind -> Bool
-addsFill kind = kind == PlotBox || kind == PlotViolin || kind == PlotArea
-
 -- | Result of handling a keypress in interactive plot mode
 data KeyAction
   = KeyQuit                 -- q: exit plot mode
@@ -256,176 +245,9 @@ handleKey key
   | key == ',' || key == '<'   = KeyInterval (-1)
   | otherwise                  = KeyNoop
 
--- | Generate R script for ggplot2 rendering
---
--- >>> "ggtitle('density of Close')" `T.isInfixOf` rScript "d.dat" "p.png" PlotDensity "" "Close" False "" False "" ColTypeOther "density of Close"
--- True
--- >>> "hjust = 0.5" `T.isInfixOf` rScript "d.dat" "p.png" PlotDensity "" "Close" False "" False "" ColTypeOther "density of Close"
--- True
--- >>> "ggtitle('line: Price vs Date by Ticker')" `T.isInfixOf` rScript "d.dat" "p.png" PlotLine "Date" "Price" True "Ticker" False "" ColTypeOther "line: Price vs Date by Ticker"
--- True
--- >>> "ggtitle" `T.isInfixOf` rScript "d.dat" "p.png" PlotLine "Date" "Price" False "" False "" ColTypeOther ""
--- False
-rScript
-  :: Text       -- dataPath
-  -> Text       -- pngPath
-  -> PlotKind
-  -> Text       -- xName
-  -> Text       -- yName
-  -> Bool       -- hasCat
-  -> Text       -- catName
-  -> Bool       -- hasFacet
-  -> Text       -- facetName
-  -> ColType    -- xType
-  -> Text       -- title
-  -> Text
-rScript dataPath pngPath kind xName yName hasCat catName hasFacet facetName xType title =
-  let rq s = "`" <> s <> "`"
-      xR = rq xName; yR = rq yName; catR = rq catName; facetR = rq facetName
-      readData = "d <- read.delim('" <> dataPath
-               <> "', header=TRUE, sep='\\t', colClasses='character', check.names=FALSE)\n"
-      convY = "d[['" <> yName <> "']] <- as.numeric(d[['" <> yName <> "']])\n"
-      -- "time" is HH:MM:SS only — prepend dummy date for as.POSIXct
-      convX = case xType of
-        ColTypeTime      ->
-          "d[['" <> xName <> "']] <- as.POSIXct(paste('1970-01-01', d[['" <> xName <> "']]))\n"
-        ColTypeTimestamp ->
-          "d[['" <> xName <> "']] <- as.POSIXct(d[['" <> xName <> "']])\n"
-        ColTypeDate      ->
-          "d[['" <> xName <> "']] <- as.Date(d[['" <> xName <> "']])\n"
-        _ ->
-          if not (singleCol kind)
-            then "tryCatch(d[['" <> xName <> "']] <- as.numeric(d[['" <> xName
-                   <> "']]), warning=function(w) NULL)\n"
-            else ""
-      -- Finance pre-transforms: compute new d$ columns before ggplot so
-      -- the plot itself stays a plain aes+geom. All use base R (c, diff,
-      -- cumprod, cummax, filter, embed) — no extra dep on tidyquant.
-      yc = "d[['" <> yName <> "']]"
-      preXform = case kind of
-        PlotReturns  ->
-          "d[['" <> yName <> "']] <- c(NA, diff(" <> yc <> ") / head(" <> yc <> ", -1))\n"
-          <> "d <- d[!is.na(d[['" <> yName <> "']]), ]\n"
-        PlotCumRet   ->
-          "r <- c(0, diff(" <> yc <> ") / head(" <> yc <> ", -1))\n"
-          <> "d[['" <> yName <> "']] <- cumprod(1 + r) - 1\n"
-        PlotDrawdown ->
-          "m <- cummax(" <> yc <> ")\n"
-          <> "d[['" <> yName <> "']] <- (m - " <> yc <> ") / m\n"
-        PlotMA       ->
-          "d$ma <- as.vector(stats::filter(" <> yc <> ", rep(1/20, 20), sides = 1))\n"
-        PlotVol      ->
-          "r <- c(NA, diff(" <> yc <> ") / head(" <> yc <> ", -1))\n"
-          <> "d[['" <> yName <> "']] <- as.vector(stats::filter((r - mean(r, na.rm=TRUE))^2, rep(1/20, 20), sides = 1))\n"
-          <> "d[['" <> yName <> "']] <- sqrt(d[['" <> yName <> "']])\n"
-        PlotBB       ->
-          "m <- as.vector(stats::filter(" <> yc <> ", rep(1/20, 20), sides = 1))\n"
-          <> "sd20 <- as.vector(stats::filter((" <> yc <> " - m)^2, rep(1/20, 20), sides = 1))\n"
-          <> "d$ma <- m; d$upper <- m + 2 * sqrt(sd20); d$lower <- m - 2 * sqrt(sd20)\n"
-        _ -> ""
-      aes
-        | kind == PlotQQ = "aes(sample = " <> yR <> ")"
-        | singleCol kind = "aes(x = " <> yR <> ")"
-        | catAsX kind =
-            if hasCat
-              then "aes(x = " <> catR <> ", y = " <> yR <> ")"
-              else "aes(x = factor(''), y = " <> yR <> ")"
-        | otherwise            = "aes(x = " <> xR <> ", y = " <> yR <> ")"
-      colorAes = if hasCat && not (addsFill kind)
-                   then ", color = " <> catR else ""
-      fillAes  = if addsFill kind
-                   then ", fill = " <> (if hasCat then catR else yR)
-                   else ""
-      geom = case kind of
-        PlotLine    -> "geom_line(linewidth = 0.5)"
-        PlotBar     -> "geom_col()"
-        PlotScatter -> "geom_point(size = 1.5, alpha = 0.7)"
-        PlotHist    -> "geom_histogram(bins = 30, fill = 'steelblue', color = 'white')"
-        PlotBox     -> "geom_boxplot()"
-        PlotArea    -> "geom_area(alpha = 0.4)"
-        PlotDensity -> "geom_density(fill = 'steelblue', alpha = 0.5)"
-        PlotStep    -> "geom_step(linewidth = 0.5)"
-        PlotViolin  -> "geom_violin() + geom_boxplot(width = 0.1, fill = 'white')"
-        PlotReturns -> "geom_histogram(bins = 40, fill = 'steelblue', color = 'white')"
-        PlotCumRet  -> "geom_line(linewidth = 0.5, color = 'steelblue') + scale_y_continuous(labels = scales::percent)"
-        PlotDrawdown -> "geom_area(alpha = 0.5, fill = 'firebrick') + scale_y_reverse(labels = scales::percent)"
-        PlotMA      -> "geom_line(linewidth = 0.4, alpha = 0.6) + geom_line(aes(y = ma), color = 'orange', linewidth = 0.8, na.rm = TRUE)"
-        PlotVol     -> "geom_line(linewidth = 0.5, color = 'orange', na.rm = TRUE)"
-        PlotQQ      -> "geom_qq(alpha = 0.6) + geom_qq_line(color = 'firebrick')"
-        PlotBB      -> "geom_ribbon(aes(ymin = lower, ymax = upper), fill = 'steelblue', alpha = 0.2, na.rm = TRUE) + geom_line(aes(y = ma), color = 'steelblue', linewidth = 0.5, na.rm = TRUE) + geom_line(linewidth = 0.4)"
-        PlotCandle  -> ""  -- handled elsewhere; needs 4-column pipeline
-      timeScale = if xType == ColTypeTime
-                    then " + scale_x_datetime(date_labels = '%H:%M:%S')" else ""
-      facet = if hasFacet
-                then " + facet_wrap(vars(" <> facetR <> "), scales = 'free_y')"
-                else ""
-      fillScale = if addsFill kind && not hasCat
-                    then "scale_fill_viridis_c()" else "scale_fill_viridis_d()"
-      titleR = if T.null title
-                 then ""
-                 else " + ggtitle('" <> title
-                        <> "') + theme(plot.title = element_text(hjust = 0.5))"
-  in "library(ggplot2)\n" <> readData <> convY <> convX <> preXform
-       <> "p <- ggplot(d, " <> aes <> colorAes <> fillAes <> ") + "
-       <> geom <> facet <> " + "
-       <> "labs(x = '" <> xName <> "', y = '" <> yName
-       <> "') + theme_minimal() + scale_color_viridis_d() + "
-       <> fillScale <> timeScale <> titleR <> "\n"
-       <> "ggsave('" <> pngPath <> "', p, width = 12, height = 7, dpi = 100)\n"
-
--- | Candlestick R script. Expects a 5-column TSV: x, open, high, low, close.
--- Wick (low..high) drawn with linerange; body (min(O,C)..max(O,C)) with
--- a thicker linerange, colored green (close >= open) or red (close < open).
-rScriptCandle :: Text -> Text -> Text -> ColType -> Text -> Text
-rScriptCandle dataPath pngPath xName xType title =
-  let xq = "`" <> xName <> "`"
-      convX = case xType of
-        ColTypeTime ->
-          "d$" <> xq <> " <- as.POSIXct(paste('1970-01-01', d$" <> xq <> "))\n"
-        ColTypeTimestamp ->
-          "d$" <> xq <> " <- as.POSIXct(d$" <> xq <> ")\n"
-        ColTypeDate ->
-          "d$" <> xq <> " <- as.Date(d$" <> xq <> ")\n"
-        _ ->
-          "tryCatch(d$" <> xq <> " <- as.numeric(d$" <> xq
-            <> "), warning=function(w) NULL)\n"
-      timeScale = if xType == ColTypeTime
-                    then " + scale_x_datetime(date_labels = '%H:%M:%S')" else ""
-      titleR = if T.null title
-                 then ""
-                 else " + ggtitle('" <> title
-                        <> "') + theme(plot.title = element_text(hjust = 0.5))"
-  in "library(ggplot2)\n"
-     <> "d <- read.delim('" <> dataPath
-     <> "', header=TRUE, sep='\\t', colClasses='character', check.names=FALSE)\n"
-     <> "for (cn in c('open','high','low','close')) d[[cn]] <- as.numeric(d[[cn]])\n"
-     <> convX
-     <> "d$dir <- ifelse(d$close >= d$open, 'up', 'down')\n"
-     <> "p <- ggplot(d, aes(x = " <> xq <> ")) + "
-     <> "geom_linerange(aes(ymin = low, ymax = high), color = 'gray40') + "
-     <> "geom_linerange(aes(ymin = pmin(open, close), ymax = pmax(open, close), color = dir), linewidth = 2.5) + "
-     <> "scale_color_manual(values = c(up = 'forestgreen', down = 'firebrick'), guide = 'none') + "
-     <> "labs(x = '" <> xName <> "', y = 'price') + theme_minimal()"
-     <> timeScale <> titleR <> "\n"
-     <> "ggsave('" <> pngPath <> "', p, width = 12, height = 7, dpi = 100)\n"
-
--- | Run Rscript to render plot; returns error message on failure
-renderR :: Text -> IO (Maybe Text)
-renderR script = do
-  Log.write "plot-R" script
-  rPath <- Tmp.threadPath "plot.R"
-  TIO.writeFile rPath script
-  (ec, _, se) <- readProcessWithExitCode "Rscript" [rPath] ""
-  case ec of
-    ExitFailure _ -> do
-      let msg = "Rscript failed: " <> T.strip (T.pack se)
-      Log.write "plot" msg
-      pure (Just msg)
-    ExitSuccess -> pure Nothing
-
--- | Render dispatch: chooses Tv.Plot.Chart (cairo) when TV_PLOT_RENDERER=chart,
--- otherwise the R/ggplot subprocess. After a successful render also copies
--- the PNG to TV_PLOT_OUT (if set) so non-interactive harnesses can grab it.
+-- | Render dispatch: renders via Tv.Plot.Chart (Chart + Chart-cairo).
+-- After a successful render also copies the PNG to TV_PLOT_OUT (if set)
+-- so non-interactive harnesses can grab it.
 renderDispatch
   :: FilePath -- dataPath (headered TSV — already prepared by exportWithHeaders)
   -> FilePath -- pngPath  (where the renderer writes the PNG)
@@ -436,16 +258,9 @@ renderDispatch
   -> Text     -- catName
   -> ColType  -- xType
   -> Text     -- title
-  -> Text     -- pre-built R script (used when renderer = "r")
   -> IO (Maybe Text)
-renderDispatch dataPath pngPath kind xName yName hasCat catName xType title script = do
-  rend <- lookupEnv "TV_PLOT_RENDERER"
-  result <- case rend of
-    Just "r" -> renderR script
-    _        ->
-      Chart.renderChart dataPath pngPath kind xName yName hasCat catName xType title
-  -- Copy to TV_PLOT_OUT regardless of renderer choice; only on success
-  -- (otherwise the user-visible error message is more useful than a stale PNG).
+renderDispatch dataPath pngPath kind xName yName hasCat catName xType title = do
+  result <- Chart.renderChart dataPath pngPath kind xName yName hasCat catName xType title
   case result of
     Nothing -> do
       mOut <- lookupEnv "TV_PLOT_OUT"
@@ -458,7 +273,9 @@ renderDispatch dataPath pngPath kind xName yName hasCat catName xType title scri
     Just _  -> pure ()
   pure result
 
--- | Export plot data with headers for R (prepends column names to plotExport output)
+
+-- | Export plot data with headers (prepends column names to plotExport
+-- output) so Chart.renderChart can read via read.delim-style parsing.
 exportWithHeaders
   :: AdbcTable -> Text -> Text -> Maybe Text -> Bool -> Int -> Int
   -> IO (Maybe (Vector Text))
@@ -475,9 +292,8 @@ exportWithHeaders t xName yName catName_ xIsTime step truncLen_ = do
       TIO.writeFile datPath (header <> "\n" <> content)
       pure (Just cats)
 
--- | Export OHLC + prepend header for R's read.delim. Matches the
--- prepend trick in 'exportWithHeaders' since copyPlot doesn't write
--- column names.
+-- | Export OHLC + prepend header. Matches the prepend trick in
+-- 'exportWithHeaders' since copyPlot doesn't write column names.
 exportCandleWithHeaders
   :: AdbcTable -> Text -> (Text, Text, Text, Text) -> IO Bool
 exportCandleWithHeaders t xName (o, h, l, c) = do
@@ -517,10 +333,8 @@ runCandle s = do
             then do exitPlot; err s "candle: data export failed"
             else do
               let title  = "Candlestick: " <> xName
-                  script = rScriptCandle (T.pack datPath) (T.pack pngPath)
-                             xName xType title
               renderErr <- renderDispatch datPath pngPath PlotCandle
-                             xName "" False "" xType title script
+                             xName "" False "" xType title
               renderFrame pngPath (V.singleton (Interval "all" 1)) 0 renderErr
               -- wait for q to exit
               let waitQ = do c <- readKey
@@ -588,10 +402,8 @@ runSingle s kind = do
         yName <> "\n"
           <> T.intercalate "\n" (V.toList (V.filter (not . T.null) vals))
           <> "\n"
-      let title  = plotTitle kind "" yName False ""
-          script = rScript (T.pack datPath) (T.pack pngPath) kind "" yName
-                     False "" False "" ColTypeOther title
-      err_ <- renderDispatch datPath pngPath kind "" yName False "" ColTypeOther title script
+      let title = plotTitle kind "" yName False ""
+      err_ <- renderDispatch datPath pngPath kind "" yName False "" ColTypeOther title
       clearScreen
       case err_ of
         Nothing  -> showPng pngPath
@@ -608,9 +420,9 @@ runSingle s kind = do
 -- interval changes, skips re-render on unknown keys, exits on 'q'.
 plotLoop
   :: AdbcTable -> PlotKind -> Text -> Text -> Bool -> Text -> Maybe Text
-  -> ColType -> Bool -> Int -> String -> Vector Interval -> Text -> Text -> IO ()
+  -> ColType -> Bool -> Int -> String -> Vector Interval -> Text -> IO ()
 plotLoop tbl kind xName yName hasCat catName exportCat xType xIsTime baseStep
-         pngPath intervals script title = do
+         pngPath intervals title = do
   idxRef        <- newIORef (0 :: Int)
   continueRef   <- newIORef True
   needRenderRef <- newIORef True
@@ -639,7 +451,7 @@ plotLoop tbl kind xName yName hasCat catName exportCat xType xIsTime baseStep
               Just msg -> pure (Just msg)
               Nothing  -> do
                 dp <- Table.plotDatPath
-                renderDispatch dp pngPath kind xName yName hasCat catName xType title script
+                renderDispatch dp pngPath kind xName yName hasCat catName xType title
             renderFrame pngPath intervals idx err_
           key <- readKey
           case handleKey key of
@@ -706,13 +518,10 @@ runGroup s kind = do
             Term.shutdown
             altEnter
             setRaw
-            datPath <- Table.plotDatPath
             pngPath <- Tmp.tmpPath "plot.png"
             let title = plotTitle kind xName yName hasCat catName
-                script = rScript (T.pack datPath) (T.pack pngPath) kind
-                           xName yName hasCat catName hasFacet facetName xType title
             plotLoop tbl kind xName yName hasCat catName exportCat xType xIsTime baseStep
-              pngPath intervals script title
+              pngPath intervals title
             exitPlot
             pure (Just s)
 
