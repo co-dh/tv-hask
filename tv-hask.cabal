@@ -52,6 +52,7 @@ library
     Tv.Fzf
     Tv.Fzf.Match
     Tv.Fzf.Picker
+    Tv.Clip
     Tv.Key
     Tv.Kitty
     Tv.Meta

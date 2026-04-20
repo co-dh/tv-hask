@@ -14,6 +14,7 @@ module Tv.Data.DuckDB.Prql
   , defaultQuery
     -- * Quoting / rendering
   , quote
+  , ref
   , renderSort
   , aggName
   , dqQuote
@@ -59,14 +60,25 @@ data Query = Query
 defaultQuery :: Query
 defaultQuery = Query { base = "from df", ops = V.empty }
 
--- | Quote column name — always backtick to avoid PRQL keyword collisions
+-- | Quote a column *declaration* (LHS of a derive binding, new name in
+-- a group alias, etc.). Backticks let PRQL accept arbitrary identifiers
+-- without tripping its tokenizer.
 quote :: Text -> Text
 quote s = "`" <> s <> "`"
+
+-- | Reference an *existing* column. Uses @this.`col`@ so column names
+-- that collide with PRQL keywords or module names ('date', 'text',
+-- 'math', 'time', 'std', 'case') resolve to the row column instead of
+-- the builtin. Always use 'ref' where PRQL expects a column expression
+-- (sort, select, group keys, aggregate source, join conditions);
+-- use 'quote' only when introducing a *new* name.
+ref :: Text -> Text
+ref s = "this." <> quote s
 
 -- | Render sort column (asc = col, desc = -col)
 renderSort :: Text -> Bool -> Text
 renderSort col asc =
-  let qc = quote col
+  let qc = ref col
   in if asc then qc else "-" <> qc
 
 -- | Render aggregate function name (std. prefix for PRQL)
@@ -83,20 +95,25 @@ aggName AggDist   = "std.count_distinct"
 dqQuote :: Text -> Text
 dqQuote s = "\\\"" <> s <> "\\\""
 
--- | Render single operation to PRQL string
+-- | Render single operation to PRQL string.
+--
+-- Column *references* (sort, select, group keys, aggregate sources) use
+-- 'ref' so keyword-colliding names ('date', 'text', 'math', …) resolve
+-- to row columns. *Declarations* (derive LHS, group alias) stay plain
+-- 'quote' — PRQL doesn't accept @this.x@ on the LHS of an assignment.
 opRender :: Op -> Text
 opRender (OpFilter e) = "filter " <> e
 opRender (OpSort cols) =
   "sort {" <> joinWith (V.map (\(c, asc) -> renderSort c asc) cols) ", " <> "}"
 opRender (OpSel cols) =
-  "select {" <> joinWith (V.map quote cols) ", " <> "}"
+  "select {" <> joinWith (V.map ref cols) ", " <> "}"
 opRender (OpExclude cols) =
   "select s\"* EXCLUDE (" <> joinWith (V.map dqQuote cols) ", " <> ")\""
 opRender (OpDerive bs) =
   "derive {" <> joinWith (V.map (\(n, e) -> quote n <> " = " <> e) bs) ", " <> "}"
 opRender (OpGroup keys aggs) =
-  let as = V.map (\(fn, name, col) -> name <> " = " <> aggName fn <> " " <> quote col) aggs
-  in "group {" <> joinWith (V.map quote keys) ", " <> "} (aggregate {" <> joinWith as ", " <> "})"
+  let as = V.map (\(fn, name, col) -> name <> " = " <> aggName fn <> " " <> ref col) aggs
+  in "group {" <> joinWith (V.map ref keys) ", " <> "} (aggregate {" <> joinWith as ", " <> "})"
 opRender (OpTake n) = "take " <> T.pack (show n)
 
 -- | Render just the ops portion (no base/from clause)

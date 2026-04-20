@@ -30,6 +30,8 @@ module Tv.Types
   , numType
     -- * Table helpers
   , filterPrompt
+  , exprError
+  , isPrqlKeyword
   , keepCols
   , colText
     -- * Agg
@@ -201,8 +203,12 @@ data RenderCtx = RenderCtx
   }
 makeFieldLabelsNoPrefix ''RenderCtx
 
--- | Build PRQL filter expression from fzf result
--- With --print-query: line 0 = query, lines 1+ = selections
+-- | Build PRQL filter expression from fzf result.
+-- With --print-query: line 0 = query, lines 1+ = selections.
+-- References to the column use @this.\`col\`@ so names that collide with
+-- PRQL keywords/modules (date, text, math, …) still resolve correctly.
+-- Mirrors 'Tv.Data.DuckDB.Prql.ref'; inlined here to keep Types free of
+-- the Prql import cycle.
 filterPrql :: Text -> Vector Text -> Text -> Bool -> Text
 filterPrql col vals result numeric =
   let lines_ = V.fromList (filter (not . T.null) (T.splitOn "\n" result))
@@ -213,10 +219,11 @@ filterPrql col vals result numeric =
           then V.cons input fromHints
           else fromHints
       q v = if numeric then v else "'" <> v <> "'"
+      ref = "this.`" <> col <> "`"
   in if V.length selected == 1
-       then col <> " == " <> q (fromMaybe "" (selected V.!? 0))
+       then ref <> " == " <> q (fromMaybe "" (selected V.!? 0))
      else if V.length selected > 1
-       then "(" <> joinWith (V.map (\v -> col <> " == " <> q v) selected) " || " <> ")"
+       then "(" <> joinWith (V.map (\v -> ref <> " == " <> q v) selected) " || " <> ")"
      else if not (T.null input)
        then input
        else ""
@@ -225,13 +232,69 @@ filterPrql col vals result numeric =
 numType :: Text -> Bool
 numType t = isNumeric (ofString t)
 
--- | Filter prompt hint (PRQL examples for the given column/type)
+-- | Filter prompt hint (PRQL examples for the given column/type).
+-- If @col@ is a PRQL keyword (date, text, math, time, …) the examples
+-- use @this.col@ so a copy-paste works without tripping the parser.
 filterPrompt :: Text -> Text -> Text
 filterPrompt col typ =
-  let eg = if numType typ
-             then "e.g. " <> col <> " > 5,  " <> col <> " >= 10 && " <> col <> " < 100"
-             else "e.g. " <> col <> " == 'USD',  " <> col <> " ~= 'pattern'"
-  in "PRQL filter on " <> col <> " (" <> typ <> "):  " <> eg
+  let c = if isPrqlKeyword col then "this." <> col else col
+      eg = if numType typ
+             then "e.g. " <> c <> " > 5,  " <> c <> " >= 10 && " <> c <> " < 100"
+             else "e.g. " <> c <> " == 'USD',  " <> c <> " ~= 'pattern'"
+  in "PRQL filter on " <> col <> " (" <> typ <> "):  use == not =,  " <> eg
+
+-- | Column names that clash with a PRQL keyword or std module — bare
+-- references to these would resolve to the builtin instead of the row
+-- column. Users hitting one of these should prefix with @this.@.
+isPrqlKeyword :: Text -> Bool
+isPrqlKeyword c = c `elem`
+  [ "date", "text", "math", "time", "std", "case"
+  , "from", "filter", "sort", "select", "derive", "group", "take"
+  , "aggregate", "join", "append", "remove", "uniq"
+  , "true", "false", "null", "this"
+  ]
+
+-- | Lint a user-entered filter/derive expression and return a
+-- human-readable error if the shape is syntactically suspect.
+-- Currently catches the single-@=@ mistake (SQL habit that PRQL rejects
+-- silently — PRQL uses @==@ for equality).
+--
+-- >>> exprError "a = b"
+-- Just "use == for equality, not = (PRQL isn't SQL)"
+-- >>> exprError "a == b"
+-- Nothing
+-- >>> exprError "a >= 5"
+-- Nothing
+-- >>> exprError "x = y == z"
+-- Just "use == for equality, not = (PRQL isn't SQL)"
+-- >>> exprError "name == 'ab=cd'"
+-- Nothing
+exprError :: Text -> Maybe Text
+exprError t =
+  let stripped = stripQuoted t
+  in if hasBareEq stripped
+       then Just "use == for equality, not = (PRQL isn't SQL)"
+       else Nothing
+  where
+    -- Remove single-quoted segments so an = inside a string literal
+    -- ('ab=cd') doesn't false-positive.
+    stripQuoted :: Text -> Text
+    stripQuoted s = case T.breakOn "'" s of
+      (h, r) | T.null r  -> h
+             | otherwise -> case T.breakOn "'" (T.drop 1 r) of
+                 (_, r2) | T.null r2  -> h
+                         | otherwise -> h <> " " <> stripQuoted (T.drop 1 r2)
+    -- True if there's a lone `=` (not part of ==, >=, <=, !=, ~=).
+    hasBareEq :: Text -> Bool
+    hasBareEq s = go (T.unpack s)
+    go :: String -> Bool
+    go []            = False
+    go ['=']         = True                  -- trailing lone =
+    go ('=':'=':xs)  = go xs                 -- skip ==
+    go (c:'=':xs)
+      | c `elem` ("><!~" :: String) = go xs  -- >=, <=, !=, ~=
+    go ('=':_)       = True                  -- standalone =
+    go (_:xs)        = go xs
 
 -- | Keep columns not in hide set (shared by hideCols impls)
 keepCols :: Int -> Vector Int -> Vector Text -> Vector Text
@@ -519,6 +582,7 @@ data Cmd
   | CmdPrecMax
   | CmdCellUp
   | CmdCellDn
+  | CmdCellYank
   | CmdHeat0
   | CmdHeat1
   | CmdHeat2
@@ -605,6 +669,7 @@ instance StrEnum Cmd where
   toString CmdPrecMax        = "prec.max"
   toString CmdCellUp         = "cell.up"
   toString CmdCellDn         = "cell.dn"
+  toString CmdCellYank       = "cell.yank"
   toString CmdHeat0          = "heat.0"
   toString CmdHeat1          = "heat.1"
   toString CmdHeat2          = "heat.2"
@@ -645,7 +710,7 @@ instance StrEnum Cmd where
     , CmdTblMenu, CmdStkSwap, CmdStkPop, CmdStkDup, CmdTblQuit, CmdTblXpose
     , CmdTblDiff, CmdInfoTog
     , CmdPrecDec, CmdPrecInc, CmdPrecZero, CmdPrecMax
-    , CmdCellUp, CmdCellDn, CmdHeat0, CmdHeat1, CmdHeat2, CmdHeat3
+    , CmdCellUp, CmdCellDn, CmdCellYank, CmdHeat0, CmdHeat1, CmdHeat2, CmdHeat3
     , CmdMetaPush, CmdMetaSetKey, CmdMetaSelNull, CmdMetaSelSingle, CmdMetaStats, CmdMetaCorr
     , CmdSample, CmdDupes, CmdCrosstab
     , CmdFreqOpen, CmdFreqFilter

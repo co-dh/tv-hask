@@ -343,7 +343,7 @@ fetchMore t
 -- column through the downsample.
 plotPrql :: Text -> Text -> Text -> Maybe Text -> Bool -> Int -> Text
 plotPrql baseR xName yName catName_ xIsTime truncLen =
-  let q = Prql.quote
+  let q = Prql.ref   -- column references (keyword-safe via this.col)
       tn = T.pack (show truncLen)
   in if xIsTime
        then case catName_ of
@@ -387,7 +387,7 @@ copyPlot sql = do
 -- | Query distinct category values (for legend/facet labels in R).
 uniqCats :: Text -> Text -> IO (Vector Text)
 uniqCats baseR cn = do
-  m <- prqlQuery (baseR <> " | uniq " <> Prql.quote cn)
+  m <- prqlQuery (baseR <> " | uniq " <> Prql.ref cn)
   case m of
     Nothing -> pure V.empty
     Just catQr -> do
@@ -434,7 +434,7 @@ plotExportOhlc
   -> IO Bool
 plotExportOhlc t xName openName highName lowName closeName = do
   let baseR = Prql.queryRender (query t)
-      q     = Prql.quote
+      q     = Prql.ref
       prqlStr = baseR
         <> " | select { " <> q xName
         <> ", open = " <> q openName
@@ -509,7 +509,7 @@ freqTable :: AdbcTable -> Vector Text -> IO (Maybe (AdbcTable, Int))
 freqTable t cNames
   | V.null cNames = pure Nothing
   | otherwise = do
-      let cols = T.intercalate ", " (V.toList (V.map Prql.quote cNames))
+      let cols = T.intercalate ", " (V.toList (V.map Prql.ref cNames))
           baseR = Prql.queryRender (query t)
       -- total distinct groups
       totalGroups <- do
@@ -549,7 +549,7 @@ filter t expr = do
 distinct :: AdbcTable -> Int -> IO (Vector Text)
 distinct t col = do
   let cName = fromMaybe "" (colNames t V.!? col)
-  m <- prqlQuery (Prql.queryRender (query t) <> " | uniq " <> Prql.quote cName)
+  m <- prqlQuery (Prql.queryRender (query t) <> " | uniq " <> Prql.ref cName)
   case m of
     Nothing -> pure V.empty
     Just qr_ -> do
@@ -561,7 +561,7 @@ distinct t col = do
 --   PRQL row_number is 1-based; we subtract 1 here for 0-based indexing.
 findRow :: AdbcTable -> Int -> Text -> Int -> Bool -> IO (Maybe Int)
 findRow t col val start fwd = do
-  let cName = Prql.quote (fromMaybe "" (colNames t V.!? col))
+  let cName = Prql.ref (fromMaybe "" (colNames t V.!? col))
       prql  = Prql.queryRender (query t)
            <> " | derive {_rn = row_number this} | filter ("
            <> cName <> " == '" <> escSql val <> "') | select {_rn}"

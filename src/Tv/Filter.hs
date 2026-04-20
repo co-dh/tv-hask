@@ -39,13 +39,14 @@ import Tv.App.Types (AppState(..), HandlerFn, onStk, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
-import Tv.Types (Cmd(..), isNumeric, toString, filterPrql, filterPrompt)
+import Tv.Types (Cmd(..), isNumeric, toString, filterPrql, filterPrompt, exprError)
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.View (View(..), ViewStack, cur, setCur, push, tbl)
 import qualified Tv.View as View
 import qualified Tv.Fzf as Fzf
+import qualified Tv.Render as Render
 
 -- | Run a MaybeT IO pipeline; on Nothing (cancel/no-match), keep the
 -- original stack. The Filter family all have this shape:
@@ -212,24 +213,30 @@ searchDir s fwd = orKeep s $ do
   rowIdx <- MaybeT $ Table.findRow (v ^. #nav % #tbl) col val start fwd
   pure $ moveRowTo s rowIdx Nothing
 
--- | row filter (\): filter rows by expression, push filtered view (IO)
+-- | row filter (\): filter rows by expression, push filtered view (IO).
+-- If the user's expression trips 'exprError' (lone @=@, etc.) the filter
+-- is aborted with a popup message instead of silently failing in PRQL.
 rowFilter :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-rowFilter tm s = withDistinct s $ \_curCol curName vals -> orKeep s $ do
+rowFilter tm s = withDistinct s $ \_curCol curName vals -> do
   let typ    = Ops.colType (tbl s) _curCol
       header = filterPrompt curName (toString typ)
-  result <- MaybeT $ Fzf.fzf tm
+  mResult <- Fzf.fzf tm
               (V.fromList ["--print-query", "--header=" <> header, "--prompt=filter > "])
               (T.intercalate "\n" (V.toList vals))
-  let expr = filterPrql curName vals result (isNumeric typ)
-  guard $ not $ T.null expr
-  tbl' <- MaybeT $ Table.filter (tbl s) expr
-  -- Preserve cursor column across filter (matches Lean's `rebuild tbl' (row := 0)`
-  -- default). Resetting col=0 would snap the cursor back to the first column.
-  let v      = cur s
-      curCol = Nav.colIdx (v ^. #nav)
-      grp'   = v ^. #nav % #grp
-  v' <- hoistMaybe $ View.rebuild v tbl' curCol grp' 0
-  pure $ push s (v' & #disp .~ ("\\" <> curName))
+  case mResult of
+    Nothing -> pure s
+    Just result ->
+      let expr = filterPrql curName vals result (isNumeric typ)
+      in case exprError expr of
+        Just msg -> Render.errorPopup ("filter: " <> msg) >> pure s
+        Nothing  -> orKeep s $ do
+          guard $ not $ T.null expr
+          tbl' <- MaybeT $ Table.filter (tbl s) expr
+          let v      = cur s
+              curCol = Nav.colIdx (v ^. #nav)
+              grp'   = v ^. #nav % #grp
+          v' <- hoistMaybe $ View.rebuild v tbl' curCol grp' 0
+          pure $ push s (v' & #disp .~ ("\\" <> curName))
 
 -- | Jump to column by name directly (no fzf). Called by socket/dispatch.
 jumpCol :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
@@ -239,18 +246,23 @@ jumpCol s name = orKeep s $ do
   pure $ moveTo s idx
 
 -- | Filter by expression directly (no fzf). Called by socket/dispatch.
+-- Lints the expression for common SQL-vs-PRQL mistakes (e.g. lone @=@)
+-- and surfaces a popup instead of silently bouncing the query through
+-- PRQL and getting back an opaque compile error.
 filterWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
-filterWith s expr = orKeep s $ do
-  guard $ not $ T.null expr
-  tbl' <- MaybeT $ Table.filter (tbl s) expr
-  -- Match Lean's `rebuild tbl' (row := 0)` — col defaults to the old cursor
-  -- column, grp to the old grp. Resetting col to 0 would jump the cursor
-  -- home, which the filter demo explicitly asserts should NOT happen.
-  let v      = cur s
-      curCol = Nav.colIdx (v ^. #nav)
-      grp'   = v ^. #nav % #grp
-  v' <- hoistMaybe $ View.rebuild v tbl' curCol grp' 0
-  pure $ push s (v' & #disp .~ ("\\" <> expr))
+filterWith s expr = case exprError expr of
+  Just msg -> Render.errorPopup ("filter: " <> msg) >> pure s
+  Nothing  -> orKeep s $ do
+    guard $ not $ T.null expr
+    tbl' <- MaybeT $ Table.filter (tbl s) expr
+    -- Match Lean's `rebuild tbl' (row := 0)` — col defaults to the old cursor
+    -- column, grp to the old grp. Resetting col to 0 would jump the cursor
+    -- home, which the filter demo explicitly asserts should NOT happen.
+    let v      = cur s
+        curCol = Nav.colIdx (v ^. #nav)
+        grp'   = v ^. #nav % #grp
+    v' <- hoistMaybe $ View.rebuild v tbl' curCol grp' 0
+    pure $ push s (v' & #disp .~ ("\\" <> expr))
 
 -- | Search for value directly (no fzf). Called by socket/dispatch.
 searchWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
