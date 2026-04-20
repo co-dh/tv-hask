@@ -27,7 +27,7 @@ import qualified Graphics.Rendering.Chart.Grid as Grid
 
 -- Tv.Types.PlotHist collides with Chart's PlotHist; route ours through Plot
 -- as a qualified prefix at use sites.
-import Tv.Types (ColType)
+import Tv.Types (ColType, isNumeric)
 import qualified Tv.Types as Plot
 
 -- Chart's Rectangle / Plottable / Layout types collide with names we'd
@@ -46,13 +46,13 @@ renderChart
   -> ColType    -- xType (unused for now; future: time-axis formatters)
   -> Text       -- title
   -> IO (Maybe Text)
-renderChart dataPath pngPath kind xName yName hasCat _catName _xType title =
+renderChart dataPath pngPath kind xName yName hasCat _catName xType title =
   case kind of
     Plot.PlotLine     -> render2D (\xs ys -> toPlot $ defLine yName  xs ys) >>= save
     Plot.PlotStep     -> render2D (\xs ys -> toPlot $ defStep yName  xs ys) >>= save
     Plot.PlotScatter  -> renderScatter hasCat >>= save
     Plot.PlotArea     -> render2D (\xs ys -> areaPlot xs ys) >>= save
-    Plot.PlotBar      -> renderBar  >>= save
+    Plot.PlotBar      -> renderBar >>= save
     Plot.PlotHist     -> renderHist >>= save
     Plot.PlotDensity  -> renderDensity >>= save
     Plot.PlotBox      -> renderBoxOrViolin False >>= save
@@ -75,16 +75,23 @@ renderChart dataPath pngPath kind xName yName hasCat _catName _xType title =
         Left e  -> pure $ Just $ "Chart render failed: " <> T.pack (show e)
         Right _ -> pure Nothing
 
+    -- When the x column isn't numeric (Time, Timestamp, Date, free
+    -- text), tv still exports it verbatim. Replace x with row index so
+    -- the line/scatter/etc still renders at expected positions; ggplot
+    -- handles this via its own type sniffing, but Chart-cairo wants
+    -- Doubles end-to-end.
+    xIsNumeric = isNumeric xType
+
     render2D :: ([Double] -> [Double] -> Plot Double Double)
              -> IO (Either Text (Renderable ()))
     render2D mkP = do
-      r <- readXY dataPath
+      r <- readXY' xIsNumeric dataPath
       pure $ case r of
         Left e          -> Left e
         Right (xs, ys)  -> Right $ toRenderable $ layoutXY title xName yName (mkP xs ys)
 
     renderBar = do
-      r <- readXY dataPath
+      r <- readXY' xIsNumeric dataPath
       pure $ case r of
         Left e         -> Left e
         Right (xs, ys) -> Right $ toRenderable $ layoutBar title xName yName xs ys
@@ -320,15 +327,30 @@ renderChart dataPath pngPath kind xName yName hasCat _catName _xType title =
 
 -- | Read a 2-column (x, y) TSV with header. Drops malformed rows.
 readXY :: FilePath -> IO (Either Text ([Double], [Double]))
-readXY path_ = do
+readXY = readXY' True
+
+-- | Like 'readXY' but with a flag controlling whether the x column is
+-- expected to parse as Double. When False, the x value is replaced by
+-- the row index — used for time/date/string x columns where parsing
+-- the textual x as numeric would drop every row.
+readXY' :: Bool -> FilePath -> IO (Either Text ([Double], [Double]))
+readXY' xNumeric path_ = do
   r <- try (TIO.readFile path_) :: IO (Either SomeException Text)
   pure $ case r of
     Left e -> Left $ "read TSV failed: " <> T.pack (show e)
     Right txt ->
-      let rows = drop 1 $ T.lines txt    -- drop header
-          xys  = mapMaybe parse2 rows
-      in if null xys then Left "no usable rows"
-         else Right (map fst xys, map snd xys)
+      let rows = drop 1 $ T.lines txt
+      in if xNumeric
+           then let xys = mapMaybe parse2 rows
+                in if null xys
+                     then Left "no usable rows"
+                     else Right (map fst xys, map snd xys)
+           else let ys = mapMaybe (\line -> case T.splitOn "\t" line of
+                                              (_:b:_) -> readD b
+                                              _       -> Nothing) rows
+                    xs = [0 .. fromIntegral (length ys - 1)]
+                in if null ys then Left "no usable rows"
+                   else Right (xs, ys)
 
 -- | Read a 1-column (y) TSV with header.
 readY :: FilePath -> IO (Either Text [Double])
