@@ -1,14 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ScopedTypeVariables #-}
--- | In-process fuzzy picker.
+-- | In-process fuzzy picker, rendered as a popup overlay on the existing
+-- TUI cell buffer — not a separate full-screen mode.
 --
--- The UX we replicate from the fzf subset we used to shell out to:
+-- UX replicated from the fzf subset we used to shell out to:
 --
 -- * prompt line              — editable with typing / backspace / Ctrl-U
 -- * optional header line     — static, shown above the list
--- * fuzzy-filtered item list — incremental, case-insensitive, ranked
--- * arrow-key navigation     — up/down, Home/End, Ctrl-J/Ctrl-K, wrap
+-- * fuzzy-filtered item list — incremental, case-insensitive, ranked,
+--                              with @^prefix@ / @suffix$@ anchors
+-- * arrow-key navigation     — up/down, Home/End, PgUp/PgDn, Ctrl-J/Ctrl-K
 -- * Enter selects            — returns the raw line of the highlighted item,
 --                              or (if 'printQuery') the current query when
 --                              nothing matches
@@ -16,101 +17,102 @@
 -- * 'onFocus' callback       — fires on every highlight change, replacing
 --                              fzf's @--bind=focus:execute-silent(...)@ +
 --                              socat shim
--- * 'poll' callback          — fires every ~30 ms while we wait for input,
---                              so the main loop can service background work
+-- * 'poll' callback          — fires every ~30 ms while we wait for input
 --
--- We use raw stdout for our own rendering, because 'Tv.Term' is shut down
--- before we run (caller flow: @Term.shutdown@; 'runPicker'; @Term.init@).
--- This matches what the shelled-out fzf did in inline (@--height@) mode.
+-- Rendering: we draw the popup into 'Tv.Term''s screen cell buffer via
+-- 'Term.padC' and flush with 'Term.present'. The caller keeps 'Term.init'
+-- active, so the popup sits on top of whatever the TUI was showing. On
+-- exit we clear the buffer so the caller's next render repaints the
+-- underlying view cleanly.
 module Tv.Fzf.Picker
   ( PickerOpts(..)
   , defaultOpts
   , runPicker
   ) where
 
-import Control.Exception (bracket_, SomeException, try)
 import Control.Monad (when, forM_)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.Char (chr)
 import qualified Data.IntSet as IS
 import Data.List (sortOn)
 import Data.Ord (Down(..))
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import System.IO (hFlush, stdout, hSetBuffering, hSetEcho, hWaitForInput,
-                  hGetChar, BufferMode(..), Handle, hIsTerminalDevice)
-import qualified System.IO as IO
-import System.IO.Unsafe (unsafePerformIO)
-import qualified System.Posix.Terminal as PT
-import System.Posix.IO (stdInput, openFd, defaultFileFlags, OpenMode(ReadOnly))
-import System.Posix.Types (Fd)
-import qualified GHC.IO.Handle.FD as HandleFD
+import Data.Word (Word32)
 
 import Tv.Fzf.Match (match)
+import qualified Tv.Term as Term
 
--- | Options for one picker invocation. Mirrors the fzf flag subset we used.
+-- | Options for one picker invocation.
 data PickerOpts = PickerOpts
   { prompt     :: Text
   , header     :: Text
   , items      :: Vector Text
   , printQuery :: Bool
-    -- ^ if True and user presses Enter on empty filter result, return the
-    -- current query text instead of empty (fzf's @--print-query@).
+    -- ^ if True and Enter is pressed with no item highlighted, return
+    -- the current query text (fzf's @--print-query@).
   , withNth    :: Bool
-    -- ^ if True, display only the 2nd tab-delimited field (fzf's
-    -- @--with-nth=2.. --delimiter=\\t@); selection still returns the full line.
+    -- ^ if True, display only the fields after the first tab (fzf's
+    -- @--with-nth=2.. --delimiter=\\t@); selection still returns the
+    -- full line.
   , onFocus    :: Int -> Text -> IO ()
-    -- ^ fires when the highlighted row changes. Called with (itemIdx, rawLine).
   , poll       :: IO ()
-    -- ^ invoked every ~30 ms while waiting for input.
   , initial    :: Text
-    -- ^ initial query text.
   }
 
 defaultOpts :: PickerOpts
 defaultOpts = PickerOpts
-  { prompt     = "> "
-  , header     = ""
-  , items      = V.empty
-  , printQuery = False
-  , withNth    = False
-  , onFocus    = \_ _ -> pure ()
-  , poll       = pure ()
-  , initial    = ""
+  { prompt = "> ", header = "", items = V.empty
+  , printQuery = False, withNth = False
+  , onFocus = \_ _ -> pure (), poll = pure ()
+  , initial = ""
   }
 
--- | Picker state threaded through keystrokes. 'psMatch' is a Vector so
--- length / indexing are O(1) in the arrow-key hot path (row-search against
--- a high-cardinality column can have thousands of entries).
 data PickerState = PickerState
   { psQuery  :: !Text
   , psCur    :: !Int
-  , psMatch  :: !(Vector (Int, Int, [Int]))  -- ^ (orig idx, score, match positions)
-  , psHeight :: !Int
+  , psMatch  :: !(Vector (Int, Int, [Int]))
+  , psBox    :: !Box
   }
 
--- | Run the picker. Returns the raw selected line, or empty on cancel /
--- empty filter without 'printQuery'.
+-- | Popup geometry on screen (pixel-ish cell coordinates).
+data Box = Box { bx, by, bw, bh :: !Int } deriving Show
+
 runPicker :: PickerOpts -> IO Text
 runPicker opts = do
-  (inH, inFd, closeH) <- openTtyIn
-  bracket_ (enterRaw inH inFd) (leaveRaw inFd closeH) $ do
-    let its    = items opts
-        popupH = min (max 3 (V.length its + 2)) 15
-        q0     = initial opts
-        ms0    = computeMatches q0 its
-    writeReserve popupH
-    let st0 = PickerState { psQuery = q0, psCur = 0, psMatch = ms0
-                          , psHeight = popupH }
-    drawFrame opts st0
-    case ms0 V.!? 0 of
-      Just (i, _, _) -> onFocus opts i (its V.! i)
-      Nothing        -> pure ()
-    loop inH opts st0
+  sw <- fromIntegral <$> Term.width
+  sh <- fromIntegral <$> Term.height
+  let its     = items opts
+      promptW = T.length (prompt opts)
+      hdrW    = T.length (header opts)
+      dispW   = V.foldl' (\m l -> max m (T.length (display (withNth opts) l))) 0 its
+      innerW  = maximum [promptW + 20, hdrW, dispW + 2]
+      boxW    = min sw (max 50 (innerW + 4))
+      hasHdr  = not (T.null (header opts))
+      rowsN   = V.length its
+      listH   = min 12 (max 1 rowsN)
+      boxH    = listH + 1 + (if hasHdr then 1 else 0)
+      boxX    = max 0 ((sw - boxW) `div` 2)
+      boxY    = max 0 ((sh - boxH) `div` 2)
+      box     = Box { bx = boxX, by = boxY, bw = boxW, bh = boxH }
+      ms0     = computeMatches (initial opts) its
+      st0     = PickerState { psQuery = initial opts, psCur = 0
+                            , psMatch = ms0, psBox = box }
+  drawFrame opts st0
+  case ms0 V.!? 0 of
+    Just (i, _, _) -> onFocus opts i (its V.! i)
+    Nothing        -> pure ()
+  result <- loop opts st0
+  -- Clear the back buffer and invalidate the front so the caller's next
+  -- render repaints every cell contiguously — otherwise cells the popup
+  -- happened not to touch stay "same" and the new frame emits as a
+  -- cursor-jumped patch (breaks text-match demo verification and leaves
+  -- visible residue if the underlying view's content line-wraps).
+  Term.clear
+  Term.invalidate
+  pure result
 
--- | Raw key events the picker cares about.
 data Key
   = KChar Char | KEnter | KEsc | KBackspace
   | KUp | KDown | KHome | KEnd | KPgUp | KPgDn
@@ -118,36 +120,60 @@ data Key
   | KIgnore
   deriving (Eq, Show)
 
-loop :: Handle -> PickerOpts -> PickerState -> IO Text
-loop inH opts st = do
-  k <- readKey inH (poll opts)
-  case k of
-    KEsc       -> leaveRegion (psHeight st) >> pure ""
-    KEnter     -> do
-      leaveRegion (psHeight st)
-      pure (selection opts st)
-    KChar c    -> typed opts st (psQuery st <> T.singleton c) >>= loop inH opts
-    KBackspace -> typed opts st (dropLast (psQuery st))       >>= loop inH opts
-    KCtrlU     -> typed opts st ""                            >>= loop inH opts
-    KUp        -> moveCur opts st (-1)                        >>= loop inH opts
-    KCtrlK     -> moveCur opts st (-1)                        >>= loop inH opts
-    KDown      -> moveCur opts st 1                           >>= loop inH opts
-    KCtrlJ     -> moveCur opts st 1                           >>= loop inH opts
-    KPgUp      -> moveCur opts st (negate (psHeight st))      >>= loop inH opts
-    KPgDn      -> moveCur opts st (psHeight st)               >>= loop inH opts
-    KHome      -> setCur opts st 0                            >>= loop inH opts
-    KEnd       -> setCur opts st (max 0 (V.length (psMatch st) - 1)) >>= loop inH opts
-    KIgnore    -> loop inH opts st
+-- | Translate a 'Term.Event' into the picker's 'Key' enum.
+toKey :: Term.Event -> Key
+toKey ev
+  | Term.typ ev /= Term.eventKey     = KIgnore
+  | Term.keyCode ev == Term.keyArrowUp    = KUp
+  | Term.keyCode ev == Term.keyArrowDown  = KDown
+  | Term.keyCode ev == Term.keyEnter      = KEnter
+  | Term.keyCode ev == Term.keyEsc        = KEsc
+  | Term.keyCode ev == Term.keyBackspace  = KBackspace
+  | Term.keyCode ev == Term.keyBackspace2 = KBackspace
+  | Term.keyCode ev == Term.keyHome       = KHome
+  | Term.keyCode ev == Term.keyEnd        = KEnd
+  | Term.keyCode ev == Term.keyPageUp     = KPgUp
+  | Term.keyCode ev == Term.keyPageDown   = KPgDn
+  | Term.ch ev == Term.ctrlU              = KCtrlU
+  | Term.ch ev == 0x0B                    = KCtrlK
+  | Term.ch ev == 0x0A                    = KCtrlJ
+  | Term.ch ev == 0x0D                    = KEnter
+  | Term.ch ev /= 0                       = KChar (chr (fromIntegral (Term.ch ev)))
+  | otherwise                             = KIgnore
+
+-- | Read-key loop. Polls for input every 30 ms, firing the caller's poll
+-- callback in between so background work keeps ticking.
+loop :: PickerOpts -> PickerState -> IO Text
+loop opts st = do
+  mev <- Term.waitEventTimeout 30
+  case mev of
+    Nothing -> poll opts *> loop opts st
+    Just ev -> case toKey ev of
+      KEsc       -> pure ""
+      KEnter     -> pure (selection opts st)
+      KChar c    -> typed opts st (psQuery st <> T.singleton c) >>= loop opts
+      KBackspace -> typed opts st (dropLast (psQuery st))       >>= loop opts
+      KCtrlU     -> typed opts st ""                            >>= loop opts
+      KUp        -> moveCur opts st (-1)                        >>= loop opts
+      KCtrlK     -> moveCur opts st (-1)                        >>= loop opts
+      KDown      -> moveCur opts st 1                           >>= loop opts
+      KCtrlJ     -> moveCur opts st 1                           >>= loop opts
+      KPgUp      -> moveCur opts st (negate (listRows st))      >>= loop opts
+      KPgDn      -> moveCur opts st (listRows st)               >>= loop opts
+      KHome      -> setCur opts st 0                            >>= loop opts
+      KEnd       -> setCur opts st (V.length (psMatch st) - 1)  >>= loop opts
+      KIgnore    -> loop opts st
 
 dropLast :: Text -> Text
 dropLast t = if T.null t then t else T.init t
 
--- | Handle a query change: re-filter, reset cursor to 0, redraw, and fire
--- the onFocus callback only if the top match actually changed.
+-- | Handle a query change: re-filter, reset highlight, redraw, fire
+-- onFocus only if the top match changed so a no-op query update doesn't
+-- re-trigger the caller's live preview.
 typed :: PickerOpts -> PickerState -> Text -> IO PickerState
 typed opts st q' = do
-  let ms' = computeMatches q' (items opts)
-      st' = st { psQuery = q', psMatch = ms', psCur = 0 }
+  let ms'     = computeMatches q' (items opts)
+      st'     = st { psQuery = q', psMatch = ms', psCur = 0 }
       prevTop = (\(i,_,_) -> i) <$> (psMatch st V.!? psCur st)
       newTop  = (\(i,_,_) -> i) <$> (ms' V.!? 0)
   drawFrame opts st'
@@ -155,7 +181,7 @@ typed opts st q' = do
   pure st'
 
 moveCur :: PickerOpts -> PickerState -> Int -> IO PickerState
-moveCur opts st delta = setCur opts st (psCur st + delta)
+moveCur opts st d = setCur opts st (psCur st + d)
 
 setCur :: PickerOpts -> PickerState -> Int -> IO PickerState
 setCur opts st i = do
@@ -171,7 +197,6 @@ fireFocus opts st = case psMatch st V.!? psCur st of
   Just (i, _, _) -> onFocus opts i (items opts V.! i)
   Nothing        -> pure ()
 
--- | What Enter returns for a given state.
 selection :: PickerOpts -> PickerState -> Text
 selection opts st = case psMatch st V.!? psCur st of
   Just (i, _, _) -> items opts V.! i
@@ -190,51 +215,8 @@ computeMatches q its
 
 -- Rendering --------------------------------------------------------------
 
--- | Reserve 'n' rows at the current cursor position. Emit that many
--- newlines so the terminal scrolls if needed, then move back up so the
--- caller draws into fresh rows.
-writeReserve :: Int -> IO ()
-writeReserve n = do
-  TIO.putStr (T.replicate n "\n")
-  TIO.putStr (T.pack ("\x1b[" ++ show n ++ "A\r"))
-  hFlush stdout
-
--- | On exit, clear the reserved region so the main TUI can reinitialize
--- with a clean scroll area.
-leaveRegion :: Int -> IO ()
-leaveRegion h = do
-  TIO.putStr "\r"
-  forM_ [0 .. h - 1] $ \_ -> TIO.putStr (eraseLine <> "\n")
-  TIO.putStr (T.pack ("\x1b[" ++ show h ++ "A\r"))
-  hFlush stdout
-
--- | Redraw the whole popup in place. No diffing — the region is tiny
--- (≤15 rows), so emitting ANSI clear-line per row is cheaper than diffing.
-drawFrame :: PickerOpts -> PickerState -> IO ()
-drawFrame opts st = do
-  let h        = psHeight st
-      hdr      = header opts
-      hasHdr   = not (T.null hdr)
-      listRows = h - (if hasHdr then 2 else 1)
-      promptLn = prompt opts <> psQuery st
-      total    = V.length (psMatch st)
-      scroll   = scrollOff (psCur st) listRows
-      visCount = min listRows (total - scroll)
-  TIO.putStr "\r"
-  drawLine (ansiBrightCyan <> promptLn <> ansiReset <> eraseToEol)
-  when hasHdr $ drawLine (ansiDim <> hdr <> ansiReset <> eraseToEol)
-  forM_ [0 .. listRows - 1] $ \r ->
-    if r >= visCount
-      then drawLine eraseLine
-      else let (idx, _, poses) = psMatch st V.! (scroll + r)
-               selected = (scroll + r) == psCur st
-               raw      = items opts V.! idx
-               shown    = display (withNth opts) raw
-               adj      = if withNth opts then adjustPositions raw poses else poses
-           in drawLine (renderItem selected shown adj)
-  let promptLen = T.length (prompt opts) + T.length (psQuery st)
-  TIO.putStr (T.pack ("\x1b[" ++ show h ++ "A\r\x1b[" ++ show promptLen ++ "C"))
-  hFlush stdout
+listRows :: PickerState -> Int
+listRows st = bh (psBox st) - 1 - (if True then 0 else 0)
 
 -- | Strip the index field for display when 'withNth' is True.
 display :: Bool -> Text -> Text
@@ -243,16 +225,72 @@ display True line = case T.splitOn "\t" line of
   _        -> line
 display False line = line
 
--- | Keep the highlighted row within the visible window by scrolling.
-scrollOff :: Int -> Int -> Int
-scrollOff cur listRows
-  | listRows <= 0     = 0
-  | cur < listRows    = 0
-  | otherwise         = cur - listRows + 1
+-- | Draw every cell of the popup into the cell buffer and flush.
+-- Colours are hardcoded (not theme-driven) so the popup looks consistent
+-- across themes and so this module can stay independent of 'Tv.Theme'
+-- (Theme imports Fzf, so a Theme import here would create a cycle).
+drawFrame :: PickerOpts -> PickerState -> IO ()
+drawFrame opts st = do
+  let box      = psBox st
+      hasHdr   = not (T.null (header opts))
+      rows     = bh box - 1 - (if hasHdr then 1 else 0)
+      promptLn = prompt opts <> psQuery st
+      scroll   = scrollOff (psCur st) rows
+  drawRow (bx box) (by box) (bw box) promptLn fgPrompt bgPrompt
+  when hasHdr $
+    Term.padC (fromIntegral (bx box)) (fromIntegral (by box + 1))
+              (fromIntegral (bw box)) fgHdr bgHdr
+              (padR (bw box) (" " <> header opts)) 0
+  let rowStart = by box + 1 + (if hasHdr then 1 else 0)
+  forM_ [0 .. rows - 1] $ \r -> do
+    let y = rowStart + r
+    case psMatch st V.!? (scroll + r) of
+      Nothing ->
+        Term.padC (fromIntegral (bx box)) (fromIntegral y)
+                  (fromIntegral (bw box)) fgRow bgRow
+                  (T.replicate (bw box) " ") 0
+      Just (idx, _, poses) -> do
+        let selected = (scroll + r) == psCur st
+            raw      = items opts V.! idx
+            shown    = display (withNth opts) raw
+            adj      = if withNth opts then adjustPositions raw poses else poses
+            bgLine   = if selected then bgSel else bgRow
+            fgLine   = if selected then fgSel else fgRow
+            marker   = if selected then "> " else "  "
+        drawItem (bx box) y (bw box) marker shown adj
+                 fgLine bgLine fgMatch bgLine
+  Term.present
+  where
+    drawRow :: Int -> Int -> Int -> Text -> Word32 -> Word32 -> IO ()
+    drawRow x y w full fg bg = do
+      let padded = padR w (" " <> full)
+      Term.padC (fromIntegral x) (fromIntegral y) (fromIntegral w) fg bg padded 0
 
--- | When display hides the index-prefix column, shift match positions so
--- they point at the visible substring. Positions inside the hidden prefix
--- are dropped (can't highlight them anyway).
+-- Hardcoded palette indices for the popup.
+-- 236/8 = dark grey on bright white prompt; 244/234 = dim header;
+-- 7/236 = light text on dark rows; 16/11 = black on yellow selection;
+-- 11 = bright yellow match hit (foreground only).
+fgPrompt, bgPrompt, fgHdr, bgHdr, fgRow, bgRow, fgSel, bgSel, fgMatch :: Word32
+fgPrompt = 16;  bgPrompt = 11
+fgHdr    = 244; bgHdr    = 234
+fgRow    = 7;   bgRow    = 236
+fgSel    = 16;  bgSel    = 14
+fgMatch  = 11
+
+-- | Right-pad a Text to exactly @n@ characters; truncate if longer.
+padR :: Int -> Text -> Text
+padR n t
+  | T.length t >= n = T.take n t
+  | otherwise       = t <> T.replicate (n - T.length t) " "
+
+-- | Keep the highlighted row within the visible window.
+scrollOff :: Int -> Int -> Int
+scrollOff cur listRows_
+  | listRows_ <= 0      = 0
+  | cur < listRows_     = 0
+  | otherwise           = cur - listRows_ + 1
+
+-- | When display hides the index-prefix column, shift match positions.
 adjustPositions :: Text -> [Int] -> [Int]
 adjustPositions raw poses = case T.findIndex (== '\t') raw of
   Nothing     -> poses
@@ -260,142 +298,28 @@ adjustPositions raw poses = case T.findIndex (== '\t') raw of
     let cut = tabIdx + 1
     in [ p - cut | p <- poses, p >= cut ]
 
-drawLine :: Text -> IO ()
-drawLine t = TIO.putStr (t <> "\n")
-
--- | Render one item row. Walks the shown text once, flipping between the
--- unmatched and matched styles as we cross match positions. The "after
--- match" style is the selected-row style when the whole row is selected,
--- so highlighted chars don't lose the reverse-video block.
-renderItem :: Bool -> Text -> [Int] -> Text
-renderItem selected shown poses =
-  let ps       = IS.fromList poses
-      marker   = if selected then "> " else "  "
-      pre      = if selected then ansiSelected else ""
-      restyle  = if selected then ansiSelected else ansiReset
-      step i c = if IS.member i ps
-                   then ansiMatch <> T.singleton c <> restyle
-                   else T.singleton c
-      body     = T.concat $ zipWith step [0..] (T.unpack shown)
-  in pre <> marker <> body <> ansiReset <> eraseToEol
-
--- ANSI escape constants. ansiMatch is bold yellow (readable on dark + light
--- backgrounds), ansiSelected uses reverse video for the whole row.
-ansiSelected, ansiMatch, ansiReset, ansiDim, ansiBrightCyan :: Text
-ansiSelected   = "\x1b[7m"
-ansiMatch      = "\x1b[1;33m"
-ansiReset      = "\x1b[0m"
-ansiDim        = "\x1b[2m"
-ansiBrightCyan = "\x1b[1;36m"
-
--- DEC / xterm line erases. eraseToEol clears right of cursor; eraseLine
--- clears the whole line.
-eraseToEol, eraseLine :: Text
-eraseToEol = "\x1b[0K"
-eraseLine  = "\x1b[2K"
-
--- Input ------------------------------------------------------------------
-
--- | Open /dev/tty for reading (so we still work when stdin is piped).
-openTtyIn :: IO (Handle, Fd, IO ())
-openTtyIn = do
-  r <- try $ do
-    fd <- openFd "/dev/tty" ReadOnly defaultFileFlags
-    h  <- HandleFD.fdToHandle (fromIntegral fd)
-    pure (h, fd)
-  case r :: Either SomeException (Handle, Fd) of
-    Right (h, fd) -> pure (h, fd, pure ())
-    Left _        -> pure (IO.stdin, stdInput, pure ())
-
--- | Put the tty into cbreak-ish mode. Mirrors 'Tv.Term.init'.
-enterRaw :: Handle -> Fd -> IO ()
-enterRaw h fd = do
-  hSetBuffering h NoBuffering
-  hSetEcho h False
-  isTty <- hIsTerminalDevice h
-  when isTty $ do
-    orig <- PT.getTerminalAttributes fd
-    writeIORef rawSaved (Just orig)
-    let ta = foldl PT.withoutMode orig
-               [ PT.ProcessInput, PT.EnableEcho, PT.EchoLF
-               , PT.KeyboardInterrupts, PT.ExtendedFunctions
-               , PT.StartStopOutput, PT.StartStopInput
-               ]
-        ta' = PT.withMinInput (PT.withTime ta 0) 1
-    PT.setTerminalAttributes fd ta' PT.WhenFlushed
-
-leaveRaw :: Fd -> IO () -> IO ()
-leaveRaw fd closeH = do
-  mOrig <- readIORef rawSaved
-  case mOrig of
-    Just o  -> do
-      _ <- try (PT.setTerminalAttributes fd o PT.WhenFlushed)
-             :: IO (Either SomeException ())
-      pure ()
-    Nothing -> pure ()
-  writeIORef rawSaved Nothing
-  _ <- try closeH :: IO (Either SomeException ())
-  pure ()
-
--- | Saved tty attrs so we can restore them on exit.
-rawSaved :: IORef (Maybe PT.TerminalAttributes)
-rawSaved = unsafePerformIO (newIORef Nothing)
-{-# NOINLINE rawSaved #-}
-
--- | Block until a key is available or 30 ms elapses (so poll can fire).
-readKey :: Handle -> IO () -> IO Key
-readKey h pollCB = do
-  ready <- hWaitForInput h 30
-  if not ready
-    then pollCB *> readKey h pollCB
-    else do
-      c <- hGetChar h
-      parseKey h c
-
--- | Decode one key. ESC may start a CSI / SS3 sequence; use a short timeout
--- so a lone Esc doesn't hang.
-parseKey :: Handle -> Char -> IO Key
-parseKey h c = case c of
-  '\x1B' -> do
-    more <- hWaitForInput h 50
-    if not more then pure KEsc
-    else do
-      c2 <- hGetChar h
-      case c2 of
-        '[' -> readCsi h
-        'O' -> do c3 <- hGetChar h; pure (csi c3)
-        _   -> pure KEsc
-  '\x7F' -> pure KBackspace
-  '\x08' -> pure KBackspace
-  '\x0A' -> pure KEnter
-  '\x0D' -> pure KEnter
-  '\x15' -> pure KCtrlU
-  '\x0B' -> pure KCtrlK
-  '\x0E' -> pure KCtrlJ
-  '\x09' -> pure KIgnore
-  _
-    | c >= ' ' && c /= '\x7F' -> pure (KChar c)
-    | otherwise               -> pure KIgnore
-  where
-    readCsi inH = do
-      c2 <- hGetChar inH
-      if c2 >= '0' && c2 <= '9'
-        then readTilde inH [c2]
-        else pure (csi c2)
-    readTilde inH acc = do
-      c2 <- hGetChar inH
-      if c2 >= '0' && c2 <= '9'
-        then readTilde inH (c2 : acc)
-        else pure (tildeKey (reverse acc))
-    csi 'A' = KUp
-    csi 'B' = KDown
-    csi 'H' = KHome
-    csi 'F' = KEnd
-    csi _   = KIgnore
-    tildeKey "5" = KPgUp
-    tildeKey "6" = KPgDn
-    tildeKey "1" = KHome
-    tildeKey "4" = KEnd
-    tildeKey "7" = KHome
-    tildeKey "8" = KEnd
-    tildeKey _   = KIgnore
+-- | Draw one row with match-position highlighting. The row is always
+-- exactly @width@ cells wide so the background colour fills edge-to-edge.
+drawItem
+  :: Int -> Int -> Int
+  -> Text     -- ^ marker (two chars)
+  -> Text     -- ^ shown text
+  -> [Int]    -- ^ match positions in shown text
+  -> Word32 -> Word32   -- ^ row fg/bg (unselected/selected)
+  -> Word32 -> Word32   -- ^ hit fg/bg
+  -> IO ()
+drawItem x y width marker shown poses fgRow bgRow fgHit bgHit = do
+  let hits     = IS.fromList poses
+      markLen  = T.length marker
+      bodyMax  = width - markLen
+      shownT   = padR bodyMax shown
+  Term.padC (fromIntegral x) (fromIntegral y) (fromIntegral markLen)
+            fgRow bgRow marker 0
+  -- Emit per character: cheap for our row widths (≤120).
+  forM_ [0 .. bodyMax - 1] $ \i -> do
+    let c       = if i < T.length shown then T.index shownT i else ' '
+        isHit   = IS.member i hits && i < T.length shown
+        fg      = if isHit then fgHit else fgRow
+        bg      = if isHit then bgHit else bgRow
+    Term.padC (fromIntegral (x + markLen + i)) (fromIntegral y) 1
+              fg bg (T.singleton c) 0

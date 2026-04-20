@@ -35,7 +35,6 @@ import Tv.CmdConfig (CmdCache)
 import qualified Tv.CmdConfig as CmdConfig
 import qualified Tv.Fzf.Picker as Picker
 import Tv.Types (ViewKind, toString, headD)
-import qualified Tv.Term as Term
 
 -- | Extract @--prompt=X@ / @--header=X@ / @--print-query@ /
 -- @--with-nth=2..@ flags from the caller's opts vector. Unknown flags
@@ -65,6 +64,11 @@ fzfCore tm opts input pollCB = fzfCoreLive tm opts input pollCB (\_ _ -> pure ()
 
 -- | Live-preview variant. @onFocus@ is called each time the highlighted
 -- row changes, with (item index in the input, raw line).
+--
+-- The picker overlays the existing TUI (no terminal teardown/reinit).
+-- 'Term.present' from within the picker paints the popup; on exit the
+-- cell buffer is cleared so the caller's next redraw repaints the
+-- underlying view cleanly.
 fzfCoreLive
   :: Bool -> Vector Text -> Text -> IO () -> (Int -> Text -> IO ()) -> IO Text
 fzfCoreLive tm opts input pollCB onFocus_ = do
@@ -77,11 +81,7 @@ fzfCoreLive tm opts input pollCB onFocus_ = do
             , Picker.poll    = pollCB
             , Picker.onFocus = onFocus_
             }
-      Term.shutdown
       out <- Picker.runPicker po
-      _ <- Term.init
-      Term.clear
-      Term.present
       pure (T.strip out)
 
 -- | Single-select wrapper: returns 'Nothing' on cancel / empty result.
