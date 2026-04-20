@@ -51,6 +51,7 @@ library
     Tv.Ftp.Client
     Tv.Fzf
     Tv.Key
+    Tv.Kitty
     Tv.Meta
     Tv.Nav
     Tv.Freq
@@ -93,6 +94,7 @@ library
     async >= 2.2,
     base >= 4.16 && < 5,
     base16-bytestring >= 1.0,
+    base64-bytestring >= 1.2,
     bytestring,
     case-insensitive >= 1.2,
     Chart >= 1.9 && < 1.10,

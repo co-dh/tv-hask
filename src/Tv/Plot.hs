@@ -58,6 +58,7 @@ import Tv.Types
   , isTime
   , getD
   )
+import qualified Tv.Kitty as Kitty
 import qualified Tv.Log as Log
 import qualified Tv.Tmp as Tmp
 import Tv.View (ViewStack)
@@ -117,15 +118,19 @@ tryDisplay cmd args = do
       rc <- waitForProcess ph
       pure (rc == ExitSuccess)
 
--- | Display PNG: try kitten icat (kitty graphics), then viu, then xdg-open
+-- | Display PNG. Native kitty graphics protocol when supported (kitty,
+-- WezTerm, ghostty), then viu, then xdg-open. Drops the `kitten` external
+-- dep — Tv.Kitty emits the APC sequence directly.
 showPng :: String -> IO ()
 showPng png = do
-  ok1 <- tryDisplay "kitten" ["icat", png]
-  unless ok1 $ do
-    ok2 <- tryDisplay "viu" [png]
-    unless ok2 $ do
-      _ <- tryDisplay "xdg-open" [png]
-      pure ()
+  kitty <- Kitty.supportsKittyGraphics
+  if kitty
+    then Kitty.displayPng png
+    else do
+      ok2 <- tryDisplay "viu" [png]
+      unless ok2 $ do
+        _ <- tryDisplay "xdg-open" [png]
+        pure ()
 
 -- | ANSI: clear screen and move cursor to top-left
 clearScreen :: IO ()
