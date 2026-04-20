@@ -81,12 +81,14 @@ defaultOpts = PickerOpts
   , initial    = ""
   }
 
--- | Picker state threaded through keystrokes.
+-- | Picker state threaded through keystrokes. 'psMatch' is a Vector so
+-- length / indexing are O(1) in the arrow-key hot path (row-search against
+-- a high-cardinality column can have thousands of entries).
 data PickerState = PickerState
   { psQuery  :: !Text
-  , psCur    :: !Int                    -- ^ highlighted row among filtered items
-  , psMatch  :: ![(Int, Int, [Int])]    -- ^ (orig idx, score, match positions)
-  , psHeight :: !Int                    -- ^ popup row count
+  , psCur    :: !Int
+  , psMatch  :: !(Vector (Int, Int, [Int]))  -- ^ (orig idx, score, match positions)
+  , psHeight :: !Int
   }
 
 -- | Run the picker. Returns the raw selected line, or empty on cancel /
@@ -103,9 +105,9 @@ runPicker opts = do
     let st0 = PickerState { psQuery = q0, psCur = 0, psMatch = ms0
                           , psHeight = popupH }
     drawFrame opts st0
-    case ms0 of
-      ((i, _, _) : _) -> onFocus opts i (its V.! i)
-      _               -> pure ()
+    case ms0 V.!? 0 of
+      Just (i, _, _) -> onFocus opts i (its V.! i)
+      Nothing        -> pure ()
     loop inH opts st0
 
 -- | Raw key events the picker cares about.
@@ -134,18 +136,22 @@ loop inH opts st = do
     KPgUp      -> moveCur opts st (negate (psHeight st))      >>= loop inH opts
     KPgDn      -> moveCur opts st (psHeight st)               >>= loop inH opts
     KHome      -> setCur opts st 0                            >>= loop inH opts
-    KEnd       -> setCur opts st (max 0 (length (psMatch st) - 1)) >>= loop inH opts
+    KEnd       -> setCur opts st (max 0 (V.length (psMatch st) - 1)) >>= loop inH opts
     KIgnore    -> loop inH opts st
 
 dropLast :: Text -> Text
 dropLast t = if T.null t then t else T.init t
 
+-- | Handle a query change: re-filter, reset cursor to 0, redraw, and fire
+-- the onFocus callback only if the top match actually changed.
 typed :: PickerOpts -> PickerState -> Text -> IO PickerState
 typed opts st q' = do
   let ms' = computeMatches q' (items opts)
       st' = st { psQuery = q', psMatch = ms', psCur = 0 }
+      prevTop = (\(i,_,_) -> i) <$> (psMatch st V.!? psCur st)
+      newTop  = (\(i,_,_) -> i) <$> (ms' V.!? 0)
   drawFrame opts st'
-  fireFocus opts st'
+  when (prevTop /= newTop) (fireFocus opts st')
   pure st'
 
 moveCur :: PickerOpts -> PickerState -> Int -> IO PickerState
@@ -153,44 +159,34 @@ moveCur opts st delta = setCur opts st (psCur st + delta)
 
 setCur :: PickerOpts -> PickerState -> Int -> IO PickerState
 setCur opts st i = do
-  let n   = length (psMatch st)
-      i'  = if n == 0 then 0 else clamp 0 (n - 1) i
+  let n   = V.length (psMatch st)
+      i'  = if n == 0 then 0 else max 0 (min (n - 1) i)
       st' = st { psCur = i' }
   drawFrame opts st'
   when (psCur st /= i') (fireFocus opts st')
   pure st'
 
-clamp :: Int -> Int -> Int -> Int
-clamp lo hi x = max lo (min hi x)
-
 fireFocus :: PickerOpts -> PickerState -> IO ()
-fireFocus opts st = case nth (psCur st) (psMatch st) of
+fireFocus opts st = case psMatch st V.!? psCur st of
   Just (i, _, _) -> onFocus opts i (items opts V.! i)
   Nothing        -> pure ()
 
-nth :: Int -> [a] -> Maybe a
-nth _ []     = Nothing
-nth 0 (x:_)  = Just x
-nth n (_:xs) = nth (n - 1) xs
-
 -- | What Enter returns for a given state.
 selection :: PickerOpts -> PickerState -> Text
-selection opts st = case nth (psCur st) (psMatch st) of
+selection opts st = case psMatch st V.!? psCur st of
   Just (i, _, _) -> items opts V.! i
   Nothing
     | printQuery opts -> psQuery st
     | otherwise       -> ""
 
--- | Re-run fuzzy filter. Empty query → all items, in original order,
--- score 0, no positions.
-computeMatches :: Text -> Vector Text -> [(Int, Int, [Int])]
+-- | Re-run fuzzy filter. Empty query → all items in original order.
+computeMatches :: Text -> Vector Text -> Vector (Int, Int, [Int])
 computeMatches q its
-  | T.null q  = [ (i, 0, []) | i <- [0 .. V.length its - 1] ]
+  | T.null q  = V.generate (V.length its) (\i -> (i, 0, []))
   | otherwise =
-      let raw = [ (i, s, ps)
-                | i <- [0 .. V.length its - 1]
-                , Just (s, ps) <- [match q (its V.! i)] ]
-      in sortOn (\(_, s, _) -> Down s) raw
+      let scoreOne i line = (\(s, ps) -> (i, s, ps)) <$> match q line
+      in V.fromList $ sortOn (\(_, s, _) -> Down s)
+                    $ V.toList $ V.imapMaybe scoreOne its
 
 -- Rendering --------------------------------------------------------------
 
@@ -208,7 +204,7 @@ writeReserve n = do
 leaveRegion :: Int -> IO ()
 leaveRegion h = do
   TIO.putStr "\r"
-  forM_ [0 .. h - 1] $ \_ -> TIO.putStr "\x1b[2K\n"
+  forM_ [0 .. h - 1] $ \_ -> TIO.putStr (eraseLine <> "\n")
   TIO.putStr (T.pack ("\x1b[" ++ show h ++ "A\r"))
   hFlush stdout
 
@@ -221,21 +217,21 @@ drawFrame opts st = do
       hasHdr   = not (T.null hdr)
       listRows = h - (if hasHdr then 2 else 1)
       promptLn = prompt opts <> psQuery st
+      total    = V.length (psMatch st)
       scroll   = scrollOff (psCur st) listRows
-      visible  = take listRows (drop scroll (psMatch st))
+      visCount = min listRows (total - scroll)
   TIO.putStr "\r"
-  drawLine (ansiBrightCyan <> promptLn <> ansiReset <> "\x1b[0K")
-  when hasHdr $
-    drawLine (ansiDim <> hdr <> ansiReset <> "\x1b[0K")
+  drawLine (ansiBrightCyan <> promptLn <> ansiReset <> eraseToEol)
+  when hasHdr $ drawLine (ansiDim <> hdr <> ansiReset <> eraseToEol)
   forM_ [0 .. listRows - 1] $ \r ->
-    case nth r visible of
-      Nothing            -> drawLine "\x1b[2K"
-      Just (idx, _, poses) ->
-        let selected = (scroll + r) == psCur st
-            raw      = items opts V.! idx
-            shown    = display (withNth opts) raw
-            adj      = if withNth opts then adjustPositions raw poses else poses
-        in drawLine (renderItem selected shown adj)
+    if r >= visCount
+      then drawLine eraseLine
+      else let (idx, _, poses) = psMatch st V.! (scroll + r)
+               selected = (scroll + r) == psCur st
+               raw      = items opts V.! idx
+               shown    = display (withNth opts) raw
+               adj      = if withNth opts then adjustPositions raw poses else poses
+           in drawLine (renderItem selected shown adj)
   let promptLen = T.length (prompt opts) + T.length (psQuery st)
   TIO.putStr (T.pack ("\x1b[" ++ show h ++ "A\r\x1b[" ++ show promptLen ++ "C"))
   hFlush stdout
@@ -267,27 +263,36 @@ adjustPositions raw poses = case T.findIndex (== '\t') raw of
 drawLine :: Text -> IO ()
 drawLine t = TIO.putStr (t <> "\n")
 
--- | Render one item row: marker + highlighted positions.
+-- | Render one item row. Walks the shown text once, flipping between the
+-- unmatched and matched styles as we cross match positions. The "after
+-- match" style is the selected-row style when the whole row is selected,
+-- so highlighted chars don't lose the reverse-video block.
 renderItem :: Bool -> Text -> [Int] -> Text
 renderItem selected shown poses =
-  let ps     = IS.fromList poses
-      marker = if selected then "> " else "  "
-      pre    = if selected then ansiSelected else ""
-      body   = T.pack $ concat
-        [ (if IS.member i ps then T.unpack ansiMatch else "")
-          ++ [c]
-          ++ (if IS.member i ps
-                then (if selected then T.unpack ansiSelected else T.unpack ansiReset)
-                else "")
-        | (i, c) <- zip [0..] (T.unpack shown) ]
-  in pre <> marker <> body <> ansiReset <> "\x1b[0K"
+  let ps       = IS.fromList poses
+      marker   = if selected then "> " else "  "
+      pre      = if selected then ansiSelected else ""
+      restyle  = if selected then ansiSelected else ansiReset
+      step i c = if IS.member i ps
+                   then ansiMatch <> T.singleton c <> restyle
+                   else T.singleton c
+      body     = T.concat $ zipWith step [0..] (T.unpack shown)
+  in pre <> marker <> body <> ansiReset <> eraseToEol
 
+-- ANSI escape constants. ansiMatch is bold yellow (readable on dark + light
+-- backgrounds), ansiSelected uses reverse video for the whole row.
 ansiSelected, ansiMatch, ansiReset, ansiDim, ansiBrightCyan :: Text
 ansiSelected   = "\x1b[7m"
 ansiMatch      = "\x1b[1;33m"
 ansiReset      = "\x1b[0m"
 ansiDim        = "\x1b[2m"
 ansiBrightCyan = "\x1b[1;36m"
+
+-- DEC / xterm line erases. eraseToEol clears right of cursor; eraseLine
+-- clears the whole line.
+eraseToEol, eraseLine :: Text
+eraseToEol = "\x1b[0K"
+eraseLine  = "\x1b[2K"
 
 -- Input ------------------------------------------------------------------
 

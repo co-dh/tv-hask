@@ -32,6 +32,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.List as L
 import Data.Maybe (fromMaybe)
+import Text.Read (readMaybe)
 
 import Optics.Core ((%), (&), (.~), (^.), over)
 import Tv.App.Types (AppState(..), HandlerFn, onStk, stackIO)
@@ -131,9 +132,9 @@ searchFocus tbl_ curCol vals sRef preview = do
   -- we pull i back out of the raw line for the cache key. A duplicate focus
   -- event (same i as last) is a no-op to avoid redundant re-renders.
   let onFocus _rawIdx line = case T.splitOn "\t" line of
-        (hTxt : _) -> case reads (T.unpack hTxt) :: [(Int, String)] of
-          ((idx, _):_) -> applyFocus idx lastIdx cache
-          _            -> pure ()
+        (hTxt : _) -> case readMaybe (T.unpack hTxt) of
+          Just idx -> applyFocus idx lastIdx cache
+          Nothing  -> pure ()
         _ -> pure ()
       applyFocus idx lastR cacheR = do
         li <- readIORef lastR
@@ -193,11 +194,11 @@ runLive s preview curCol curName vals = do
            (pure ()) onFocus
   if T.null out
     then readIORef sRef
-    else case reads (T.unpack (pickIdx out)) :: [(Int, String)] of
-      ((idx, _):_) ->
+    else case readMaybe (T.unpack (pickIdx out)) of
+      Just idx ->
         let result = fromMaybe "" (vals V.!? idx)
         in applyRow s curCol result (cachedFindRow cache (tbl s) curCol idx result)
-      _ -> pure s
+      Nothing -> pure s
   where
     pickIdx out = case T.splitOn "\t" out of { (x:_) -> x; _ -> "" }
 
