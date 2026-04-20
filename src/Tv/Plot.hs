@@ -6,6 +6,11 @@
   Interactive: in-place re-rendering with downsampling interval control.
 
   Literal port of Tc/Tc/Plot.lean.
+
+  Test hooks (env vars, all optional):
+    TV_PLOT_RENDERER  "r" (default) → ggplot2; "chart" → Tv.Plot.Chart (cairo)
+    TV_PLOT_OUT       file path → also copy the rendered PNG here
+                                  (for non-interactive visual-regression harness)
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -29,7 +34,9 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import System.Directory (findExecutable)
+import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable)
+import System.Environment (lookupEnv)
+import System.FilePath (takeDirectory)
 import System.IO (IOMode(..), hClose, openFile, hGetChar)
 import System.IO.Unsafe (unsafePerformIO)
 import qualified System.Posix.IO as Posix
@@ -42,6 +49,7 @@ import System.Process
 import System.Exit (ExitCode(..))
 
 import qualified Tv.Nav as Nav
+import qualified Tv.Plot.Chart as Chart
 import qualified Tv.Render as Render
 import qualified Tv.Term as Term
 import Tv.App.Types (HandlerFn, onStk)
@@ -412,6 +420,41 @@ renderR script = do
       pure (Just msg)
     ExitSuccess -> pure Nothing
 
+-- | Render dispatch: chooses Tv.Plot.Chart (cairo) when TV_PLOT_RENDERER=chart,
+-- otherwise the R/ggplot subprocess. After a successful render also copies
+-- the PNG to TV_PLOT_OUT (if set) so non-interactive harnesses can grab it.
+renderDispatch
+  :: FilePath -- dataPath (headered TSV — already prepared by exportWithHeaders)
+  -> FilePath -- pngPath  (where the renderer writes the PNG)
+  -> PlotKind
+  -> Text     -- xName
+  -> Text     -- yName
+  -> Bool     -- hasCat
+  -> Text     -- catName
+  -> ColType  -- xType
+  -> Text     -- title
+  -> Text     -- pre-built R script (used when renderer = "r")
+  -> IO (Maybe Text)
+renderDispatch dataPath pngPath kind xName yName hasCat catName xType title script = do
+  rend <- lookupEnv "TV_PLOT_RENDERER"
+  result <- case rend of
+    Just "chart" ->
+      Chart.renderChart dataPath pngPath kind xName yName hasCat catName xType title
+    _            -> renderR script
+  -- Copy to TV_PLOT_OUT regardless of renderer choice; only on success
+  -- (otherwise the user-visible error message is more useful than a stale PNG).
+  case result of
+    Nothing -> do
+      mOut <- lookupEnv "TV_PLOT_OUT"
+      case mOut of
+        Just outPath | not (null outPath) -> do
+          createDirectoryIfMissing True (takeDirectory outPath)
+          ok <- doesFileExist pngPath
+          when ok $ copyFile pngPath outPath
+        _ -> pure ()
+    Just _  -> pure ()
+  pure result
+
 -- | Export plot data with headers for R (prepends column names to plotExport output)
 exportWithHeaders
   :: AdbcTable -> Text -> Text -> Maybe Text -> Bool -> Int -> Int
@@ -470,9 +513,11 @@ runCandle s = do
           if not ok
             then do exitPlot; err s "candle: data export failed"
             else do
-              let script = rScriptCandle (T.pack datPath) (T.pack pngPath)
-                             xName xType ("Candlestick: " <> xName)
-              renderErr <- renderR script
+              let title  = "Candlestick: " <> xName
+                  script = rScriptCandle (T.pack datPath) (T.pack pngPath)
+                             xName xType title
+              renderErr <- renderDispatch datPath pngPath PlotCandle
+                             xName "" False "" xType title script
               renderFrame pngPath (V.singleton (Interval "all" 1)) 0 renderErr
               -- wait for q to exit
               let waitQ = do c <- readKey
@@ -540,10 +585,10 @@ runSingle s kind = do
         yName <> "\n"
           <> T.intercalate "\n" (V.toList (V.filter (not . T.null) vals))
           <> "\n"
-      let script = rScript (T.pack datPath) (T.pack pngPath) kind "" yName
-                     False "" False "" ColTypeOther
-                     (plotTitle kind "" yName False "")
-      err_ <- renderR script
+      let title  = plotTitle kind "" yName False ""
+          script = rScript (T.pack datPath) (T.pack pngPath) kind "" yName
+                     False "" False "" ColTypeOther title
+      err_ <- renderDispatch datPath pngPath kind "" yName False "" ColTypeOther title script
       clearScreen
       case err_ of
         Nothing  -> showPng pngPath
@@ -559,9 +604,10 @@ runSingle s kind = do
 -- | Interactive render/key loop for group plots. Re-exports + re-renders on
 -- interval changes, skips re-render on unknown keys, exits on 'q'.
 plotLoop
-  :: AdbcTable -> PlotKind -> Text -> Text -> Maybe Text -> Bool
-  -> Int -> String -> Vector Interval -> Text -> IO ()
-plotLoop tbl kind xName yName exportCat xIsTime baseStep pngPath intervals script = do
+  :: AdbcTable -> PlotKind -> Text -> Text -> Bool -> Text -> Maybe Text
+  -> ColType -> Bool -> Int -> String -> Vector Interval -> Text -> Text -> IO ()
+plotLoop tbl kind xName yName hasCat catName exportCat xType xIsTime baseStep
+         pngPath intervals script title = do
   idxRef        <- newIORef (0 :: Int)
   continueRef   <- newIORef True
   needRenderRef <- newIORef True
@@ -588,7 +634,9 @@ plotLoop tbl kind xName yName exportCat xIsTime baseStep pngPath intervals scrip
                 Left e          -> pure $ Just $ T.pack (show e)
             err_ <- case exportResult of
               Just msg -> pure (Just msg)
-              Nothing  -> renderR script
+              Nothing  -> do
+                dp <- Table.plotDatPath
+                renderDispatch dp pngPath kind xName yName hasCat catName xType title script
             renderFrame pngPath intervals idx err_
           key <- readKey
           case handleKey key of
@@ -657,11 +705,11 @@ runGroup s kind = do
             setRaw
             datPath <- Table.plotDatPath
             pngPath <- Tmp.tmpPath "plot.png"
-            let script = rScript (T.pack datPath) (T.pack pngPath) kind
-                           xName yName hasCat catName hasFacet facetName xType
-                           (plotTitle kind xName yName hasCat catName)
-            plotLoop tbl kind xName yName exportCat xIsTime baseStep
-              pngPath intervals script
+            let title = plotTitle kind xName yName hasCat catName
+                script = rScript (T.pack datPath) (T.pack pngPath) kind
+                           xName yName hasCat catName hasFacet facetName xType title
+            plotLoop tbl kind xName yName hasCat catName exportCat xType xIsTime baseStep
+              pngPath intervals script title
             exitPlot
             pure (Just s)
 

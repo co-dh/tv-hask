@@ -192,15 +192,23 @@ parseSel sel =
 -- tm forwards the app's testMode to fzfCore. Hardcoding False here made
 -- every `-c " "` test spawn real fzf, which grabs /dev/tty and blocks
 -- the user's terminal during `cabal test`.
+--
+-- Test hook: in test mode, if TV_CMD is set the env-var value is returned
+-- verbatim as the handler name (bypasses the first-item rule). This lets
+-- the plot e2e harness pick a specific plot kind without rebinding keys.
 cmdMode :: Bool -> CmdCache -> ViewKind -> IO () -> IO (Maybe Text)
 cmdMode tm cc vk poll = do
-  let items = flatItems cc vk
-  if V.null items
-    then pure Nothing
-    else do
-      let input = T.intercalate "\n" (V.toList items)
-          opts  = V.fromList ["--prompt=cmd "]
-      out <- fzfCore tm opts input poll
-      if T.null out
+  override <- if tm then lookupEnv "TV_CMD" else pure Nothing
+  case override of
+    Just s | not (null s) -> pure (Just (T.pack s))
+    _ -> do
+      let items = flatItems cc vk
+      if V.null items
         then pure Nothing
-        else pure $ parseSel out
+        else do
+          let input = T.intercalate "\n" (V.toList items)
+              opts  = V.fromList ["--prompt=cmd "]
+          out <- fzfCore tm opts input poll
+          if T.null out
+            then pure Nothing
+            else pure $ parseSel out
