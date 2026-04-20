@@ -185,10 +185,25 @@ test-suite tv-hask-test
     TestPure
     TestScreen
     TestUtil
-  ghc-options: -threaded -rtsopts "-with-rtsopts=-M2G"
-  extra-lib-dirs: vendor/lib
+  ghc-options: -threaded -rtsopts "-with-rtsopts=-M2G" -optl-static-libgcc
+  -- Test exe links against tv-hask lib which transitively pulls in
+  -- duckdb/prqlc; mirror the executable stanza's link setup so the
+  -- test binary resolves the same way.
+  extra-lib-dirs: vendor/lib, vendor/duckdb
   ld-options: -Wl,--push-state,--whole-archive -lprqlc_c -Wl,--pop-state
-  extra-libraries: pthread, dl, m, gcc_s
+  ld-options: -Wl,-Bstatic,--start-group
+              -lduckdb
+              -lcore_functions_extension -lparquet_extension -licu_extension
+              -lautocomplete_extension -ljson_extension
+              -ltpch_extension -ltpcds_extension -ljemalloc_extension
+              -lduckdb_re2 -lduckdb_fmt -lduckdb_pg_query -lduckdb_zstd
+              -lduckdb_utf8proc -lduckdb_yyjson -lduckdb_mbedtls
+              -lduckdb_miniz -lduckdb_hyperloglog -lduckdb_fastpforlib
+              -lduckdb_fsst -lduckdb_skiplistlib
+              -lduckdb_generated_extension_loader
+              -Wl,--end-group,-Bdynamic
+  ld-options: -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic
+  extra-libraries: pthread, dl, m, atomic
   build-depends:
     base >= 4.16 && < 5,
     tv-hask,
