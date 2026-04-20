@@ -136,6 +136,11 @@ jobs:
             ~/.rustup
           key: rustup-alma8-stable
 
+      # Fetch the Hackage index. The cabal cache stores it under
+      # ~/.local/state/cabal/packages, so this is a no-op on cache hit.
+      - name: cabal update
+        run: cabal update
+
       - name: Build prqlc staticlib
         run: make prqlc
 
