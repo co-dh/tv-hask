@@ -367,8 +367,8 @@ plotDatPath :: IO FilePath
 plotDatPath = Tmp.threadPath "plot.dat"
 
 -- | Run COPY (sql) TO the thread-local plot data file as TSV. Raises
--- userError on failure so the caller (R ggplot pipeline) fails loudly
--- instead of silently empty-plotting.
+-- userError on failure so the plot pipeline fails loudly instead of
+-- silently empty-plotting.
 copyPlot :: Text -> IO ()
 copyPlot sql = do
   let sql' = stripSemi sql

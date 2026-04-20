@@ -1,3 +1,16 @@
 packages: .
 write-ghc-environment-files: always
 split-sections: True
+
+-- duckdb-ffi's configure runs a test-link for -lduckdb before tv-hask's
+-- executable stanza is consulted. Relative paths in `package *` are
+-- resolved against each package's unpacked source dir (not the project
+-- root), so the vendor dirs are passed via LIBRARY_PATH (see CI).
+--
+-- When GHC builds duckdb-ffi it produces both a static .a and a .so
+-- (used by TemplateHaskell at compile time). The .so pulls in our C++
+-- libduckdb.a, so it must also link libstdc++ and friends — cabal
+-- invokes gcc (not g++) as link driver and won't add them automatically.
+package duckdb-ffi
+    extra-libraries: stdc++, gcc_s, atomic, pthread, dl, m
+    ghc-options: -optl-Wl,-Bstatic,-lstdc++,-Bdynamic
