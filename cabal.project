@@ -3,11 +3,7 @@ write-ghc-environment-files: always
 split-sections: True
 
 -- duckdb-ffi's configure runs a test-link for -lduckdb before tv-hask's
--- stanza is consulted. Top-level extra-lib-dirs in cabal.project only
--- applies to local packages, so target deps explicitly. `package *`
--- covers both duckdb-ffi (needs vendor/duckdb) and tv-hask itself
--- (needs vendor/lib for libprqlc_c.a).
-package *
-  extra-lib-dirs:
-    vendor/duckdb
-    vendor/lib
+-- executable stanza is consulted. Relative paths in `package *` are
+-- resolved against each package's unpacked source dir (not the project
+-- root), so the vendor dirs must be passed as absolute paths on the
+-- cabal CLI via --extra-lib-dirs (see CI and CONTRIBUTING notes).
