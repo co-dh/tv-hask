@@ -7,6 +7,7 @@
 -}
 module Tv.Kitty
   ( displayPng
+  , clearImages
   , supportsKittyGraphics
   , splitChunks
   ) where
@@ -58,6 +59,21 @@ displayPng path = do
     -- the literal bytes through to the outer terminal.
     escTmux :: BS.ByteString -> BS.ByteString
     escTmux = BS.intercalate "\x1b\x1b" . BS.split 0x1b
+
+-- | Delete all kitty graphics images from the terminal. Kitty stores
+-- transmitted images in its own registry, independent of the screen
+-- buffer; leaving the alt screen does not free them, so the plot
+-- remains painted on top of the TUI after exit unless we ask kitty
+-- to clear it explicitly. APC \\x1b_Ga=d\\x1b\\\\ ("action=delete,
+-- default scope = all visible") is the documented call.
+clearImages :: IO ()
+clearImages = do
+  inTmux <- isJust <$> lookupEnv "TMUX"
+  let apc = "\x1b_Ga=d\x1b\\"
+      payload | inTmux    = "\x1bPtmux;\x1b\x1b_Ga=d\x1b\x1b\\\x1b\\"
+              | otherwise = apc
+  BS.hPut stdout payload
+  hFlush stdout
 
 -- | Heuristic: detect terminals known to support the kitty graphics
 -- protocol via env vars. Cheap and accurate for the common cases
