@@ -9,6 +9,8 @@
 -}
 module Tv.Plot.Chart
   ( renderChart
+    -- Math helpers exposed for doctest / unit tests
+  , returnsOf, cumretOf, drawdownOf, sma, rollingSd, qnorm, quantiles5
   ) where
 
 import Control.Exception (SomeException, try)
@@ -550,12 +552,20 @@ silvermanBw ys =
 -- Finance-plot helpers (mirror the R script's preXform block)
 -- ============================================================
 
--- Simple returns: r_t = (y_t - y_{t-1}) / y_{t-1}; first row gets 0 to keep length.
+-- | Simple returns: rₜ = (yₜ − yₜ₋₁) / yₜ₋₁; leading 0 keeps the length.
+--
+-- >>> returnsOf [10, 11, 22]
+-- [0.0,0.1,1.0]
+-- >>> returnsOf []
+-- []
 returnsOf :: [Double] -> [Double]
 returnsOf [] = []
 returnsOf ys = 0 : zipWith (\a b -> (b - a) / a) ys (tail ys)
 
--- Cumulative simple returns: cumprod(1 + r) - 1
+-- | Cumulative simple returns: cumprod(1 + r) − 1.
+--
+-- >>> cumretOf [100, 110, 121]
+-- [0.0,0.10000000000000009,0.2100000000000002]
 cumretOf :: [Double] -> [Double]
 cumretOf ys =
   let r = returnsOf ys
@@ -563,15 +573,24 @@ cumretOf ys =
       (_, ps) = foldl step (1, []) r
   in [p - 1 | p <- ps]
 
--- Drawdown: (cummax - y) / cummax
+-- | Drawdown: (cummax − y) / cummax. 0 at peak, larger at trough.
+--
+-- >>> drawdownOf [100, 90, 110, 80]
+-- [0.0,0.1,0.0,0.2727272727272727]
 drawdownOf :: [Double] -> [Double]
 drawdownOf [] = []
 drawdownOf ys =
   let peaks = scanl1 max ys
   in [ (p - y) / p | (p, y) <- zip peaks ys ]
 
--- N-period simple moving average. Leading (N-1) entries are NaN to mirror
--- ggplot's `na.rm = TRUE` skip behavior (we'll replace NaN with first SMA).
+-- | N-period simple moving average. Leading (N−1) entries are NaN, mirroring
+-- ggplot's @na.rm = TRUE@; the rendering layer drops NaN before plotting.
+--
+-- >>> let xs = sma 3 [1, 2, 3, 4, 5]
+-- >>> map isNaN (take 2 xs)
+-- [True,True]
+-- >>> drop 2 xs
+-- [2.0,3.0,4.0]
 sma :: Int -> [Double] -> [Double]
 sma n ys =
   let len = length ys
@@ -581,7 +600,13 @@ sma n ys =
         | otherwise = sum (take n (drop (i - n + 1) ys)) / w
   in [ go i | i <- [0 .. len - 1] ]
 
--- N-period rolling standard deviation of `xs`; same NaN-leading convention.
+-- | N-period rolling stddev. Same NaN-leading convention as 'sma'.
+--
+-- >>> let xs = rollingSd 3 [1, 2, 3, 4, 5]
+-- >>> map isNaN (take 2 xs)
+-- [True,True]
+-- >>> all (\v -> abs (v - sqrt (2/3)) < 1e-12) (drop 2 xs)
+-- True
 rollingSd :: Int -> [Double] -> [Double]
 rollingSd n xs =
   let len = length xs
@@ -594,7 +619,14 @@ rollingSd n xs =
             in sqrt v
   in [ go i | i <- [0 .. len - 1] ]
 
--- Inverse normal CDF (Beasley-Springer / Moro approximation, ~7-digit accuracy).
+-- | Inverse normal CDF (Beasley-Springer / Moro, ~7-digit accuracy).
+--
+-- >>> abs (qnorm 0.5) < 1e-9
+-- True
+-- >>> abs (qnorm 0.975 - 1.959964) < 1e-4
+-- True
+-- >>> abs (qnorm 0.025 + 1.959964) < 1e-4
+-- True
 qnorm :: Double -> Double
 qnorm p
   | p <= 0    = -1/0
@@ -625,7 +657,14 @@ qnorm p
 -- Box / violin layouts (categorical x, numeric y)
 -- ============================================================
 
--- Per-category five-number summary: (q1, median, q3, lo-whisker, hi-whisker)
+-- | Per-category five-number summary: (q1, median, q3, lo-whisker, hi-whisker).
+-- Quantile estimator picks indices @n\`div\`4@, @n\`div\`2@, @3n\`div\`4@ (the
+-- nearest-rank method, R's type-1). Whiskers clamped to 1.5×IQR fences.
+--
+-- >>> quantiles5 [1, 2, 3, 4, 5, 6, 7, 8, 9]
+-- (3.0,5.0,7.0,1.0,9.0)
+-- >>> quantiles5 [42]
+-- (42.0,42.0,42.0,42.0,42.0)
 quantiles5 :: [Double] -> (Double, Double, Double, Double, Double)
 quantiles5 ys =
   let s  = sort ys
