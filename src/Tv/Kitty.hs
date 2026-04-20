@@ -8,6 +8,7 @@
 module Tv.Kitty
   ( displayPng
   , supportsKittyGraphics
+  , splitChunks
   ) where
 
 import qualified Data.ByteString as BS
@@ -17,8 +18,8 @@ import Data.Maybe (isJust)
 import System.Environment (lookupEnv)
 import System.IO (hFlush, stdout)
 
--- Each escape-sequence chunk carries up to 4 KiB of base64 payload (kitty
--- protocol minimum supported chunk size; conservative).
+-- Maximum chunk size per APC sequence (kitty protocol caps at 4096
+-- characters of base64 payload).
 chunkBytes :: Int
 chunkBytes = 4096
 
@@ -36,19 +37,18 @@ displayPng path = do
       emit "m=0" (last middles)
   hFlush stdout
   where
+    -- Concatenate the APC envelope into one ByteString before hPut so a
+    -- single chunk is one syscall instead of four (matters on slow ttys).
     emit :: String -> BS.ByteString -> IO ()
-    emit ctrl chunk = do
-      BS.hPut stdout "\x1b_G"
-      BS8.hPut stdout (BS8.pack ctrl)
-      BS.hPut stdout ";"
-      BS.hPut stdout chunk
-      BS.hPut stdout "\x1b\\"
+    emit ctrl chunk = BS.hPut stdout $
+      "\x1b_G" <> BS8.pack ctrl <> ";" <> chunk <> "\x1b\\"
 
 -- | Heuristic: detect terminals known to support the kitty graphics
 -- protocol via env vars. Cheap and accurate for the common cases
--- (kitty, WezTerm, ghostty). For everything else, return False — caller
--- can fall back to viu / xdg-open. Override with TV_IMAGE_BACKEND=kitty
--- to force-enable.
+-- (kitty, WezTerm, ghostty). iTerm2 uses a different image protocol
+-- and isn't covered here — those users fall through to viu / xdg-open.
+-- Override with TV_IMAGE_BACKEND=kitty (force-enable) or any other
+-- value to force-disable.
 supportsKittyGraphics :: IO Bool
 supportsKittyGraphics = do
   forced <- lookupEnv "TV_IMAGE_BACKEND"
@@ -63,6 +63,13 @@ supportsKittyGraphics = do
         ]
       pure (any isJust anyKnown)
 
+-- | Pure chunker; exposed for doctest.
+--
+-- >>> import qualified Data.ByteString.Char8 as BS8
+-- >>> map BS8.unpack (splitChunks 3 (BS8.pack "abcdefg"))
+-- ["abc","def","g"]
+-- >>> splitChunks 5 ""
+-- []
 splitChunks :: Int -> BS.ByteString -> [BS.ByteString]
 splitChunks n bs
   | BS.null bs = []
