@@ -28,7 +28,6 @@ import qualified Data.HashMap.Strict as HM
 import Data.HashMap.Strict (HashMap)
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.List as L
@@ -40,15 +39,13 @@ import Tv.App.Types (AppState(..), HandlerFn, onStk, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
-import Tv.Types (Cmd(..), isNumeric, toString, filterPrql, filterPrompt, headD)
+import Tv.Types (Cmd(..), isNumeric, toString, filterPrql, filterPrompt)
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.View (View(..), ViewStack, cur, setCur, push, tbl)
 import qualified Tv.View as View
 import qualified Tv.Fzf as Fzf
-import qualified Tv.Socket as Socket
-import qualified Tv.Tmp as Tmp
 
 -- | Run a MaybeT IO pipeline; on Nothing (cancel/no-match), keep the
 -- original stack. The Filter family all have this shape:
@@ -107,8 +104,8 @@ rowSearch tm s = withDistinct s $ \curCol curName vals -> orKeep s $ do
   rowIdx <- MaybeT $ Table.findRow (tbl s) curCol result start True
   pure $ moveRowTo s rowIdx (Just (curCol, result))
 
--- | findRow with cache: fzf fires focus on every arrow key, so without caching
--- each fires a SQL query causing visible lag.
+-- | findRow with cache: the picker fires onFocus on every arrow key,
+-- so without caching each fires a SQL query causing visible lag.
 cachedFindRow
   :: IORef (HashMap Int (Maybe Int))
   -> AdbcTable -> Int -> Int -> Text -> IO (Maybe Int)
@@ -121,47 +118,43 @@ cachedFindRow cache tbl_ col idx val = do
       modifyIORef cache (HM.insert idx r)
       pure r
 
--- | Build poll callback for live search preview.
--- On each fzf focus change, finds the matching row (cached) and re-renders.
-searchPoll
+-- | Build the picker's onFocus callback. Given an item index into the
+-- distinct-values vector, resolve it to a row (cached), move the cursor,
+-- and re-render. Debounced by @lastIdx@ so duplicate focus events are no-ops.
+searchFocus
   :: AdbcTable -> Int -> Vector Text
   -> IORef (ViewStack AdbcTable) -> (ViewStack AdbcTable -> IO ())
-  -> IO (IORef (HashMap Int (Maybe Int)), IO ())
-searchPoll tbl_ curCol vals sRef preview = do
+  -> IO (IORef (HashMap Int (Maybe Int)), Int -> Text -> IO ())
+searchFocus tbl_ curCol vals sRef preview = do
   lastIdx <- newIORef (Nothing :: Maybe Int)
   cache   <- newIORef (HM.empty :: HashMap Int (Maybe Int))
-  let poll :: IO ()
-      poll = do
-        mc <- Socket.pollCmd
-        case mc of
-          Nothing -> pure ()
-          Just cmdStr -> do
-            let parts = T.splitOn " " cmdStr
-            if headD "" parts /= "search.preview"
-              then pure ()
-              else do
-                let p1 = case drop 1 parts of { (x:_) -> x; _ -> "" }
-                case readMaybe (T.unpack p1) :: Maybe Int of
-                  Nothing  -> pure ()
-                  Just idx -> do
-                    li <- readIORef lastIdx
-                    if idx >= V.length vals || li == Just idx
-                      then pure ()
-                      else do
-                        writeIORef lastIdx (Just idx)
-                        let val = fromMaybe "" (vals V.!? idx)
-                        mri <- cachedFindRow cache tbl_ curCol idx val
-                        case mri of
-                          Nothing     -> pure ()
-                          Just rowIdx -> do
-                            s0 <- readIORef sRef
-                            let s' = moveRowTo s0 rowIdx (Just (curCol, val))
-                            writeIORef sRef s'
-                            preview s'
-  pure (cache, poll)
+  -- Picker hands us (indexIntoInput, rawLine). The input is "i\tvalue", so
+  -- we pull i back out of the raw line for the cache key. A duplicate focus
+  -- event (same i as last) is a no-op to avoid redundant re-renders.
+  let onFocus _rawIdx line = case T.splitOn "\t" line of
+        (hTxt : _) -> case readMaybe (T.unpack hTxt) of
+          Just idx -> applyFocus idx lastIdx cache
+          Nothing  -> pure ()
+        _ -> pure ()
+      applyFocus idx lastR cacheR = do
+        li <- readIORef lastR
+        if idx >= V.length vals || li == Just idx
+          then pure ()
+          else do
+            writeIORef lastR (Just idx)
+            let val = fromMaybe "" (vals V.!? idx)
+            mri <- cachedFindRow cacheR tbl_ curCol idx val
+            case mri of
+              Nothing     -> pure ()
+              Just rowIdx -> do
+                s0 <- readIORef sRef
+                let s' = moveRowTo s0 rowIdx (Just (curCol, val))
+                writeIORef sRef s'
+                preview s'
+  pure (cache, onFocus)
 
--- | Row search with live preview: cursor moves as user browses fzf results.
--- fzf focus -> shell script -> socat -> socket -> poll -> findRow -> re-render.
+-- | Row search with live preview: cursor moves as the user browses the
+-- picker results. Picker onFocus → findRow → re-render.
 rowSearchLive
   :: Bool -> ViewStack AdbcTable -> (ViewStack AdbcTable -> IO ()) -> IO (ViewStack AdbcTable)
 rowSearchLive tm s preview = withDistinct s $ \curCol curName vals ->
@@ -182,35 +175,30 @@ applyRow s curCol result findM = do
     Nothing     -> s
     Just rowIdx -> moveRowTo s rowIdx (Just (curCol, result))
 
--- | Real-fzf path: wire up the socat preview script, run fzf with a live
--- focus-poll loop, then finalize on the user's pick (or keep the live
--- preview position on cancel).
+-- | Live-preview path: the in-process picker fires onFocus for every
+-- highlight change, which we wire straight into row movement — no socat,
+-- no preview script.
 runLive
   :: ViewStack AdbcTable -> (ViewStack AdbcTable -> IO ())
   -> Int -> Text -> Vector Text
   -> IO (ViewStack AdbcTable)
 runLive s preview curCol curName vals = do
-  -- setup: socat script for fzf execute-silent, indexed items for shell-safe args
-  sockPath <- Socket.getPath
-  script   <- Tmp.tmpPath "search-preview.sh"
-  TIO.writeFile script
-    (T.pack ("#!/bin/sh\necho \"search.preview $1\" | socat - UNIX-CONNECT:" ++ sockPath))
   let items = V.imap (\i v -> T.pack (show i) <> "\t" <> v) vals
   sRef <- newIORef s
-  (cache, poll) <- searchPoll (tbl s) curCol vals sRef preview
+  (cache, onFocus) <- searchFocus (tbl s) curCol vals sRef preview
   let opts = V.fromList
         [ "--prompt=/" <> curName <> ": "
         , "--with-nth=2..", "--delimiter=\t"
-        , T.pack ("--bind=focus:execute-silent(sh " ++ script ++ " {1})")
         ]
-  out <- Fzf.fzfCore False opts (T.intercalate "\n" (V.toList items)) poll
+  out <- Fzf.fzfCoreLive False opts (T.intercalate "\n" (V.toList items))
+           (pure ()) onFocus
   if T.null out
-    then readIORef sRef  -- cancelled: keep preview position
-    else case readMaybe (T.unpack (pickIdx out)) :: Maybe Int of
-      Nothing  -> pure s
+    then readIORef sRef
+    else case readMaybe (T.unpack (pickIdx out)) of
       Just idx ->
         let result = fromMaybe "" (vals V.!? idx)
         in applyRow s curCol result (cachedFindRow cache (tbl s) curCol idx result)
+      Nothing -> pure s
   where
     pickIdx out = case T.splitOn "\t" out of { (x:_) -> x; _ -> "" }
 

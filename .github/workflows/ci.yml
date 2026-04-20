@@ -33,7 +33,7 @@ jobs:
             libffi-devel libatomic glibc-langpack-en \
             pkgconf-pkg-config cairo-devel pango-devel \
             openssl-devel python3 \
-            perl-interpreter fzf findutils
+            perl-interpreter findutils
           # gcc-toolset-12 provides GCC 12 + libstdc++.a new enough for
           # DuckDB prebuilts (they reference std::__throw_bad_array_new_length
           # which GCC 8's libstdc++ lacks). Override /usr/local/bin so

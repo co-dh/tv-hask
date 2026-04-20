@@ -33,16 +33,11 @@ import qualified Data.Vector as V
 import Data.Word (Word32)
 import System.Environment (getExecutablePath, lookupEnv)
 import System.IO.Unsafe (unsafePerformIO)
-import System.Posix.Files
-  (getFileStatus, fileMode, setFileMode, ownerExecuteMode, groupExecuteMode, otherExecuteMode)
-import Data.Bits ((.|.))
 import Text.Read (readMaybe)
 
 
 import qualified Tv.Fzf as Fzf
-import qualified Tv.Socket as Socket
 import qualified Tv.Term as Term
-import qualified Tv.Tmp as Tmp
 import Tv.Types (headD, getD)
 
 -- | Theme state
@@ -226,7 +221,7 @@ applyIdx s idx = do
 
 -- end State
 
--- | fzf theme picker with live preview.
+-- | Theme picker with live preview.
 -- applyAndRender: called with loaded styles when user moves focus (for live re-render).
 -- Returns (selectedIdx, styles), or none on cancel.
 run :: Bool -> State -> (Vector Word32 -> IO ()) -> IO (Maybe State)
@@ -238,33 +233,16 @@ run tm cur applyAndRender = do
       sty <- loadIdx idx
       pure (Just (State { styles = sty, themeIdx = idx }))
     else do
-      sockPath <- Socket.getPath
-      script <- Tmp.tmpPath "theme-pick.sh"
-      TIO.writeFile script
-        (T.pack ("#!/bin/sh\necho \"theme.preview $1\" | socat - UNIX-CONNECT:" ++ sockPath))
-      -- add +x to existing mode so fzf can exec this preview script
-      st <- getFileStatus script
-      setFileMode script (fileMode st .|. ownerExecuteMode .|. groupExecuteMode .|. otherExecuteMode)
       let items = V.imap (\i _ -> T.pack (show i) <> "\t" <> themeName i) themes
-          poll :: IO ()
-          poll = do
-            mcmd <- Socket.pollCmd
-            case mcmd of
-              Just cmdStr -> do
-                let parts = T.splitOn " " cmdStr
-                if headD "" parts == "theme.preview"
-                  then case readMaybe (T.unpack (getD parts 1 "")) of
-                         Just idx -> do
-                           sty <- loadIdx idx
-                           applyAndRender sty
-                         Nothing  -> pure ()
-                  else pure ()
-              Nothing -> pure ()
+          onFocus _ line = case T.splitOn "\t" line of
+            (hTxt : _) -> case readMaybe (T.unpack hTxt) of
+              Just idx -> loadIdx idx >>= applyAndRender
+              Nothing  -> pure ()
+            _ -> pure ()
           opts = V.fromList
-            [ "--prompt=theme: ", "--with-nth=2..", "--delimiter=\t"
-            , T.pack ("--bind=focus:execute-silent(" ++ script ++ " {1})")
-            ]
-      out <- Fzf.fzfCore False opts (T.intercalate "\n" (V.toList items)) poll
+            [ "--prompt=theme: ", "--with-nth=2..", "--delimiter=\t" ]
+      out <- Fzf.fzfCoreLive False opts (T.intercalate "\n" (V.toList items))
+               (pure ()) onFocus
       if T.null out
         then pure Nothing
         else case listToMaybe (T.splitOn "\t" out) >>= (readMaybe . T.unpack) of

@@ -24,7 +24,9 @@ module Tv.Term
     -- tty / lifecycle
   , isattyStdin, reopenTty, init, inited, shutdown
     -- screen
-  , width, height, clear, present, pollEvent, toEvent, toEvents, bufferStr
+  , width, height, clear, present, pollEvent, waitEventTimeout
+  , invalidate
+  , toEvent, toEvents, bufferStr
   , padC, renderTable, print
   , _setScreenBufSize
   ) where
@@ -397,6 +399,16 @@ clear = do
   (_, _, buf) <- readIORef screenBuf
   VSM.set buf emptyCell
 
+-- | Force the next 'present' to re-emit every cell by zeroing the front
+-- buffer. Used after something writes into the cell buffer in an
+-- uncontrolled way (e.g. the picker popup exits and we want the caller's
+-- next render to emit contiguous ANSI runs instead of diffing around
+-- cells the popup happened to leave unchanged).
+invalidate :: IO ()
+invalidate = do
+  front <- readIORef frontBuf
+  VSM.set front emptyCell
+
 -- | Fold state for `present`: last emitted style, last cursor position,
 -- and the accumulated output Builder. Strict fields keep the builder
 -- from stacking thunks across the w*h cells (render hot path).
@@ -572,6 +584,15 @@ pollEvent = do
       if c >= '0' && c <= '9'
         then readCsiTilde inH (c : acc)
         else pure (toEvents ('\x1B' : '[' : reverse acc ++ [c]))
+
+-- | Poll for a key event, returning Nothing after @ms@ milliseconds of
+-- no input. Lets callers run a periodic poll callback (e.g. the fuzzy
+-- picker) alongside input reading without spinning.
+waitEventTimeout :: Int -> IO (Maybe Event)
+waitEventTimeout ms = do
+  inH <- readIORef inputHandle
+  ready <- hWaitForInput inH ms
+  if not ready then pure Nothing else Just <$> pollEvent
 
 -- | Read termbox internal cell buffer as string (rows separated by newlines).
 -- Trailing spaces on each row are trimmed to match Lean's lean_tb_buffer_str.
