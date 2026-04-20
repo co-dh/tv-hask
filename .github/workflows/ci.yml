@@ -30,8 +30,8 @@ jobs:
           dnf -y install \
             gcc gcc-c++ make unzip git-core which curl tar xz \
             gmp-devel zlib-devel ncurses-devel ncurses-compat-libs \
-            libffi-devel libstdc++-static perl-interpreter \
-            fzf findutils
+            libffi-devel libstdc++-static libatomic \
+            perl-interpreter fzf findutils
           # gh CLI — Makefile uses `gh release download` for DuckDB zips.
           dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
           dnf -y install gh
