@@ -124,6 +124,12 @@ Browse S3 buckets (`tv s3://bucket/ +n`), HuggingFace datasets
 (`tv hf://datasets/user/dataset`), and FTP servers (`tv ftp://ftp.nyse.com/`)
 the same way you browse local folders.
 
+S3 access is built in (no `aws` CLI needed). Use `+n` for anonymous
+access to public buckets. For private buckets, set `AWS_ACCESS_KEY_ID`
+and `AWS_SECRET_ACCESS_KEY` (and optionally `AWS_REGION`,
+`AWS_SESSION_TOKEN`) env vars — there is no support for
+`~/.aws/credentials` profiles, IAM roles, SSO, or EC2 instance metadata.
+
 ### Also
 
 - Column grouping with `!` (key columns pinned left, used as x-axis for plots)
@@ -199,6 +205,22 @@ Run tests (169 tasty + 97 doctest):
 ```bash
 cabal test
 ```
+
+### Plot rendering
+
+By default plots are rendered with R/ggplot2 (the existing default).
+Two opt-in env vars switch the renderer or capture the rendered PNG:
+
+| Env var            | Value                | Effect                                                           |
+|--------------------|----------------------|------------------------------------------------------------------|
+| `TV_PLOT_RENDERER` | `r` (default)        | R/ggplot2 via `Rscript` subprocess                               |
+| `TV_PLOT_RENDERER` | `chart`              | Native Haskell renderer via `Tv.Plot.Chart` (Chart-cairo)        |
+| `TV_PLOT_OUT`      | `/path/to/file.png`  | Copy the rendered PNG to this path (in addition to terminal display) |
+
+`TV_PLOT_OUT` makes the binary writable from non-interactive harnesses
+(see `scripts/gen_plot_e2e.sh` and `test/TestPlotE2E.hs`). Both env vars
+are read in `Tv.Plot.run`; default behaviour is unchanged when neither
+is set.
 
 ## Run
 
@@ -382,18 +404,21 @@ Build-time only:
 
 Optional (feature-specific):
 
-| Tool        | Feature                                | Fallback         |
-|-------------|----------------------------------------|------------------|
-| `Rscript`   | ggplot2 plot rendering                 | plot disabled    |
-| `kitten`    | Kitty graphics protocol display        | `viu`            |
-| `viu`       | Display plot PNG in terminal           | `xdg-open`       |
-| `xdg-open`  | Open plot PNG in GUI viewer            | none             |
-| `aws`       | S3 bucket browsing & download          | S3 disabled      |
-| `trash-put` | Move files to trash (folder view)      | `gio trash`      |
-| `gio`       | Move files to trash (GNOME)            | none             |
-| `osqueryi`  | Osquery table browsing & queries       | osquery disabled |
-| `tmux`      | fzf popup mode (`--tmux`)              | fullscreen fzf   |
-| `socat`     | Socket preview in command palette      | preview disabled |
+| Tool        | Feature                                            | Fallback         |
+|-------------|----------------------------------------------------|------------------|
+| `Rscript`   | ggplot2 plot rendering (default)                   | Chart-cairo      |
+| `viu`       | Display plot PNG in non-kitty terminals            | `xdg-open`       |
+| `xdg-open`  | Open plot PNG in GUI viewer                        | none             |
+| `trash-put` | Move files to trash (folder view)                  | `gio trash`      |
+| `gio`       | Move files to trash (GNOME)                        | none             |
+| `osqueryi`  | Osquery table browsing & queries                   | osquery disabled |
+| `tmux`      | fzf popup mode (`--tmux`)                          | fullscreen fzf   |
+| `socat`     | Socket preview in command palette                  | preview disabled |
+
+Kitty graphics protocol display (kitty / WezTerm / ghostty) is built-in;
+no `kitten` external dep needed. Detection is automatic via env vars
+(`KITTY_WINDOW_ID`, `WEZTERM_PANE`, `GHOSTTY_RESOURCES_DIR`); override
+with `TV_IMAGE_BACKEND=kitty` to force-enable.
 
 ## Socket Command Channel
 
