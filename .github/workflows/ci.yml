@@ -144,15 +144,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make duckdb
 
-      # Absolute --extra-lib-dirs so duckdb-ffi's configure step (which
-      # runs before tv-hask's extra-lib-dirs in its .cabal) can find the
-      # vendored static libs. Relative paths in cabal.project resolve
-      # per-package, not from the project root.
+      # LIBRARY_PATH is honored by gcc for every link step — including
+      # duckdb-ffi's configure test-link, which cabal's --extra-lib-dirs
+      # flag does not reach (that flag scopes to local packages only).
       - name: cabal build
-        run: |
-          cabal build all \
-            --extra-lib-dirs="$PWD/vendor/duckdb" \
-            --extra-lib-dirs="$PWD/vendor/lib"
+        env:
+          LIBRARY_PATH: ${{ github.workspace }}/vendor/duckdb:${{ github.workspace }}/vendor/lib
+        run: cabal build all
 
       # Save cabal cache right after the expensive build step so it
       # lands on GHA even if tests or the ABI check fail. Primary-key
