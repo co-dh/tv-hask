@@ -388,17 +388,21 @@ Build-time only:
 
 Optional (feature-specific):
 
-| Tool        | Feature                                | Fallback         |
-|-------------|----------------------------------------|------------------|
-| `Rscript`   | ggplot2 plot rendering                 | plot disabled    |
-| `kitten`    | Kitty graphics protocol display        | `viu`            |
-| `viu`       | Display plot PNG in terminal           | `xdg-open`       |
-| `xdg-open`  | Open plot PNG in GUI viewer            | none             |
-| `trash-put` | Move files to trash (folder view)      | `gio trash`      |
-| `gio`       | Move files to trash (GNOME)            | none             |
-| `osqueryi`  | Osquery table browsing & queries       | osquery disabled |
-| `tmux`      | fzf popup mode (`--tmux`)              | fullscreen fzf   |
-| `socat`     | Socket preview in command palette      | preview disabled |
+| Tool        | Feature                                            | Fallback         |
+|-------------|----------------------------------------------------|------------------|
+| `Rscript`   | ggplot2 plot rendering (default)                   | Chart-cairo      |
+| `viu`       | Display plot PNG in non-kitty terminals            | `xdg-open`       |
+| `xdg-open`  | Open plot PNG in GUI viewer                        | none             |
+| `trash-put` | Move files to trash (folder view)                  | `gio trash`      |
+| `gio`       | Move files to trash (GNOME)                        | none             |
+| `osqueryi`  | Osquery table browsing & queries                   | osquery disabled |
+| `tmux`      | fzf popup mode (`--tmux`)                          | fullscreen fzf   |
+| `socat`     | Socket preview in command palette                  | preview disabled |
+
+Kitty graphics protocol display (kitty / WezTerm / ghostty) is built-in;
+no `kitten` external dep needed. Detection is automatic via env vars
+(`KITTY_WINDOW_ID`, `WEZTERM_PANE`, `GHOSTTY_RESOURCES_DIR`); override
+with `TV_IMAGE_BACKEND=kitty` to force-enable.
 
 ## Socket Command Channel
 

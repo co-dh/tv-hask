@@ -489,6 +489,9 @@ renderFrame pngPath intervals idx err_ = do
     Nothing  -> showPng pngPath
     Just msg -> TIO.putStrLn msg
   when (V.length intervals > 1) $ do
+    -- Kitty graphics leaves the cursor at the bottom row of the image,
+    -- so the status line crowds the chart. Push it down by 2 lines.
+    TIO.putStr "\n\n"
     let hi s = "\x1b[33m" <> s <> "\x1b[0m"
         bar =
           T.intercalate " "
