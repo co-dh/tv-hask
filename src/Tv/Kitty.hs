@@ -27,6 +27,10 @@ chunkBytes = 4096
 -- the base64-encoded payload into chunks framed by APC sequences.
 -- Inside tmux, wraps each APC in a DCS passthrough envelope so tmux
 -- forwards the bytes to the host terminal instead of stripping them.
+--
+-- The image is constrained to 22 rows × 78 cols (`r=22,c=78`) so it
+-- leaves room below for the plot's downsample status bar even in the
+-- common 24-row pane. Kitty resizes the image to fit those cells.
 displayPng :: FilePath -> IO ()
 displayPng path = do
   bs <- BS.readFile path
@@ -34,9 +38,9 @@ displayPng path = do
   let emit = emitWith inTmux
   case splitChunks chunkBytes (B64.encode bs) of
     []                -> pure ()
-    [only]            -> emit "f=100,a=T" only
+    [only]            -> emit "f=100,a=T,r=22,c=78" only
     (first : middles) -> do
-      emit "f=100,a=T,m=1" first
+      emit "f=100,a=T,r=22,c=78,m=1" first
       mapM_ (emit "m=1") (init middles)
       emit "m=0" (last middles)
   hFlush stdout
