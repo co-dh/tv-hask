@@ -37,6 +37,7 @@ import Data.Word (Word32)
 import qualified Tv.AppF as AppM
 import Tv.AppF (AppM, Interp(..))
 import Tv.App.Types
+import qualified Tv.Clip as Clip
 import qualified Tv.CmdConfig as CmdConfig
 import Tv.CmdConfig (Entry(..), CmdInfo(..), mkEntry, hdl)
 import qualified Tv.Diff as Diff
@@ -51,6 +52,7 @@ import Optics.Core ((&), (.~), (%~))
 import qualified Tv.Meta as Meta
 import qualified Tv.Nav as Nav
 import qualified Tv.Plot as Plot
+import qualified Tv.Render as Render
 import Tv.Render (tabLine)
 import qualified Tv.Session as Session
 import qualified Tv.Sparkline as Sparkline
@@ -119,6 +121,13 @@ runMenu a = do
         Nothing -> pure (ActOk a')
     Nothing -> pure (ActOk a')
 
+-- | Truncate clipboard status message to fit on the status line without
+-- wrapping; show head + ellipsis if the cell's too long.
+clipMsg :: Text -> Text
+clipMsg t
+  | T.length t <= 40 = t
+  | otherwise       = T.take 37 t <> "..."
+
 -- Command table: feature-module commands + local wiring --
 
 commands :: Vector (Entry, Maybe HandlerFn)
@@ -179,6 +188,13 @@ localCmds = V.fromList
         (\a _ _ -> pure $ ActOk $ a & #prevScroll %~ (\p -> p - min p 5))
   , hdl (mkEntry CmdCellDn    ""  "}"  "Scroll cell preview down"           False "")
         (\a _ _ -> pure $ ActOk $ a & #prevScroll %~ (+ 5))
+  , hdl (mkEntry CmdCellYank  "rc" "y"  "Copy current cell to clipboard (OSC 52)" False "")
+        (\a _ _ -> do
+          let nav_ = View.nav (View.cur (stk a))
+          txt <- Ops.cellStr (Nav.tbl nav_) (Nav.cur (Nav.row nav_)) (Nav.colIdx nav_)
+          Clip.copy txt
+          Render.statusMsg ("copied: " <> clipMsg txt)
+          pure (ActOk a))
   , hdl (mkEntry CmdHeat0     ""  ""   "Heatmap: off"                       False "") (heatSet 0)
   , hdl (mkEntry CmdHeat1     ""  ""   "Heatmap: numeric columns"           False "") (heatSet 1)
   , hdl (mkEntry CmdHeat2     ""  ""   "Heatmap: categorical columns"       False "") (heatSet 2)

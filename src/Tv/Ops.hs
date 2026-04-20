@@ -35,7 +35,8 @@ import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
-import Tv.Types (Cmd(..), ColType(..), Op(..), toString, escSql)
+import Tv.Types (Cmd(..), ColType(..), Op(..), toString, escSql, exprError)
+import qualified Tv.Render as Render
 import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Table (AdbcTable, tmpName, stripSemi)
 import qualified Tv.Data.DuckDB.Table as Table
@@ -93,7 +94,7 @@ splitRunWith s pat = do
       Just baseSql -> do
         n <- maxSplitParts (stripSemi baseSql) curName ep
         if n <= 1 then pure s
-        else pipeAndPush s (OpDerive (splitBindings curName ep (Prql.quote curName) n))
+        else pipeAndPush s (OpDerive (splitBindings curName ep (Prql.ref curName) n))
                (":" <> curName) (\t -> V.length (Table.colNames t) - n)
 
 splitRun :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
@@ -153,9 +154,11 @@ parseDerive input =
 deriveRunWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 deriveRunWith s input = case parseDerive input of
   Nothing -> pure s
-  Just (name, expr) ->
-    pipeAndPush s (OpDerive (V.singleton (name, expr)))
-      ("=" <> name) (\t -> V.length (Table.colNames t) - 1)
+  Just (name, expr) -> case exprError expr of
+    Just msg -> Render.errorPopup ("derive: " <> msg) >> pure s
+    Nothing  ->
+      pipeAndPush s (OpDerive (V.singleton (name, expr)))
+        ("=" <> name) (\t -> V.length (Table.colNames t) - 1)
 
 deriveRun :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 deriveRun tm s = do
@@ -180,6 +183,11 @@ data JoinOp = JoinInner | JoinLeft | JoinRight | JoinUnion | JoinDiff
   deriving (Eq, Show)
 
 joinCond :: Vector Text -> Text
+-- | PRQL join condition. Uses the @(==col)@ shorthand which expands to
+-- @left.col == right.col@; the shorthand takes a bare identifier, so
+-- keep the backtick-quoted form — prefixing @this.@ here would turn the
+-- expression into a non-join boolean that PRQL accepts but yields
+-- empty results.
 joinCond cols = T.intercalate " && " (V.toList (V.map (\c -> "==" <> Prql.quote c) cols))
 
 opLabel :: JoinOp -> Text
