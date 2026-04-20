@@ -45,6 +45,10 @@ eqCI a b = toLower a == toLower b
 -- | Fuzzy subsequence match with score and match positions. Empty query
 -- matches anything with score 0 and no positions.
 --
+-- Supports a subset of fzf's extended syntax:
+--  * @^prefix@ — anchor the first match position to the start of the target
+--  * @suffix$@ — anchor the match to end at the last target position
+--
 -- >>> snd <$> match "abc" "a-b-c"
 -- Just [0,2,4]
 -- >>> snd <$> match "ABC" "abc"
@@ -55,11 +59,28 @@ eqCI a b = toLower a == toLower b
 -- Nothing
 -- >>> match "" "anything"
 -- Just (0,[])
+-- >>> snd <$> match "^freq" "freq.open | g | | ..."
+-- Just [0,1,2,3]
+-- >>> match "^freq" "xfreq"
+-- Nothing
 match :: Text -> Text -> Maybe (Int, [Int])
-match query target
+match query0 target
   | T.null query = Just (0, [])
-  | otherwise    = go 0 (-1) 0 []
+  | otherwise    = do
+      r@(_, poses) <- go 0 (if startAnchor then -1 else -1) 0 []
+      if endAnchor
+        then case reverse poses of
+               (p : _) | p == T.length target - 1 -> Just r
+               _ -> Nothing
+        else Just r
   where
+    (startAnchor, afterCaret) = case T.uncons query0 of
+      Just ('^', rest) -> (True, rest)
+      _                -> (False, query0)
+    (endAnchor, query) =
+      if not (T.null afterCaret) && T.last afterCaret == '$'
+        then (True, T.init afterCaret)
+        else (False, afterCaret)
     qn = T.length query
     tn = T.length target
     go !qi !prev !acc !poses
@@ -67,14 +88,16 @@ match query target
       | otherwise =
           case findFrom qi (prev + 1) of
             Nothing -> Nothing
-            Just ti ->
-              let b     = bonus target ti prev
-                  exact = if T.index target ti == T.index query qi then 2 else 0
-              in go (qi + 1) ti (acc + 1 + b + exact) (ti : poses)
+            Just ti
+              | startAnchor && null poses && ti /= 0 -> Nothing
+              | otherwise ->
+                  let b     = bonus target ti prev
+                      exact = if T.index target ti == T.index query qi then 2 else 0
+                  in go (qi + 1) ti (acc + 1 + b + exact) (ti : poses)
     findFrom qi fromIdx
-      | fromIdx >= tn                                  = Nothing
+      | fromIdx >= tn                                    = Nothing
       | eqCI (T.index query qi) (T.index target fromIdx) = Just fromIdx
-      | otherwise                                      = findFrom qi (fromIdx + 1)
+      | otherwise                                        = findFrom qi (fromIdx + 1)
 
 -- | Score-only variant. Used when the caller only ranks candidates.
 matchNoPos :: Text -> Text -> Maybe Int
