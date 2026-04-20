@@ -18,7 +18,6 @@ import Data.Maybe (fromMaybe)
 import Data.Word (Word32)
 
 import qualified Tv.Term as Term
-import qualified Tv.Theme as Theme
 
 -- | Word-wrap a string to fit within maxW characters
 wrapText :: Text -> Int -> Vector Text
@@ -56,11 +55,12 @@ render screenH screenW text scroll0 = do
         y1 = screenH - 3                  -- last row of box (bottom border)
         y0 = if y1 + 1 > visible + 2 then y1 - visible - 1 else 0  -- top border
         actualVisible = y1 - y0 - 1       -- rows between borders
-    s <- Theme.getStyles
-    let fg  = Theme.styleFg s Theme.sBar
-        bg  = Theme.styleBg s Theme.sBar
-        dfg = Theme.styleFg s Theme.sBarDim
-        dbg = Theme.styleBg s Theme.sBarDim
+    -- Fixed high-contrast colours: bright white on a dark grey panel
+    -- (much more readable than the prior white-on-blue sBar style).
+    let fg  = 15  :: Word32  -- bright white
+        bg  = 236 :: Word32  -- dark grey panel
+        dfg = 244 :: Word32  -- dim grey for bottom border + scroll indicator
+        dbg = bg
     -- top border
     Term.print (fromIntegral x0 :: Word32) (fromIntegral y0 :: Word32) fg bg
       ("┌" <> T.replicate innerW "─" <> "┐")

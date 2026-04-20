@@ -83,16 +83,15 @@ runPicker :: PickerOpts -> IO Text
 runPicker opts = do
   sw <- fromIntegral <$> Term.width
   sh <- fromIntegral <$> Term.height
+  -- Width = 70% of screen, clamped to a reasonable range. Height grows
+  -- with item count up to 12 list rows. The border takes 2 rows + 2 cols.
   let its     = items opts
-      promptW = T.length (prompt opts)
-      hdrW    = T.length (header opts)
-      dispW   = V.foldl' (\m l -> max m (T.length (display (withNth opts) l))) 0 its
-      innerW  = maximum [promptW + 20, hdrW, dispW + 2]
-      boxW    = min sw (max 50 (innerW + 4))
       hasHdr  = not (T.null (header opts))
+      boxW    = max 40 (min (sw - 2) ((sw * 7) `div` 10))
       rowsN   = V.length its
       listH   = min 12 (max 1 rowsN)
-      boxH    = listH + 1 + (if hasHdr then 1 else 0)
+      boxH    = listH + 3 + (if hasHdr then 1 else 0)
+                -- 3 = top border + prompt + bottom border
       boxX    = max 0 ((sw - boxW) `div` 2)
       boxY    = max 0 ((sh - boxH) `div` 2)
       box     = Box { bx = boxX, by = boxY, bw = boxW, bh = boxH }
@@ -104,14 +103,25 @@ runPicker opts = do
     Just (i, _, _) -> onFocus opts i (its V.! i)
     Nothing        -> pure ()
   result <- loop opts st0
-  -- Clear the back buffer and invalidate the front so the caller's next
-  -- render repaints every cell contiguously — otherwise cells the popup
-  -- happened not to touch stay "same" and the new frame emits as a
-  -- cursor-jumped patch (breaks text-match demo verification and leaves
-  -- visible residue if the underlying view's content line-wraps).
+  -- Before handing control back, paint blank default-style cells into
+  -- the popup's footprint and flush. That erases the popup on screen
+  -- without touching cells outside the box, and without emitting a raw
+  -- \x1b[2J (which gen_demo flags as a post-table clear anomaly). The
+  -- caller's next render then repaints normally; invalidate ensures
+  -- cells outside the popup area also re-emit to pick up whatever
+  -- changed in the underlying view.
+  erasePopup (psBox st0)
+  Term.present
   Term.clear
   Term.invalidate
   pure result
+
+-- | Overwrite the popup area with blank default-style cells.
+erasePopup :: Box -> IO ()
+erasePopup b =
+  forM_ [0 .. bh b - 1] $ \dy ->
+    Term.padC (fromIntegral (bx b)) (fromIntegral (by b + dy))
+              (fromIntegral (bw b)) 0 0 (T.replicate (bw b) " ") 0
 
 data Key
   = KChar Char | KEnter | KEsc | KBackspace
@@ -216,7 +226,7 @@ computeMatches q its
 -- Rendering --------------------------------------------------------------
 
 listRows :: PickerState -> Int
-listRows st = bh (psBox st) - 1 - (if True then 0 else 0)
+listRows st = bh (psBox st) - 3  -- minus top border, prompt, bottom border
 
 -- | Strip the index field for display when 'withNth' is True.
 display :: Bool -> Text -> Text
@@ -225,57 +235,85 @@ display True line = case T.splitOn "\t" line of
   _        -> line
 display False line = line
 
--- | Draw every cell of the popup into the cell buffer and flush.
--- Colours are hardcoded (not theme-driven) so the popup looks consistent
--- across themes and so this module can stay independent of 'Tv.Theme'
--- (Theme imports Fzf, so a Theme import here would create a cycle).
+-- | Draw the whole popup — border, prompt, optional header, item rows —
+-- into the cell buffer and flush. Colours are hardcoded (not theme-driven)
+-- so the popup looks consistent across themes and so this module can stay
+-- independent of 'Tv.Theme' (Theme imports Fzf, which would create a
+-- module cycle).
+--
+-- Layout:
+--   row 0                 top border      ┌────────────┐
+--   row 1                 prompt          │> query     │
+--   row 2 (optional)      header          │header      │
+--   row 2+ … bh-2         item rows       │> item …    │
+--   row bh-1              bottom border   └────────────┘
 drawFrame :: PickerOpts -> PickerState -> IO ()
 drawFrame opts st = do
   let box      = psBox st
       hasHdr   = not (T.null (header opts))
-      rows     = bh box - 1 - (if hasHdr then 1 else 0)
+      innerW   = bw box - 2
+      promptY  = by box + 1
+      hdrY     = by box + 2
+      firstRow = by box + 2 + (if hasHdr then 1 else 0)
+      nRows    = bh box - 3 - (if hasHdr then 1 else 0)
+      scroll   = scrollOff (psCur st) nRows
       promptLn = prompt opts <> psQuery st
-      scroll   = scrollOff (psCur st) rows
-  drawRow (bx box) (by box) (bw box) promptLn fgPrompt bgPrompt
+  drawBorder (bx box) (by box) (bw box) (bh box)
+  drawLine (bx box) promptY innerW promptLn fgPrompt bgPanel
   when hasHdr $
-    Term.padC (fromIntegral (bx box)) (fromIntegral (by box + 1))
-              (fromIntegral (bw box)) fgHdr bgHdr
-              (padR (bw box) (" " <> header opts)) 0
-  let rowStart = by box + 1 + (if hasHdr then 1 else 0)
-  forM_ [0 .. rows - 1] $ \r -> do
-    let y = rowStart + r
+    drawLine (bx box) hdrY innerW (header opts) fgHdr bgPanel
+  forM_ [0 .. nRows - 1] $ \r -> do
+    let y = firstRow + r
     case psMatch st V.!? (scroll + r) of
       Nothing ->
-        Term.padC (fromIntegral (bx box)) (fromIntegral y)
-                  (fromIntegral (bw box)) fgRow bgRow
-                  (T.replicate (bw box) " ") 0
+        drawLine (bx box) y innerW "" fgRow bgPanel
       Just (idx, _, poses) -> do
         let selected = (scroll + r) == psCur st
             raw      = items opts V.! idx
             shown    = display (withNth opts) raw
             adj      = if withNth opts then adjustPositions raw poses else poses
-            bgLine   = if selected then bgSel else bgRow
+            bgLine   = if selected then bgSel else bgPanel
             fgLine   = if selected then fgSel else fgRow
             marker   = if selected then "> " else "  "
-        drawItem (bx box) y (bw box) marker shown adj
+        drawItem (bx box) y innerW marker shown adj
                  fgLine bgLine fgMatch bgLine
   Term.present
-  where
-    drawRow :: Int -> Int -> Int -> Text -> Word32 -> Word32 -> IO ()
-    drawRow x y w full fg bg = do
-      let padded = padR w (" " <> full)
-      Term.padC (fromIntegral x) (fromIntegral y) (fromIntegral w) fg bg padded 0
 
--- Hardcoded palette indices for the popup.
--- 236/8 = dark grey on bright white prompt; 244/234 = dim header;
--- 7/236 = light text on dark rows; 16/11 = black on yellow selection;
--- 11 = bright yellow match hit (foreground only).
-fgPrompt, bgPrompt, fgHdr, bgHdr, fgRow, bgRow, fgSel, bgSel, fgMatch :: Word32
-fgPrompt = 16;  bgPrompt = 11
-fgHdr    = 244; bgHdr    = 234
-fgRow    = 7;   bgRow    = 236
-fgSel    = 16;  bgSel    = 14
-fgMatch  = 11
+-- | Render the outer frame.
+drawBorder :: Int -> Int -> Int -> Int -> IO ()
+drawBorder x y w h = do
+  let innerW = w - 2
+      top    = "┌" <> T.replicate innerW "─" <> "┐"
+      bot    = "└" <> T.replicate innerW "─" <> "┘"
+  Term.padC (fromIntegral x) (fromIntegral y)
+            (fromIntegral w) fgBorder bgPanel top 0
+  Term.padC (fromIntegral x) (fromIntegral (y + h - 1))
+            (fromIntegral w) fgBorder bgPanel bot 0
+  -- side bars on each inner row
+  forM_ [1 .. h - 2] $ \dy -> do
+    Term.padC (fromIntegral x) (fromIntegral (y + dy)) 1
+              fgBorder bgPanel "│" 0
+    Term.padC (fromIntegral (x + w - 1)) (fromIntegral (y + dy)) 1
+              fgBorder bgPanel "│" 0
+
+-- | Draw a text row inside the frame (between the two side bars).
+drawLine :: Int -> Int -> Int -> Text -> Word32 -> Word32 -> IO ()
+drawLine x y innerW t fg bg = do
+  let padded = " " <> padR (innerW - 1) t
+  Term.padC (fromIntegral (x + 1)) (fromIntegral y) (fromIntegral innerW)
+            fg bg padded 0
+
+-- Hardcoded palette indices for the popup. White/grey on a dark panel so
+-- it reads cleanly over any theme without ever using white-on-blue.
+fgBorder, bgPanel, fgPrompt, fgHdr, fgRow, fgSel, bgSel, fgMatch :: Word32
+bgPanel  = 236  -- dark grey panel background
+fgBorder = 244  -- medium grey border
+fgPrompt = 15   -- bright white prompt
+fgHdr    = 244  -- dim header
+fgRow    = 7    -- light grey rows
+bgSel    = 240  -- slightly lighter panel for selected row
+fgSel    = 15   -- bright white selected fg
+fgMatch  = 11   -- bright yellow match-position highlight
 
 -- | Right-pad a Text to exactly @n@ characters; truncate if longer.
 padR :: Int -> Text -> Text
@@ -298,28 +336,32 @@ adjustPositions raw poses = case T.findIndex (== '\t') raw of
     let cut = tabIdx + 1
     in [ p - cut | p <- poses, p >= cut ]
 
--- | Draw one row with match-position highlighting. The row is always
--- exactly @width@ cells wide so the background colour fills edge-to-edge.
+-- | Draw one item row inside the popup frame. Writes into the inner
+-- region starting at column (x + 1) so it lives between the border bars.
 drawItem
   :: Int -> Int -> Int
   -> Text     -- ^ marker (two chars)
   -> Text     -- ^ shown text
   -> [Int]    -- ^ match positions in shown text
-  -> Word32 -> Word32   -- ^ row fg/bg (unselected/selected)
-  -> Word32 -> Word32   -- ^ hit fg/bg
+  -> Word32 -> Word32   -- ^ row fg/bg
+  -> Word32 -> Word32   -- ^ match-hit fg/bg
   -> IO ()
-drawItem x y width marker shown poses fgRow bgRow fgHit bgHit = do
-  let hits     = IS.fromList poses
-      markLen  = T.length marker
-      bodyMax  = width - markLen
-      shownT   = padR bodyMax shown
-  Term.padC (fromIntegral x) (fromIntegral y) (fromIntegral markLen)
-            fgRow bgRow marker 0
-  -- Emit per character: cheap for our row widths (≤120).
+drawItem xBox y innerW marker shown poses fgRow' bgRow' fgHit bgHit = do
+  let hits    = IS.fromList poses
+      markLen = T.length marker
+      bodyMax = innerW - markLen - 1  -- 1 cell right-margin inside border
+      shownT  = padR bodyMax shown
+      xInner  = xBox + 1
+  -- left gutter (before marker)
+  Term.padC (fromIntegral xInner) (fromIntegral y) 1 fgRow' bgRow' " " 0
+  -- marker
+  Term.padC (fromIntegral (xInner + 1)) (fromIntegral y) (fromIntegral markLen)
+            fgRow' bgRow' marker 0
+  -- body char-by-char (cheap: row width ≤ ~100)
   forM_ [0 .. bodyMax - 1] $ \i -> do
-    let c       = if i < T.length shown then T.index shownT i else ' '
-        isHit   = IS.member i hits && i < T.length shown
-        fg      = if isHit then fgHit else fgRow
-        bg      = if isHit then bgHit else bgRow
-    Term.padC (fromIntegral (x + markLen + i)) (fromIntegral y) 1
+    let c     = if i < T.length shown then T.index shownT i else ' '
+        isHit = IS.member i hits && i < T.length shown
+        fg    = if isHit then fgHit else fgRow'
+        bg    = if isHit then bgHit else bgRow'
+    Term.padC (fromIntegral (xInner + 1 + markLen + i)) (fromIntegral y) 1
               fg bg (T.singleton c) 0
