@@ -13,27 +13,57 @@ concurrency:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    # Build inside AlmaLinux 8 (= RHEL 8 ABI, glibc 2.28, libstdc++
+    # from GCC 8) so dynamic-link refs stay compatible with RHEL 8.
+    # glibc/libstdc++ are forward-compatible: one binary runs on RHEL 8,
+    # Ubuntu 20.04+, Debian 11+, Arch — anywhere with glibc >= 2.28.
+    # Node20 (used by the GA action steps) requires glibc >= 2.28, which
+    # matches exactly — any older base image would break the actions.
+    container:
+      image: almalinux:8
+
     steps:
+      - name: System packages
+        run: |
+          dnf -y install dnf-plugins-core epel-release
+          dnf config-manager --set-enabled powertools
+          dnf -y install \
+            gcc gcc-c++ make unzip git-core which curl-minimal tar xz \
+            gmp-devel zlib-devel ncurses-devel ncurses-compat-libs \
+            libffi-devel perl-interpreter \
+            fzf findutils
+          # gh CLI — Makefile uses `gh release download` for DuckDB zips.
+          dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+          dnf -y install gh
+
       - uses: actions/checkout@v4
 
-      - uses: haskell-actions/setup@v2
-        with:
-          ghc-version: '9.6.6'
-          cabal-version: '3.10'
+      # Install GHC + cabal via ghcup directly. haskell-actions/setup
+      # internally uses apt-get on Linux and fails on dnf-based distros.
+      # ghcup picks the deb10 GHC bindist (glibc 2.28) which matches.
+      - name: Install GHC and cabal
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org \
+            | BOOTSTRAP_HASKELL_NONINTERACTIVE=1 \
+              BOOTSTRAP_HASKELL_GHC_VERSION=9.6.6 \
+              BOOTSTRAP_HASKELL_CABAL_VERSION=3.10.3.0 \
+              BOOTSTRAP_HASKELL_INSTALL_NO_STACK=1 \
+              BOOTSTRAP_HASKELL_ADJUST_BASHRC=0 \
+              sh
+          echo "$HOME/.ghcup/bin" >> $GITHUB_PATH
 
-      # Cache cabal store + dist-newstyle. Key on cabal file hash so the
-      # cache invalidates only when deps change. dist-newstyle stays warm
-      # across runs because the cabal-hash matches even after edits to
-      # source files (cabal handles incremental rebuilds).
+      # Cache cabal store + dist-newstyle. Distro is part of the key so
+      # cache invalidates if the base image changes (linked artifacts
+      # aren't portable across glibc eras).
       - name: Cache cabal store
         uses: actions/cache@v4
         with:
           path: |
             ~/.local/state/cabal
             dist-newstyle
-          key: cabal-${{ runner.os }}-ghc9.6.6-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+          key: cabal-alma8-ghc9.6.6-${{ hashFiles('**/*.cabal', 'cabal.project') }}
           restore-keys: |
-            cabal-${{ runner.os }}-ghc9.6.6-
+            cabal-alma8-ghc9.6.6-
 
       # Extract pinned versions from the Makefile so a comment-only edit
       # to the Makefile doesn't invalidate either cache.
@@ -43,24 +73,17 @@ jobs:
           echo "prql=$(awk -F'?= ' '/^PRQL_REF/{print $2}' Makefile)" >> $GITHUB_OUTPUT
           echo "duckdb=$(awk -F'?= ' '/^DUCKDB_TAG/{print $2}' Makefile)" >> $GITHUB_OUTPUT
 
-      # Cache the prqlc Rust crate (cargo build is the slow part: ~40s).
       - name: Cache prqlc build
         uses: actions/cache@v4
         with:
           path: vendor/prql
-          key: prqlc-${{ runner.os }}-${{ steps.vers.outputs.prql }}
+          key: prqlc-alma8-${{ steps.vers.outputs.prql }}
 
-      # Cache the DuckDB static-libs zip + extracted .a files.
       - name: Cache DuckDB staticlibs
         uses: actions/cache@v4
         with:
           path: vendor/duckdb
-          key: duckdb-${{ runner.os }}-${{ steps.vers.outputs.duckdb }}
-
-      - name: System packages
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq fzf findutils unzip
+          key: duckdb-alma8-${{ steps.vers.outputs.duckdb }}
 
       - name: Install Rust toolchain
         run: |
@@ -82,16 +105,37 @@ jobs:
       - name: cabal test
         run: cabal test
 
-      # Smoke test: confirm the binary is statically linked and runs.
-      - name: Verify static link
+      # Confirm the binary is statically linked against prqlc/duckdb and
+      # its dynamic glibc/libstdc++ refs stay within the RHEL 8 ABI.
+      - name: Verify RHEL 8 compatibility
         run: |
           BIN=$(cabal -v0 list-bin tv)
           ls -lh "$BIN"
+          echo "--- ldd ---"
+          ldd "$BIN"
           if ldd "$BIN" | grep -E 'libduckdb|libprqlc'; then
             echo "ERROR: tv has dynamic prqlc/duckdb dep; expected static"
             exit 1
           fi
-          echo "Static link verified"
+          # All GLIBC_ refs must be <= 2.28.
+          BAD=$(objdump -T "$BIN" \
+            | grep -oE 'GLIBC_[0-9.]+' | sort -V -u \
+            | awk -F_ '{ split($2,v,"."); if (v[1]+0>2 || (v[1]+0==2 && v[2]+0>28)) print }')
+          if [ -n "$BAD" ]; then
+            echo "ERROR: binary requires glibc symbols newer than 2.28 (RHEL 8):"
+            echo "$BAD"
+            exit 1
+          fi
+          # All GLIBCXX_ refs must be <= 3.4.25 (GCC 8.5, RHEL 8 stock).
+          BAD_CXX=$(objdump -T "$BIN" \
+            | grep -oE 'GLIBCXX_[0-9.]+' | sort -V -u \
+            | awk -F_ '{ split($2,v,"."); if (v[1]+0>3 || (v[1]+0==3 && v[2]+0>4) || (v[1]+0==3 && v[2]+0==4 && v[3]+0>25)) print }')
+          if [ -n "$BAD_CXX" ]; then
+            echo "ERROR: binary requires libstdc++ symbols newer than 3.4.25 (RHEL 8):"
+            echo "$BAD_CXX"
+            exit 1
+          fi
+          echo "RHEL 8 ABI check passed (glibc <= 2.28, GLIBCXX <= 3.4.25)"
 
       - name: Upload tv binary
         uses: actions/upload-artifact@v4
