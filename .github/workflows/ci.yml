@@ -31,6 +31,8 @@ jobs:
             gcc gcc-c++ make unzip git-core which curl tar xz \
             gmp-devel zlib-devel ncurses-devel ncurses-compat-libs \
             libffi-devel libatomic glibc-langpack-en \
+            pkgconf-pkg-config cairo-devel pango-devel \
+            openssl-devel \
             perl-interpreter fzf findutils
           # gcc-toolset-12 provides GCC 12 + libstdc++.a new enough for
           # DuckDB prebuilts (they reference std::__throw_bad_array_new_length
