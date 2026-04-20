@@ -297,22 +297,26 @@ renderChart dataPath pngPath kind xName yName hasCat _catName _xType title =
                   $ def
           in Right (toRenderable lay)
 
-    -- Read OHLC fixture; returns [(open, high, low, close)] in row order.
+    -- Read OHLC from the headered TSV tv exported (xName<TAB>open<TAB>high<TAB>low<TAB>close).
+    -- Falls back to comma-separated when a CSV fixture is fed (gen-plot-hs driver).
     readOhlc :: IO (Either Text [(Double, Double, Double, Double)])
     readOhlc = do
-      r <- try (TIO.readFile "data/finance/sample_ohlc.csv") :: IO (Either SomeException Text)
+      r <- try (TIO.readFile dataPath) :: IO (Either SomeException Text)
       pure $ case r of
         Left e -> Left $ "read OHLC failed: " <> T.pack (show e)
         Right txt ->
-          let rows = drop 1 $ T.lines txt
-              parse line = case T.splitOn "," line of
+          let sep    = if T.elem '\t' txt then "\t" else ","
+              rows   = drop 1 $ T.lines txt
+              parse line = case T.splitOn sep line of
                 (_:o:h:l:c:_) -> (,,,) <$> readD o <*> readD h <*> readD l <*> readD c
                 _             -> Nothing
               parsed = mapMaybe parse rows
           in if null parsed then Left "no OHLC rows" else Right parsed
 
+    -- For non-candle finance plots tv exports a 2-col TSV (xName, yName);
+    -- read the y column.
     readClose :: IO (Either Text [Double])
-    readClose = fmap (fmap (map (\(_, _, _, c) -> c))) readOhlc
+    readClose = fmap (fmap snd) (readXY dataPath)
 
 -- | Read a 2-column (x, y) TSV with header. Drops malformed rows.
 readXY :: FilePath -> IO (Either Text ([Double], [Double]))

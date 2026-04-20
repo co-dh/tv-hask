@@ -8,7 +8,7 @@
   Literal port of Tc/Tc/Plot.lean.
 
   Test hooks (env vars, all optional):
-    TV_PLOT_RENDERER  "r" (default) → ggplot2; "chart" → Tv.Plot.Chart (cairo)
+    TV_PLOT_RENDERER  "chart" (default) → Tv.Plot.Chart (cairo); "r" → ggplot2 subprocess
     TV_PLOT_OUT       file path → also copy the rendered PNG here
                                   (for non-interactive visual-regression harness)
 -}
@@ -438,9 +438,9 @@ renderDispatch
 renderDispatch dataPath pngPath kind xName yName hasCat catName xType title script = do
   rend <- lookupEnv "TV_PLOT_RENDERER"
   result <- case rend of
-    Just "chart" ->
+    Just "r" -> renderR script
+    _        ->
       Chart.renderChart dataPath pngPath kind xName yName hasCat catName xType title
-    _            -> renderR script
   -- Copy to TV_PLOT_OUT regardless of renderer choice; only on success
   -- (otherwise the user-visible error message is more useful than a stale PNG).
   case result of
