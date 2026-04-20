@@ -24,6 +24,7 @@ import qualified Tv.Nav as Nav
 import qualified Tv.View as View
 import qualified Tv.Term as Term
 import qualified Tv.Fzf as Fzf
+import qualified Tv.Fzf.Match as Match
 import Tv.Types (Cmd(..), ColType(..), ViewKind(..))
 
 data MockTable = MockTable
@@ -212,25 +213,16 @@ propertyTests = testGroup "properties"
   , testProperty "dispOrder indices round-trip idxOf"  propDispOrderIdx
   ]
 
--- Regression: pressing `/` without tmux used to paint the preview on
--- top of fzf's inline UI, making the screen unreadable. The fix
--- gates 'Tv.Fzf.gatePoll' on tmux — outside tmux, the poll callback
--- must never run.
-test_gatePoll_nontmux_mutes :: IO ()
-test_gatePoll_nontmux_mutes = do
+-- With the in-process picker we own the terminal explicitly, so the old
+-- "mute poll outside tmux" hack isn't needed anymore. 'gatePoll' is kept
+-- as a no-op wrapper (API preserved for callers) that runs poll in both
+-- modes. These tests pin down that contract.
+test_gatePoll_runs :: IO ()
+test_gatePoll_runs = do
   count <- newIORef (0 :: Int)
   let bumpPoll = modifyIORef' count (+ 1)
   Fzf.gatePoll False bumpPoll
-  Fzf.gatePoll False bumpPoll
-  n <- readIORef count
-  n @?= 0
-
-test_gatePoll_tmux_runs :: IO ()
-test_gatePoll_tmux_runs = do
-  count <- newIORef (0 :: Int)
-  let bumpPoll = modifyIORef' count (+ 1)
-  Fzf.gatePoll True bumpPoll
-  Fzf.gatePoll True bumpPoll
+  Fzf.gatePoll True  bumpPoll
   n <- readIORef count
   n @?= 2
 
@@ -250,10 +242,48 @@ test_cmdMode_testmode_skips_fzf = do
 
 fzfTests :: TestTree
 fzfTests = testGroup "Fzf"
-  [ testCase "gatePoll non-tmux mutes poll" test_gatePoll_nontmux_mutes
-  , testCase "gatePoll tmux preserves poll" test_gatePoll_tmux_runs
-  , testCase "cmdMode testMode skips fzf"   test_cmdMode_testmode_skips_fzf
+  [ testCase "gatePoll runs poll in both modes" test_gatePoll_runs
+  , testCase "cmdMode testMode skips picker"    test_cmdMode_testmode_skips_fzf
   ]
+
+-- Fuzzy match correctness. The picker ranks by score; the assertions below
+-- are on which candidates match at all and which positions get highlighted —
+-- those are stable across tweaks to the bonus weights.
+matchTests :: TestTree
+matchTests = testGroup "Fzf.Match"
+  [ testCase "empty query matches everything" $
+      Match.match "" "anything" @?= Just (0, [])
+  , testCase "subsequence match, separator-skipped" $
+      (snd <$> Match.match "abc" "a-b-c") @?= Just [0, 2, 4]
+  , testCase "case-insensitive match returns target positions" $
+      (snd <$> Match.match "ABC" "abc") @?= Just [0, 1, 2]
+  , testCase "camelCase boundary picked" $
+      (snd <$> Match.match "fB" "fooBar") @?= Just [0, 3]
+  , testCase "no match returns Nothing" $
+      Match.match "xyz" "abc" @?= Nothing
+  , testCase "start-of-word ranks higher than mid-word" $ do
+      let s1 = Match.score "a" "alpha"      -- 'a' at word start
+          s2 = Match.score "a" "zza"        -- 'a' mid-string
+      assertFailureIf (s1 <= s2) ("word-start should outrank mid, got " ++ show (s1, s2))
+  , testCase "consecutive match ranks higher than split match" $ do
+      -- Both candidates have the query chars at the same word-start so the
+      -- only difference is whether the 2nd char is adjacent to the 1st.
+      let s1 = Match.score "ab" "_ab"       -- 'a','b' consecutive
+          s2 = Match.score "ab" "_a_b"      -- 'a','b' separated
+      assertFailureIf (s1 <= s2) ("consecutive should outrank split, got " ++ show (s1, s2))
+  , testProperty "match positions strictly increasing and in bounds" $
+      forAll (choose (0 :: Int, 4)) $ \qn ->
+      forAll (choose (qn, 20 :: Int)) $ \tn ->
+        let q = T.take qn (T.replicate qn "a")
+            t = T.take tn (T.replicate tn "a")
+        in case Match.match q t of
+             Just (_, poses) -> strictlyIncreasing poses && all (\p -> p >= 0 && p < tn) poses
+             Nothing         -> True
+  ]
+  where
+    assertFailureIf False _ = pure ()
+    assertFailureIf True msg = assertFailure msg
+    strictlyIncreasing xs = and (zipWith (<) xs (drop 1 xs))
 
 tests :: TestTree
 tests = testGroup "TestPure"
@@ -261,4 +291,5 @@ tests = testGroup "TestPure"
   , resizeTests
   , propertyTests
   , fzfTests
+  , matchTests
   ]

@@ -1,159 +1,104 @@
 {-
-  Fzf: helpers for running fzf picker
-  Suspends terminal, spawns fzf, returns selection
-  In testMode, returns first value without spawning fzf
+  Fuzzy picker — in-process replacement for the fzf CLI.
 
-  Literal port of Tc/Tc/Fzf.lean.
+  Exposes the same API shape callers used before (@fzfCore@, @fzf@,
+  @fzfIdx@, @cmdMode@, @parseSel@, @gatePoll@, @flatItems@) but runs the
+  picker inside the Haskell process via 'Tv.Fzf.Picker'. 'fzfCoreLive' is
+  a strict superset that adds an @onFocus@ callback, so live previews
+  (filter search, theme preview) no longer need the socat+script shim
+  that tunnelled fzf's @--bind=focus:execute-silent@ back through the tv
+  socket.
+
+  In testMode each call returns a deterministic pick without touching the
+  tty — same contract the old @fzfCore tm=True@ branch provided.
 -}
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Fzf
   ( fzfCore
+  , fzfCoreLive
   , fzf
   , fzfIdx
   , parseSel
   , cmdMode
   , gatePoll
+  , flatItems
   ) where
 
-import Control.Concurrent (forkIO, threadDelay)
-import Control.Monad (unless)
-import Data.IORef (newIORef, readIORef, writeIORef)
-import Data.List (foldl')
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
 import Data.Vector (Vector)
 import qualified Data.Vector as V
-import System.Environment (lookupEnv)
-import System.IO (hClose, hFlush)
-import System.Process
-  ( CreateProcess(..), StdStream(..), proc
-  , createProcess, waitForProcess
-  )
+import qualified System.Environment as Env
 import Text.Read (readMaybe)
 
 import Tv.CmdConfig (CmdCache)
 import qualified Tv.CmdConfig as CmdConfig
+import qualified Tv.Fzf.Picker as Picker
 import Tv.Types (ViewKind, toString, headD)
 import qualified Tv.Term as Term
 
--- | Build fzf argv: popup geometry fitted to content, prepended to caller opts.
--- inTmux picks between --tmux=bottom popup and inline --height; width floors 50
--- (typing room), caps 120; height caps 15. visLines strips the hidden index field
--- when --with-nth=2 is set so measurement matches what fzf actually renders.
--- Width also accounts for --header=/--prompt= strings — the filter prompt (\)
--- uses a 70-char header that got truncated when all input rows were short.
-popupArgs :: Bool -> Vector Text -> Text -> Vector Text
-popupArgs inTmux opts input =
-  let lines_ = filter (not . T.null) (T.splitOn "\n" input)
-      popupH = min (length lines_ + 2) 15
-      visLines = if V.any (T.isPrefixOf "--with-nth=2") opts
-        then map (\l -> case T.splitOn "\t" l of
-                          _ : rest -> T.intercalate "\t" rest
-                          _        -> l) lines_
-        else lines_
-      rowsW = foldl' (\m l -> max m (T.length l)) 0 visLines
-      optFieldW pfx = V.foldl'
-        (\m o -> case T.stripPrefix pfx o of
-                   Just v  -> max m (T.length v)
-                   Nothing -> m) 0 opts
-      hdrW    = optFieldW "--header="
-      promptW = optFieldW "--prompt="
-      maxW    = maximum [rowsW, hdrW, promptW]
-      popupW  = min (max (maxW + 4) 50) 120
-      baseArgs = if inTmux
-        then V.fromList
-               [ T.pack ("--tmux=bottom," ++ show popupW ++ "," ++ show popupH)
-               , "--layout=reverse", "--exact", "+i" ]
-        else V.fromList
-               [ T.pack ("--height=" ++ show (popupH + 1))
-               , "--layout=reverse", "--exact", "+i" ]
-  in baseArgs V.++ opts
+-- | Extract @--prompt=X@ / @--header=X@ / @--print-query@ /
+-- @--with-nth=2..@ flags from the caller's opts vector. Unknown flags
+-- are ignored (fzf had many; we only implemented what tv used).
+parseOpts :: Vector Text -> Picker.PickerOpts
+parseOpts argv =
+  let get pfx = firstMatch pfx
+      hasFlag f = V.any (== f) argv
+  in Picker.defaultOpts
+       { Picker.prompt     = maybe "> " id (get "--prompt=")
+       , Picker.header     = maybe ""   id (get "--header=")
+       , Picker.printQuery = hasFlag "--print-query"
+       , Picker.withNth    = V.any (T.isPrefixOf "--with-nth=") argv
+       }
+  where
+    firstMatch :: Text -> Maybe Text
+    firstMatch pfx = V.foldr
+      (\arg acc -> case T.stripPrefix pfx arg of
+                     Just v  -> Just v
+                     Nothing -> acc) Nothing argv
 
--- | Spawn fzf with argv, pipe input to stdin, poll while it runs, return stdout.
--- Background-reads stdout to avoid pipe stall, runs `poll` every 30 ms so the
--- caller can service its socket/re-render while the popup has focus.
-runFzf :: [String] -> Text -> IO () -> IO Text
-runFzf argList input poll = do
-  -- Pipe stderr too so any fzf warnings/errors don't leak onto the
-  -- shared tty and corrupt the display. In non-tmux mode fzf renders
-  -- inline on the same terminal we write to; a single stray stderr
-  -- line is enough to mangle the highlight region.
-  (Just hin, Just hout, Just herr, ph) <- createProcess
-    (proc "fzf" argList)
-      { std_in = CreatePipe, std_out = CreatePipe, std_err = CreatePipe }
-  TIO.hPutStr hin input
-  hFlush hin
-  hClose hin
-  done <- newIORef False
-  outRef <- newIORef (T.empty :: Text)
-  _ <- forkIO $ do
-    out <- TIO.hGetContents hout
-    writeIORef outRef out
-    writeIORef done True
-  -- Drain stderr in the background so the pipe doesn't fill up and
-  -- block fzf. We don't surface errors; they're dropped on the floor,
-  -- same as the pre-pipe behavior of inheriting stderr and letting the
-  -- user see them — minus the display corruption.
-  _ <- forkIO $ do
-    _ <- TIO.hGetContents herr
-    pure ()
-  let loop = do
-        d <- readIORef done
-        unless d $ do
-          poll
-          threadDelay 30000  -- 30 ms
-          loop
-  loop
-  out <- readIORef outRef
-  _ <- waitForProcess ph
-  pure out
-
--- | Suppress a live-preview poll outside of tmux. When fzf runs in
--- tmux we get a popup pane, so callers can safely re-render the main
--- terminal from their @poll@ callback. Without tmux, fzf takes over
--- the same tty with @--height=N@ inline; any 'Term.present' issued by
--- the callback would interleave with fzf's own redraws and scramble
--- the display. See @/bugfix@ — pressing @/@ without tmux produced a
--- junk screen because the @search.preview@ socket message triggered a
--- re-render on top of fzf.
-gatePoll :: Bool -> IO () -> IO ()
-gatePoll inTmux poll = if inTmux then poll else pure ()
-
--- | Core fzf: testMode returns first line, else spawn fzf
--- Uses --tmux popup if in tmux (keeps table visible), otherwise compact at bottom
--- poll: optional callback invoked in loop while fzf runs. Automatically
--- muted outside tmux to avoid painting over fzf's inline UI.
+-- | Core picker. Splits @input@ on newlines into items; returns the raw
+-- selected line (with tab-prefix preserved) or empty on cancel.
+-- @poll@ is invoked while waiting for keys.
 fzfCore :: Bool -> Vector Text -> Text -> IO () -> IO Text
-fzfCore tm opts input poll = do
+fzfCore tm opts input pollCB = fzfCoreLive tm opts input pollCB (\_ _ -> pure ())
+
+-- | Live-preview variant. @onFocus@ is called each time the highlighted
+-- row changes, with (item index in the input, raw line).
+fzfCoreLive
+  :: Bool -> Vector Text -> Text -> IO () -> (Int -> Text -> IO ()) -> IO Text
+fzfCoreLive tm opts input pollCB onFocus_ = do
+  let allLines = filter (not . T.null) (T.splitOn "\n" input)
   if tm
-    then pure (headD "" (filter (not . T.null) (T.splitOn "\n" input)))
+    then pure (headD "" allLines)
     else do
-      inTmux <- fmap (maybe False (const True)) $ lookupEnv "TMUX"
-      let argList = map T.unpack (V.toList (popupArgs inTmux opts input))
-      unless inTmux Term.shutdown
-      out <- runFzf argList input (gatePoll inTmux poll)
-      -- Clear after re-init: fzf inline renders below termbox area, leaving residue
-      unless inTmux $ do
-        _ <- Term.init
-        Term.clear
-        Term.present
+      let po = (parseOpts opts)
+            { Picker.items   = V.fromList allLines
+            , Picker.poll    = pollCB
+            , Picker.onFocus = onFocus_
+            }
+      Term.shutdown
+      out <- Picker.runPicker po
+      _ <- Term.init
+      Term.clear
+      Term.present
       pure (T.strip out)
 
--- | Single select: returns none if empty/cancelled
+-- | Single-select wrapper: returns 'Nothing' on cancel / empty result.
 fzf :: Bool -> Vector Text -> Text -> IO (Maybe Text)
 fzf tm opts input = do
   out <- fzfCore tm opts input (pure ())
   pure (if T.null out then Nothing else Just out)
 
--- | Index select: testMode returns 0
+-- | Index select: items are shown as-is, but selection returns the 0-based
+-- index into @items@ (or 'Nothing' on cancel).
 fzfIdx :: Bool -> Vector Text -> Vector Text -> IO (Maybe Int)
-fzfIdx tm opts items = do
+fzfIdx tm opts items_ =
   if tm
-    then pure (if V.null items then Nothing else Just 0)
+    then pure (if V.null items_ then Nothing else Just 0)
     else do
-      let numbered = V.imap (\i s -> T.pack (show i) <> "\t" <> s) items
-          input = T.intercalate "\n" (V.toList numbered)
+      let numbered = V.imap (\i s -> T.pack (show i) <> "\t" <> s) items_
+          input    = T.intercalate "\n" (V.toList numbered)
       out <- fzfCore tm (V.fromList ["--with-nth=2.."] V.++ opts) input (pure ())
       if T.null out
         then pure Nothing
@@ -161,21 +106,27 @@ fzfIdx tm opts items = do
           []    -> pure Nothing
           (h:_) -> pure (readMaybe (T.unpack h))
 
--- | Build aligned menu items: "handler | ctx | key | label" with padding
+-- | Preserve old API name: the picker is always safe to poll during, so
+-- the "mute when not in tmux" gating is no longer necessary. Keep the
+-- function for callers and the regression test.
+gatePoll :: Bool -> IO () -> IO ()
+gatePoll _ pollCB = pollCB
+
+-- | Build aligned menu items: @"handler | ctx | key | label"@ with padding.
 flatItems :: CmdCache -> ViewKind -> Vector Text
 flatItems cc vk =
-  let items = CmdConfig.menuItems cc (toString vk)
+  let items_ = CmdConfig.menuItems cc (toString vk)
       (maxH, maxX, maxK) = V.foldl
         (\(mh, mx, mk) (h, x, k, _) ->
            (max mh (T.length h), max mx (T.length x), max mk (T.length k)))
-        (0, 0, 0) items
+        (0, 0, 0) items_
   in V.map (\(handler, ctx_, key_, label_) ->
     let hp = handler <> T.replicate (maxH - T.length handler) " "
         xp = ctx_   <> T.replicate (maxX - T.length ctx_) " "
         kp = key_   <> T.replicate (maxK - T.length key_) " "
-    in hp <> " | " <> xp <> " | " <> kp <> " | " <> label_) items
+    in hp <> " | " <> xp <> " | " <> kp <> " | " <> label_) items_
 
--- | Parse flat selection: extract handler name before first |
+-- | Parse flat selection: extract handler name before first @|@.
 --
 -- >>> parseSel "plot.area    | cg |   | Plot: area chart"
 -- Just "plot.area"
@@ -188,27 +139,26 @@ parseSel sel =
   let h = T.stripEnd (headD "" (T.splitOn " | " sel))
   in if T.null h then Nothing else Just h
 
--- | Command mode: space -> flat fzf menu -> return handler name.
--- tm forwards the app's testMode to fzfCore. Hardcoding False here made
--- every `-c " "` test spawn real fzf, which grabs /dev/tty and blocks
--- the user's terminal during `cabal test`.
---
--- Test hook: in test mode, if TV_CMD is set the env-var value is returned
--- verbatim as the handler name (bypasses the first-item rule). This lets
--- the plot e2e harness pick a specific plot kind without rebinding keys.
+-- | Command mode: space → flat menu → return handler name. In testMode,
+-- @TV_CMD@ (if set) overrides to a specific handler so plot e2e can drive
+-- commands without rebinding keys.
 cmdMode :: Bool -> CmdCache -> ViewKind -> IO () -> IO (Maybe Text)
-cmdMode tm cc vk poll = do
-  override <- if tm then lookupEnv "TV_CMD" else pure Nothing
+cmdMode tm cc vk pollCB = do
+  override <- if tm then lookupTvCmd else pure Nothing
   case override of
-    Just s | not (null s) -> pure (Just (T.pack s))
+    Just s | not (T.null s) -> pure (Just s)
     _ -> do
-      let items = flatItems cc vk
-      if V.null items
+      let items_ = flatItems cc vk
+      if V.null items_
         then pure Nothing
         else do
-          let input = T.intercalate "\n" (V.toList items)
+          let input = T.intercalate "\n" (V.toList items_)
               opts  = V.fromList ["--prompt=cmd "]
-          out <- fzfCore tm opts input poll
-          if T.null out
-            then pure Nothing
-            else pure $ parseSel out
+          out <- fzfCore tm opts input pollCB
+          if T.null out then pure Nothing else pure (parseSel out)
+  where
+    lookupTvCmd = do
+      m <- Env.lookupEnv "TV_CMD"
+      pure $ case m of
+        Just s | not (null s) -> Just (T.pack s)
+        _                     -> Nothing

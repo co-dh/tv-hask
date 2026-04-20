@@ -53,7 +53,7 @@ Charts are rendered with R/ggplot2 and displayed in the terminal.
 Press Space to open a fuzzy-search command menu. Type to filter,
 Enter to run. This is how you access most features.
 
-![fzf](doc/fzf.gif)
+![cmd palette](doc/fzf.gif)
 
 ### Column metadata
 
@@ -171,7 +171,7 @@ section for the full list):
 
 ```bash
 # Arch
-sudo pacman -S r fzf findutils rustup unzip github-cli
+sudo pacman -S r findutils rustup unzip github-cli
 rustup default stable
 # Debian/Ubuntu: install rustc/cargo via rustup; gh from cli.github.com.
 ```
@@ -295,11 +295,11 @@ tv -s mysession                    # Restore saved session
 
 | Key | Action |
 |-----|--------|
-| `/` | Search (fzf) |
+| `/` | Search (fuzzy picker with live row preview) |
 | `n` | Next match |
 | `N` | Previous match |
 | `\` | Filter expression (PRQL) |
-| `g` | Jump to column by name (fzf) |
+| `g` | Jump to column by name |
 | `Space` | Command palette (all commands with fuzzy search) |
 
 ### Meta View (M)
@@ -383,15 +383,9 @@ Install R with ggplot2: `Rscript -e 'install.packages("ggplot2")'`
 
 ## Dependencies
 
-Required:
-
-| Tool  | Purpose                                    |
-|-------|--------------------------------------------|
-| `fzf` | Fuzzy search, column jump, command palette |
-
 DuckDB and PRQL → SQL compilation are statically linked into the `tv`
 binary at build time via FFI; no runtime dependency on `libduckdb.so`
-or the `prqlc` CLI.
+or the `prqlc` CLI. Fuzzy picking runs in-process — no `fzf` needed.
 
 Build-time only:
 
@@ -412,8 +406,6 @@ Optional (feature-specific):
 | `trash-put` | Move files to trash (folder view)                  | `gio trash`      |
 | `gio`       | Move files to trash (GNOME)                        | none             |
 | `osqueryi`  | Osquery table browsing & queries                   | osquery disabled |
-| `tmux`      | fzf popup mode (`--tmux`)                          | fullscreen fzf   |
-| `socat`     | Socket preview in command palette                  | preview disabled |
 
 Kitty graphics protocol display (kitty / WezTerm / ghostty) is built-in;
 no `kitten` external dep needed. Detection is automatic via env vars
@@ -450,12 +442,10 @@ The socket is per-process and cleaned up on exit.
 
 The demo GIFs in `doc/` are recorded via `doc/gen_demo.py` using asciinema
 `.cast` files converted to GIF with
-[agg](https://github.com/asciinema/agg). Features that need fzf for
-free-text input (split, derive, filter) send commands via the socket
-channel instead, because fzf's `--print-query` text return doesn't work in
-pty recordings. Features that only need fzf for selection (folder search,
-command menu) work fine — fzf display and index selection work in pty,
-only typed-text return is broken.
+[agg](https://github.com/asciinema/agg). Features that need free-text
+input (split, derive, filter) send commands via the socket channel
+instead of typing into the picker, because pty recording tends to lose
+characters at the picker's startup.
 
 ## Architecture
 

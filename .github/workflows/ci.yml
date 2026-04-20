@@ -60,7 +60,7 @@ jobs:
       - name: System packages
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq fzf findutils unzip
+          sudo apt-get install -y -qq findutils unzip
 
       - name: Install Rust toolchain
         run: |

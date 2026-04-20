@@ -50,6 +50,8 @@ library
     Tv.Ftp
     Tv.Ftp.Client
     Tv.Fzf
+    Tv.Fzf.Match
+    Tv.Fzf.Picker
     Tv.Key
     Tv.Kitty
     Tv.Meta
