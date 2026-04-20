@@ -206,6 +206,22 @@ Run tests (169 tasty + 97 doctest):
 cabal test
 ```
 
+### Plot rendering
+
+By default plots are rendered with R/ggplot2 (the existing default).
+Two opt-in env vars switch the renderer or capture the rendered PNG:
+
+| Env var            | Value                | Effect                                                           |
+|--------------------|----------------------|------------------------------------------------------------------|
+| `TV_PLOT_RENDERER` | `r` (default)        | R/ggplot2 via `Rscript` subprocess                               |
+| `TV_PLOT_RENDERER` | `chart`              | Native Haskell renderer via `Tv.Plot.Chart` (Chart-cairo)        |
+| `TV_PLOT_OUT`      | `/path/to/file.png`  | Copy the rendered PNG to this path (in addition to terminal display) |
+
+`TV_PLOT_OUT` makes the binary writable from non-interactive harnesses
+(see `scripts/gen_plot_e2e.sh` and `test/TestPlotE2E.hs`). Both env vars
+are read in `Tv.Plot.run`; default behaviour is unchanged when neither
+is set.
+
 ## Run
 
 ```bash
@@ -388,17 +404,21 @@ Build-time only:
 
 Optional (feature-specific):
 
-| Tool        | Feature                                | Fallback         |
-|-------------|----------------------------------------|------------------|
-| `Rscript`   | ggplot2 plot rendering                 | plot disabled    |
-| `kitten`    | Kitty graphics protocol display        | `viu`            |
-| `viu`       | Display plot PNG in terminal           | `xdg-open`       |
-| `xdg-open`  | Open plot PNG in GUI viewer            | none             |
-| `trash-put` | Move files to trash (folder view)      | `gio trash`      |
-| `gio`       | Move files to trash (GNOME)            | none             |
-| `osqueryi`  | Osquery table browsing & queries       | osquery disabled |
-| `tmux`      | fzf popup mode (`--tmux`)              | fullscreen fzf   |
-| `socat`     | Socket preview in command palette      | preview disabled |
+| Tool        | Feature                                            | Fallback         |
+|-------------|----------------------------------------------------|------------------|
+| `Rscript`   | ggplot2 plot rendering (default)                   | Chart-cairo      |
+| `viu`       | Display plot PNG in non-kitty terminals            | `xdg-open`       |
+| `xdg-open`  | Open plot PNG in GUI viewer                        | none             |
+| `trash-put` | Move files to trash (folder view)                  | `gio trash`      |
+| `gio`       | Move files to trash (GNOME)                        | none             |
+| `osqueryi`  | Osquery table browsing & queries                   | osquery disabled |
+| `tmux`      | fzf popup mode (`--tmux`)                          | fullscreen fzf   |
+| `socat`     | Socket preview in command palette                  | preview disabled |
+
+Kitty graphics protocol display (kitty / WezTerm / ghostty) is built-in;
+no `kitten` external dep needed. Detection is automatic via env vars
+(`KITTY_WINDOW_ID`, `WEZTERM_PANE`, `GHOSTTY_RESOURCES_DIR`); override
+with `TV_IMAGE_BACKEND=kitty` to force-enable.
 
 ## Socket Command Channel
 
