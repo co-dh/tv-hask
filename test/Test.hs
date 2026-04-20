@@ -1237,17 +1237,11 @@ test_hf_org_list = do
 s3AccessCache :: IORef (Maybe Bool)
 s3AccessCache = unsafePerformIO (newIORef Nothing)
 
+-- Native S3 client; check connectivity by curl-pinging the bucket URL
+-- with the same query the listing uses. Avoids aws-CLI dependency.
 hasS3Access :: IO Bool
-hasS3Access = cachedCheck s3AccessCache $ do
-  aws <- hasCmd "aws"
-  if not aws
-    then pure False
-    else do
-      (ec, _, _) <- readProcessWithExitCode "aws"
-        ["s3api", "list-objects-v2", "--bucket", "overturemaps-us-west-2",
-         "--delimiter", "/", "--max-keys", "1", "--no-sign-request",
-         "--output", "json"] ""
-      pure (ec == ExitSuccess)
+hasS3Access = cachedCurlCheck s3AccessCache
+  "https://overturemaps-us-west-2.s3.amazonaws.com/?list-type=2&max-keys=1"
 
 s3path :: FilePath
 s3path = "s3://overturemaps-us-west-2/release/"

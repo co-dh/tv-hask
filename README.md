@@ -124,6 +124,12 @@ Browse S3 buckets (`tv s3://bucket/ +n`), HuggingFace datasets
 (`tv hf://datasets/user/dataset`), and FTP servers (`tv ftp://ftp.nyse.com/`)
 the same way you browse local folders.
 
+S3 access is built in (no `aws` CLI needed). Use `+n` for anonymous
+access to public buckets. For private buckets, set `AWS_ACCESS_KEY_ID`
+and `AWS_SECRET_ACCESS_KEY` (and optionally `AWS_REGION`,
+`AWS_SESSION_TOKEN`) env vars — there is no support for
+`~/.aws/credentials` profiles, IAM roles, SSO, or EC2 instance metadata.
+
 ### Also
 
 - Column grouping with `!` (key columns pinned left, used as x-axis for plots)
@@ -388,7 +394,6 @@ Optional (feature-specific):
 | `kitten`    | Kitty graphics protocol display        | `viu`            |
 | `viu`       | Display plot PNG in terminal           | `xdg-open`       |
 | `xdg-open`  | Open plot PNG in GUI viewer            | none             |
-| `aws`       | S3 bucket browsing & download          | S3 disabled      |
 | `trash-put` | Move files to trash (folder view)      | `gio trash`      |
 | `gio`       | Move files to trash (GNOME)            | none             |
 | `osqueryi`  | Osquery table browsing & queries       | osquery disabled |
