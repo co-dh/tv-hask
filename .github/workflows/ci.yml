@@ -30,7 +30,7 @@ jobs:
           dnf -y install \
             gcc gcc-c++ make unzip git-core which curl tar xz \
             gmp-devel zlib-devel ncurses-devel ncurses-compat-libs \
-            libffi-devel libatomic \
+            libffi-devel libatomic glibc-langpack-en \
             perl-interpreter fzf findutils
           # gcc-toolset-12 provides GCC 12 + libstdc++.a new enough for
           # DuckDB prebuilts (they reference std::__throw_bad_array_new_length
@@ -185,6 +185,8 @@ jobs:
       - name: cabal test
         env:
           LIBRARY_PATH: ${{ github.workspace }}/vendor/duckdb:${{ github.workspace }}/vendor/lib
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
         run: cabal test
 
       # Confirm the binary is statically linked against prqlc/duckdb and
