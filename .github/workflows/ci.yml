@@ -30,8 +30,16 @@ jobs:
           dnf -y install \
             gcc gcc-c++ make unzip git-core which curl tar xz \
             gmp-devel zlib-devel ncurses-devel ncurses-compat-libs \
-            libffi-devel libstdc++-static libatomic \
+            libffi-devel libatomic \
             perl-interpreter fzf findutils
+          # gcc-toolset-12 provides GCC 12 + libstdc++.a new enough for
+          # DuckDB prebuilts (they reference std::__throw_bad_array_new_length
+          # which GCC 8's libstdc++ lacks). Override /usr/local/bin so
+          # cabal's gcc invocations pick GCC 12.
+          dnf -y install gcc-toolset-12 gcc-toolset-12-libstdc++-devel
+          ln -sf /opt/rh/gcc-toolset-12/root/usr/bin/gcc /usr/local/bin/gcc
+          ln -sf /opt/rh/gcc-toolset-12/root/usr/bin/g++ /usr/local/bin/g++
+          ln -sf /opt/rh/gcc-toolset-12/root/usr/bin/cc  /usr/local/bin/cc
           # gh CLI — Makefile uses `gh release download` for DuckDB zips.
           dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
           dnf -y install gh
