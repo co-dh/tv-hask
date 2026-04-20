@@ -198,22 +198,23 @@ buildSigned c now httpMethod host_ cPath cQuery payload =
         [dateStamp, ckRegion c, "s3", "aws4_request"]
       stringToSign = BS.intercalate "\n"
         ["AWS4-HMAC-SHA256", amzDate, scope, crHash]
-      kDate    = hmacBs ("AWS4" <> ckSecret c) dateStamp
-      kRegion  = hmacBs kDate (ckRegion c)
-      kService = hmacBs kRegion "s3"
-      kSigning = hmacBs kService "aws4_request"
+      kDate    = hmacRaw ("AWS4" <> ckSecret c) dateStamp
+      kRegion  = hmacRaw kDate (ckRegion c)
+      kService = hmacRaw kRegion "s3"
+      kSigning = hmacRaw kService "aws4_request"
       sig = B16.encode (hmacRaw kSigning stringToSign)
       authValue = BS.concat
         [ "AWS4-HMAC-SHA256 Credential=", ckAccess c, "/", scope
         , ", SignedHeaders=", signedHeaderNames
         , ", Signature=", sig
         ]
-  in [ ("Host", hostBs)
-     , ("x-amz-content-sha256", payloadHash)
-     , ("x-amz-date", amzDate)
-     , ("Authorization", authValue)
-     ]
-     ++ [ (mk k, v) | (k, v) <- tokenPair ]
+      -- Single source of truth for the request-header list: emit every
+      -- signed header (including x-amz-security-token) exactly once,
+      -- then append Authorization. Avoids duplicating the session
+      -- token and keeps casing consistent with the canonical-headers
+      -- block used to compute the signature.
+  in [ (mk k, v) | (k, v) <- signedPairs ]
+     ++ [ (mk "Authorization", authValue) ]
 
 -- ## Crypto helpers
 
@@ -222,9 +223,6 @@ hexSha256 b = B16.encode (BA.convert (H.hash b :: H.Digest H.SHA256))
 
 hmacRaw :: BS.ByteString -> BS.ByteString -> BS.ByteString
 hmacRaw k v = BA.convert (HMAC.hmac k v :: HMAC.HMAC H.SHA256)
-
-hmacBs :: BS.ByteString -> BS.ByteString -> BS.ByteString
-hmacBs = hmacRaw
 
 -- ## URL encoding helpers
 -- AWS SigV4 requires RFC 3986 unreserved chars unencoded; everything

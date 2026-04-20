@@ -70,7 +70,10 @@ s3List noSign path_ = do
           fromTmp tbl
 
 -- | Trailing '/' = directory (caller appended it for dir rows); otherwise
--- a file that needs local download before FileFormat can read it.
+-- a file that needs local download before FileFormat can read it. On
+-- download failure we surface the backend's stderr in a popup and
+-- return OpenNothing so the caller doesn't hand a missing/empty file
+-- to FileFormat.
 s3Open :: Bool -> Text -> IO OpenResult
 s3Open noSign path_
   | T.isSuffixOf "/" path_ = pure (OpenAsDir path_)
@@ -81,8 +84,12 @@ s3Open noSign path_
       createDirectoryIfMissing True tmpDir
       let (bucket, key) = splitS3 path_
           dest = tmpDir <> "/" <> T.unpack (Core.fromPath path_)
-      _ <- S3C.downloadS3 noSign bucket key dest
-      pure (OpenAsFile dest)
+      (ec, _, err) <- S3C.downloadS3 noSign bucket key dest
+      case ec of
+        ExitFailure _ -> do
+          Render.errorPopup ("S3 download failed: " <> T.strip err)
+          pure OpenNothing
+        ExitSuccess -> pure (OpenAsFile dest)
 
 s3 :: Source
 s3 = Source
