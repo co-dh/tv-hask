@@ -261,13 +261,6 @@ renderBase a0 = do
            sp <- Sparkline.compute (View.tbl (stk a0)) 20
            pure (a0 & #sparklines .~ sp)
          else pure a0
-  -- Invalidate the front buffer when the view identity changes (new
-  -- path or vkind) so cells the new view doesn't paint get erased.
-  -- Without this, a narrower view leaves the old view's trailing
-  -- columns / rows visible on screen.
-  let v0 = View.cur (stk a)
-      k  = View.path v0 <> "|" <> toString (View.vkind v0)
-  Term.checkViewChange k
   (vs', v') <- View.doRender (View.cur (stk a)) (vs a) (Theme.styles (theme a))
                  (heatMode a) (sparklines a)
   let a' = a & #stk .~ View.setCur (stk a) v' & #vs .~ vs'

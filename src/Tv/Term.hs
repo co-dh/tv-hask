@@ -482,10 +482,13 @@ stepCell
   -> IO PresentAcc
 stepCell buf front acc@(PresentAcc lastStyle lastCursor b) y x idx = do
   cell     <- VSM.read buf idx
-  prevCell <- VSM.read front idx
-  if cell == prevCell
-    then pure acc
-    else do
+  -- Previously we diffed against `front` and skipped unchanged cells,
+  -- but that left scroll/width-shrink residue: a terminal cell that
+  -- went from content → blank in back but matched the front-cached
+  -- blank from an earlier frame got no emit, so the old pixels stayed
+  -- on screen. Always emit every cell — a few KB extra per frame, cheap
+  -- both locally and over SSH, and kills every residue class at once.
+  do
       let Cell ch fg bg = cell
           style = (fg, bg)
           (b1, lastStyle') =
