@@ -40,6 +40,10 @@ jobs:
           ln -sf /opt/rh/gcc-toolset-12/root/usr/bin/gcc /usr/local/bin/gcc
           ln -sf /opt/rh/gcc-toolset-12/root/usr/bin/g++ /usr/local/bin/g++
           ln -sf /opt/rh/gcc-toolset-12/root/usr/bin/cc  /usr/local/bin/cc
+          # AlmaLinux 8's libatomic rpm ships only libatomic.so.1 (no
+          # linker-facing .so symlink). gcc-toolset-12's ld doesn't
+          # fall back the way system GCC 8 did, so add the symlink.
+          ln -sf libatomic.so.1 /usr/lib64/libatomic.so
           # gh CLI — Makefile uses `gh release download` for DuckDB zips.
           dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
           dnf -y install gh
