@@ -28,7 +28,7 @@ jobs:
           dnf -y install dnf-plugins-core epel-release
           dnf config-manager --set-enabled powertools
           dnf -y install \
-            gcc gcc-c++ make unzip git-core which curl-minimal tar xz \
+            gcc gcc-c++ make unzip git-core which curl tar xz \
             gmp-devel zlib-devel ncurses-devel ncurses-compat-libs \
             libffi-devel perl-interpreter \
             fzf findutils
