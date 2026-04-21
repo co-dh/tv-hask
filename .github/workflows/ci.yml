@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    # Version tags cut a GitHub Release with the built tv binary attached.
+    # Format: v0.1.0, v1.2.3-rc1, etc.
+    tags: ['v*']
   pull_request:
 
 # Cancel in-progress runs on the same branch when a new commit lands.
@@ -13,6 +16,10 @@ concurrency:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    # Writes to Releases when a version tag triggers the workflow.
+    # Read on branch/PR runs; not visible to PRs from forks either way.
+    permissions:
+      contents: write
     # Build inside AlmaLinux 8 (= RHEL 8 ABI, glibc 2.28, libstdc++
     # from GCC 8) so dynamic-link refs stay compatible with RHEL 8.
     # glibc/libstdc++ are forward-compatible: one binary runs on RHEL 8,
@@ -223,9 +230,25 @@ jobs:
           fi
           echo "RHEL 8 ABI check passed (glibc <= 2.28, GLIBCXX <= 3.4.25)"
 
-      - name: Upload tv binary
+      - name: Upload tv binary (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: tv-linux-amd64
           path: dist-newstyle/build/x86_64-linux/ghc-*/tv-hask-*/x/tv/build/tv/tv
           retention-days: 14
+
+      # Attach the built tv to a GitHub Release. Triggered by version
+      # tags only (see `on.push.tags`). Tag a release with:
+      #   git tag v0.1.0 && git push --tags
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BIN=$(cabal -v0 list-bin tv)
+          TAG=${GITHUB_REF#refs/tags/}
+          cp "$BIN" tv-linux-amd64
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            tv-linux-amd64

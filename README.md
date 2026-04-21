@@ -142,10 +142,21 @@ and `AWS_SECRET_ACCESS_KEY` (and optionally `AWS_REGION`,
 
 ## Install
 
-No binary releases yet for this Haskell port — build from source below.
-(The Lean [`Tc`](https://github.com/co-dh/Tc/releases) port, which this
-tree is cast-for-cast compatible with, has static binaries if you want
-to skip the toolchain.)
+Grab the latest prebuilt Linux binary from the
+[Releases page](https://github.com/co-dh/tv-hask/releases/latest):
+
+```bash
+curl -L https://github.com/co-dh/tv-hask/releases/latest/download/tv-linux-amd64 -o tv
+chmod +x tv
+./tv --help
+```
+
+The binary is built on AlmaLinux 8 (glibc 2.28) and runs on any Linux
+with glibc ≥ 2.28 — RHEL/Rocky/Alma 8+, Ubuntu 20.04+, Debian 11+,
+Arch, Fedora, etc. libstdc++/libgcc are statically bundled, so no C++
+runtime is needed on the target.
+
+To build from source instead, see below.
 
 ## Build from source
 
