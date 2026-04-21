@@ -99,9 +99,10 @@ runPicker opts = do
       st0     = PickerState { psQuery = initial opts, psCur = 0
                             , psMatch = ms0, psBox = box }
   drawFrame opts st0
-  case ms0 V.!? 0 of
-    Just (i, _, _) -> onFocus opts i (its V.! i)
-    Nothing        -> pure ()
+  -- fireFocus instead of inlining: it does the redraw-after-callback
+  -- dance so the initial popup stays visible if onFocus repaints the
+  -- underlying view.
+  fireFocus opts st0
   result <- loop opts st0
   -- Before handing control back, paint blank default-style cells into
   -- the popup's footprint and flush. That erases the popup on screen
@@ -202,10 +203,18 @@ setCur opts st i = do
   when (psCur st /= i') (fireFocus opts st')
   pure st'
 
+-- | Run the caller's onFocus callback then *redraw the popup*. The
+-- callback often re-renders the underlying view (live row-search moves
+-- the cursor and repaints the table; theme preview repaints with the
+-- previewed style) which clears the popup's cells. Without this redraw,
+-- pressing @/@ in a folder view makes the popup vanish on first focus
+-- event.
 fireFocus :: PickerOpts -> PickerState -> IO ()
-fireFocus opts st = case psMatch st V.!? psCur st of
-  Just (i, _, _) -> onFocus opts i (items opts V.! i)
-  Nothing        -> pure ()
+fireFocus opts st = do
+  case psMatch st V.!? psCur st of
+    Just (i, _, _) -> onFocus opts i (items opts V.! i)
+    Nothing        -> pure ()
+  drawFrame opts st
 
 selection :: PickerOpts -> PickerState -> Text
 selection opts st = case psMatch st V.!? psCur st of
