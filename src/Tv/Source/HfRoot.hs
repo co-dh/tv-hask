@@ -4,8 +4,8 @@
 -- if the cache is stale or missing. Selecting a row jumps to hf://datasets/<id>/.
 module Tv.Source.HfRoot where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 

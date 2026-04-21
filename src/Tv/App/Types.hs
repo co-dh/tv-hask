@@ -26,19 +26,16 @@ module Tv.App.Types
   , heatSet
   ) where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT, hoistMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word8)
 
-import Optics.Core (Lens', (%), (&), (.~), (^.), over, set)
+import Optics.Core (Lens')
 import Optics.TH (makeFieldLabelsNoPrefix)
 
-import Data.HashMap.Strict (HashMap)
 import Tv.CmdConfig (CmdInfo(..), CmdCache)
 import qualified Tv.Data.DuckDB.Table as AdbcTable
 import Tv.Data.DuckDB.Table (AdbcTable)

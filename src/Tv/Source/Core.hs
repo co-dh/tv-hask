@@ -9,15 +9,12 @@
 -}
 module Tv.Source.Core where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
-import Control.Monad (forM_, when)
 import qualified Data.ByteString.Lazy as LBS
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, modifyIORef')
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
+import Data.IORef (atomicModifyIORef')
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 import GHC.Clock (getMonotonicTime)
 import Network.HTTP.Client

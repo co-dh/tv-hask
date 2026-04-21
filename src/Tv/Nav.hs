@@ -16,13 +16,11 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Tv.Nav where
 
-import Data.Text (Text)
-import Data.Vector (Vector)
+import Tv.Prelude
 import qualified Data.Vector as V
-import Optics.Core (Lens', (%), (&), (.~), (^.), over)
+import Optics.Core (Lens')
 import Optics.TH (makeFieldLabelsNoPrefix)
 import Data.List (sortBy)
-import Data.Maybe (fromMaybe)
 import Data.Ord (comparing)
 import Tv.CmdConfig (Entry, mkEntry, navE)
 import Tv.Types (Cmd(..), ColType(..), toggle)

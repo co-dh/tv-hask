@@ -10,13 +10,11 @@
 -}
 module Tv.Data.DuckDB.Prql where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
-import Data.ByteString (ByteString)
 import Data.FileEmbed (embedFile)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Tv.Data.DuckDB.PrqlC as PrqlC
 import Tv.Types

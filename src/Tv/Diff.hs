@@ -9,16 +9,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Tv.Diff where
 
-import Control.Monad (forM_)
+import Tv.Prelude
 import Data.Either (partitionEithers)
 import Data.List (nub)
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-
-import Optics.Core ((&), (.~))
 
 import qualified Tv.Log as Log
 import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk, resetVS)

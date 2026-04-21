@@ -7,14 +7,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Tv.Ops where
 
-import Data.Maybe (fromMaybe, listToMaybe)
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Text.Read (readMaybe)
-
-import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)

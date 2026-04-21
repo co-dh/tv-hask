@@ -4,8 +4,8 @@
 -- org level, falls back to the `?author=` API for org-level dataset lists.
 module Tv.Source.HfDataset where
 
+import Tv.Prelude
 import qualified Data.ByteString.Lazy as LBS
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import System.Directory (createDirectoryIfMissing)

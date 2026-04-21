@@ -18,13 +18,11 @@ module Tv.FileFormat
   , openFile
   ) where
 
+import Tv.Prelude
 import Codec.Compression.GZip (decompress)
 import Control.Exception (SomeException, try)
 import qualified Data.ByteString.Lazy as LBS
-import Data.Maybe (isJust)
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.Directory (canonicalizePath)
 import System.IO (stdout)
@@ -38,7 +36,6 @@ import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Table as Table
-import Optics.Core ((&), (.~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | How DuckDB should handle a file extension

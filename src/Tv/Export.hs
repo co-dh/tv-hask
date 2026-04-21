@@ -8,7 +8,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Export where
 
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
 import qualified Data.Vector as V
 

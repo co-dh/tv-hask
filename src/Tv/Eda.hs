@@ -7,12 +7,9 @@
 -}
 module Tv.Eda where
 
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
 import qualified Data.Vector as V
-
-import Optics.Core ((%), (&), (.~), (^.))
 
 import Tv.App.Types (AppState (stk), HandlerFn, tryStk)
 import Tv.CmdConfig (Entry, mkEntry, hdl)

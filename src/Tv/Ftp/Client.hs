@@ -11,10 +11,9 @@ module Tv.Ftp.Client
   , downloadFtp
   ) where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
-import Control.Monad (when, void)
 import qualified Data.ByteString as BS
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Network.FTP.Client as FTP

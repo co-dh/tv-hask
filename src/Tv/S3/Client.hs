@@ -18,6 +18,7 @@
 -}
 module Tv.S3.Client where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
 import qualified Crypto.Hash as H
 import qualified Crypto.MAC.HMAC as HMAC
@@ -27,9 +28,7 @@ import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
 import Data.List (sortBy)
-import Data.Maybe (fromMaybe)
 import Data.Ord (comparing)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Clock (UTCTime, getCurrentTime)

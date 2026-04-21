@@ -7,10 +7,10 @@
 -}
 module Tv.Kitty where
 
+import Tv.Prelude
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base64 as B64
 import qualified Data.ByteString.Char8 as BS8
-import Data.Maybe (isJust)
 import System.Environment (lookupEnv)
 import System.IO (hFlush, stdout)
 

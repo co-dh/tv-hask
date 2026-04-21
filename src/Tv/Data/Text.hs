@@ -12,12 +12,11 @@ module Tv.Data.Text
   , fromStdin
   ) where
 
+import Tv.Prelude
 import Data.List (foldl', maximumBy)
 import Data.Ord (comparing)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.HashMap.Strict as HM
 

@@ -41,20 +41,16 @@ module Tv.Data.DuckDB
   , cellTs
   ) where
 
+import Tv.Prelude
 import Control.Exception (Exception, mask_, throwIO)
-import Control.Monad (when)
 import Data.Bits (shiftR, (.&.))
 import qualified Data.ByteString as BS
-import Data.Int (Int16, Int32, Int64, Int8)
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
+import Data.Int (Int16, Int8)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time.Calendar (addDays, fromGregorian, toGregorian)
 import qualified Numeric
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word16, Word32, Word64, Word8)
 import Foreign.C.String (peekCString, withCString)
 import Foreign.ForeignPtr
 import GHC.ForeignPtr (addForeignPtrConcFinalizer)

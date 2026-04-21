@@ -9,20 +9,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Tv.Filter where
 
+import Tv.Prelude
 import Control.Monad (guard)
 import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT, hoistMaybe)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef)
 import qualified Data.HashMap.Strict as HM
-import Data.HashMap.Strict (HashMap)
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.List as L
-import Data.Maybe (fromMaybe)
 import Text.Read (readMaybe)
 
-import Optics.Core ((%), (&), (.~), (^.), over)
 import Tv.App.Types (AppState(..), HandlerFn, onStk, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (rowCur, colCur, finClamp)

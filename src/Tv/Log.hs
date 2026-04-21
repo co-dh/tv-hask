@@ -2,9 +2,7 @@
 -- | Centralized error/debug logging to ~/.cache/tv/tv.log.
 module Tv.Log where
 
-import Data.IORef (IORef, newIORef, readIORef)
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)

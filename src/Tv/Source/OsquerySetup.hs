@@ -7,16 +7,15 @@
 -- the osquery-site repo and cached 30 days; row counts are cached 24 h.
 module Tv.Source.OsquerySetup where
 
+import Tv.Prelude
 import Control.Concurrent.Async (forConcurrently)
 import Control.Concurrent.QSemN (newQSemN, signalQSemN, waitQSemN)
 import Control.Exception (bracket, bracket_)
-import Control.Monad (join, unless)
+import Control.Monad (join)
 import Data.Aeson (Value (..), decode, encode, object, toJSON, (.=))
 import qualified Data.Aeson.Key as K
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy as BL
-import Data.Maybe (fromMaybe, mapMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Read as TR

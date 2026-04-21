@@ -7,13 +7,10 @@
 -}
 module Tv.Sparkline where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word64)
 
 import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Prql as Prql

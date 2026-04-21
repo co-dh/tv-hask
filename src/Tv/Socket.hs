@@ -15,13 +15,12 @@
 -- render cadence.
 module Tv.Socket where
 
+import Tv.Prelude
 import Control.Concurrent (forkIO)
 import Control.Exception (SomeException, try, bracket_)
-import Control.Monad (forever, void)
+import Control.Monad (forever)
 import qualified Data.ByteString as BS
-import Data.IORef (IORef, newIORef, readIORef, writeIORef, atomicModifyIORef')
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
+import Data.IORef (atomicModifyIORef')
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.Encoding.Error as TEE

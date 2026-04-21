@@ -9,12 +9,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Meta where
 
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
-import Optics.Core ((%), (&), (.~), (^.))
 import Tv.App.Types (AppState (stk), HandlerFn, onStk, tryStk, viewUp)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Nav as Nav

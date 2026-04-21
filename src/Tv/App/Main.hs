@@ -12,13 +12,10 @@ module Tv.App.Main
   , main
   ) where
 
+import Tv.Prelude
 import Control.Exception (SomeException, fromException, try)
-import Control.Monad (unless, when)
-import Data.Maybe (fromMaybe, isJust)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.Directory (doesDirectoryExist)
 import System.Environment (getArgs, lookupEnv)
@@ -46,7 +43,6 @@ import qualified Tv.View as View
 import qualified Tv.Log as Log
 import qualified Tv.Socket as Socket
 import qualified Tv.Tmp as Tmp
-import Optics.Core ((&), (.~))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- parsed CLI arguments

@@ -16,18 +16,14 @@
 module Tv.Data.DuckDB.Table where
 
 import Prelude hiding (init, filter)
+import Tv.Prelude
 import Control.Exception (SomeException, try)
-import Control.Monad (forM_)
-import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef', modifyIORef')
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
+import Data.IORef (atomicModifyIORef')
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Data.Text.Read as TR
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import Data.Word (Word64)
 import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Tv.Data.DuckDB.Conn as Conn

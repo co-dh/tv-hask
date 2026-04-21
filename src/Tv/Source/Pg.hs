@@ -3,8 +3,7 @@
 -- list its tables via the shared `tbl_info_filtered` PRQL helper.
 module Tv.Source.Pg where
 
-import Control.Monad (forM_)
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
 
 import qualified Tv.Data.DuckDB.Conn as Conn

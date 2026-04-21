@@ -17,9 +17,8 @@ module Tv.Source
   , configParent
   ) where
 
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 import Tv.Data.DuckDB.Table (AdbcTable)

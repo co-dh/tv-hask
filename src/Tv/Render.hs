@@ -11,13 +11,9 @@
 module Tv.Render where
 
 import Prelude hiding (init, print)
-import Control.Monad (unless, when)
-import Data.Int (Int64)
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word8, Word32)
 
 import Tv.Nav (NavState(..), adjOff)
 import qualified Tv.Nav as Nav

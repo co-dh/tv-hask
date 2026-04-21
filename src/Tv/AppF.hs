@@ -13,8 +13,8 @@
 -- dispatchHandler, CmdConfig lookups, handler dispatch) stay put.
 module Tv.AppF where
 
+import Tv.Prelude
 import Control.Monad.IO.Class (MonadIO (..))
-import Data.Text (Text)
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Program value: a small free monad describing what the event loop does.

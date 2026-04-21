@@ -7,16 +7,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Tv.Theme where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
 import Data.List (find)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.Maybe (fromMaybe, listToMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word32)
 import System.Environment (getExecutablePath, lookupEnv)
 import System.IO.Unsafe (unsafePerformIO)
 import Text.Read (readMaybe)

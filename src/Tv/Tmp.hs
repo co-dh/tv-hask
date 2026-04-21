@@ -1,10 +1,10 @@
 -- | Per-process temporary directory under <tmpdir>/tv-<pid>.
 module Tv.Tmp where
 
+import Tv.Prelude
 import Control.Concurrent (myThreadId)
 import Control.Exception (SomeException, try)
 import Data.Char (isDigit)
-import Data.IORef (IORef, newIORef, readIORef)
 import System.Directory
   (createDirectoryIfMissing, getTemporaryDirectory, removeFile, removePathForcibly)
 import System.IO.Unsafe (unsafePerformIO)

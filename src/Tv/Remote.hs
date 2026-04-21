@@ -2,7 +2,7 @@
 -- | URI path operations shared by remote backends (FTP, S3, HuggingFace, …).
 module Tv.Remote where
 
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
 
 -- | Join URI prefix with child name

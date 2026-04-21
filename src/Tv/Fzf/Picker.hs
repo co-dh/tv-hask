@@ -26,16 +26,13 @@
 -- underlying view cleanly.
 module Tv.Fzf.Picker where
 
-import Control.Monad (when, forM_)
+import Tv.Prelude
 import Data.Char (chr)
 import qualified Data.IntSet as IS
 import Data.List (sortOn)
 import Data.Ord (Down(..))
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word32)
 
 import Tv.Fzf.Match (match)
 import qualified Tv.Term as Term

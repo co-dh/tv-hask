@@ -8,11 +8,9 @@
 module Tv.UI.Info where
 
 import Prelude hiding (print)
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word32)
 
 import Tv.Types (Cmd(..), ViewKind(..))
 import qualified Tv.Term as Term

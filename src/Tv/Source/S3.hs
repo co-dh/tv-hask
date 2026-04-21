@@ -4,7 +4,7 @@
 -- AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars otherwise.
 module Tv.Source.S3 where
 
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Data.Vector as V

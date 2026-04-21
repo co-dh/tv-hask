@@ -4,16 +4,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Tv.App.Common where
 
+import Tv.Prelude
 import qualified Control.Concurrent
-import Control.Monad (unless, when)
 import qualified Data.HashMap.Strict as HashMap
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word32)
 
 import qualified Tv.AppF as AppM
 import Tv.AppF (AppM, Interp(..))
@@ -29,7 +24,6 @@ import qualified Tv.Folder as Folder
 import qualified Tv.Freq as Freq
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Key as Key
-import Optics.Core ((&), (.~), (%~))
 import qualified Tv.Meta as Meta
 import qualified Tv.Nav as Nav
 import qualified Tv.Plot as Plot
