@@ -91,7 +91,7 @@ resetVS a = a & #vs .~ Render.defVS & #sparklines .~ V.empty
 withStk :: AppState -> CmdInfo -> ViewStack AdbcTable -> AppState
 withStk a ci s' =
   a & #stk .~ s'
-    & #vs .~ (if ciResets ci then Render.defVS else a ^. #vs)
+    & #vs .~ (if ci ^. #ciResets then Render.defVS else a ^. #vs)
 
 errAction :: AppState -> SomeException -> IO Action
 errAction a e = do
@@ -117,8 +117,8 @@ stackIO a f = do
 
 runViewEffect :: AppState -> CmdInfo -> View AdbcTable -> Effect -> IO Action
 runViewEffect a ci v' e =
-  let s    = stk a
-      rCur = Nav.cur (Nav.row (View.nav v'))
+  let s    = a ^. #stk
+      rCur = v' ^. #nav % #row % #cur
   in case e of
     EffectNone -> pure $ ActOk $ withStk a ci (View.setCur s v')
     EffectQuit -> pure ActQuit
@@ -136,21 +136,20 @@ runViewEffect a ci v' e =
     EffectExclude cols -> tryStk a ci $ runMaybeT $ do
       tbl' <- liftIO (AdbcTable.excludeCols (View.tbl s) cols)
       let notExcluded = V.filter (not . (`V.elem` cols))
-          grp'        = notExcluded (Nav.grp    (View.nav v'))
-          hidden'     = notExcluded (Nav.hidden (View.nav v'))
+          grp'        = notExcluded (v' ^. #nav % #grp)
+          hidden'     = notExcluded (v' ^. #nav % #hidden)
       rv <- hoistMaybe (View.rebuild v' tbl' 0 grp' rCur)
       pure $ View.setCur s (rv & #nav % #hidden .~ hidden')
 
     EffectFreq colNames -> tryStk a ci $ runMaybeT $ do
       (adbc, totalGroups) <- MaybeT (AdbcTable.freqTable (View.tbl s) colNames)
-      fv <- hoistMaybe (View.fromTbl adbc (View.path (View.cur s)) 0 colNames 0)
+      fv <- hoistMaybe (View.fromTbl adbc (View.cur s ^. #path) 0 colNames 0)
       pure $ View.push s (fv
-        { View.vkind = VkFreqV colNames totalGroups
-        , View.disp  = "freq " <> joinWith colNames ","
-        })
+        & #vkind .~ VkFreqV colNames totalGroups
+        & #disp  .~ "freq " <> joinWith colNames ",")
 
     EffectFreqFilter cols row -> tryStk a ci $ runMaybeT $ do
-      s'   <- hoistMaybe $ case (View.vkind (View.cur s), View.pop s) of
+      s'   <- hoistMaybe $ case (View.cur s ^. #vkind, View.pop s) of
                 (VkFreqV _ _, Just p) -> Just p
                 _                     -> Nothing
       expr <- liftIO (Freq.filterIO (View.tbl s) cols row)
@@ -160,7 +159,7 @@ runViewEffect a ci v' e =
 
 viewUp :: AppState -> CmdInfo -> IO Action
 viewUp a ci =
-  case View.update (View.cur (stk a)) (ciCmd ci) 20 of
+  case View.update (View.cur (a ^. #stk)) (ci ^. #ciCmd) 20 of
     Just (v', e) -> runViewEffect a ci v' e
     Nothing      -> pure ActUnhandled
 
@@ -168,21 +167,21 @@ viewUp a ci =
 
 -- | Run an action on the view stack. The most common handler shape.
 onStk :: (ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))) -> HandlerFn
-onStk f = \a ci _ -> tryStk a ci (f (stk a))
+onStk f = \a ci _ -> tryStk a ci (f (a ^. #stk))
 
 argH
   :: (ViewStack AdbcTable -> IO (ViewStack AdbcTable))
   -> (ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable))
   -> HandlerFn
 argH fzf direct = \a _ arg ->
-  stackIO a (if T.null arg then fzf (stk a) else direct (stk a) arg)
+  stackIO a (if T.null arg then fzf (a ^. #stk) else direct (a ^. #stk) arg)
 
 vuH :: HandlerFn
 vuH = \a ci _ -> viewUp a ci
 
 stkH :: HandlerFn
 stkH = \a ci _ ->
-  pure $ case View.updateStack (stk a) (ciCmd ci) of
+  pure $ case View.updateStack (a ^. #stk) (ci ^. #ciCmd) of
     Just (_, EffectQuit) -> ActQuit
     Just (s', _)         -> ActOk (withStk a ci s')
     Nothing              -> ActUnhandled

@@ -36,7 +36,7 @@ import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import qualified Tv.Transpose as Transpose
-import Tv.Types (Cmd(..), ColCache(..), ViewKind(..), cachedPath, cachedCol, cachedVal, toString, noEffect)
+import Tv.Types (Cmd(..), ColCache(..), ViewKind(..), toString, noEffect)
 import qualified Tv.UI.Info as UIInfo
 import qualified Tv.UI.Preview as UIPreview
 import qualified Tv.Log as Log
@@ -50,17 +50,17 @@ import qualified Tv.View as View
 
 pureDispatch :: AppState -> CmdInfo -> Maybe AppState
 pureDispatch a ci
-  | ciCmd ci == CmdStkDup || ciCmd ci == CmdStkPop || ciCmd ci == CmdStkSwap =
-      fmap (\(s', _) -> withStk a ci s') (View.updateStack (stk a) (ciCmd ci))
+  | ci ^. #ciCmd == CmdStkDup || ci ^. #ciCmd == CmdStkPop || ci ^. #ciCmd == CmdStkSwap =
+      fmap (\(s', _) -> withStk a ci s') (View.updateStack (a ^. #stk) (ci ^. #ciCmd))
   | otherwise =
-      case View.update (View.cur (stk a)) (ciCmd ci) 20 of
+      case View.update (View.cur (a ^. #stk)) (ci ^. #ciCmd) 20 of
         Just (v', e)
-          | noEffect e -> Just (withStk a ci (View.setCur (stk a) v'))
+          | noEffect e -> Just (withStk a ci (View.setCur (a ^. #stk) v'))
         _ -> Nothing
 
 dispatch :: AppState -> CmdInfo -> Text -> IO Action
 dispatch a ci arg =
-  case HashMap.lookup (ciCmd ci) (handlers a) of
+  case HashMap.lookup (ci ^. #ciCmd) (a ^. #handlers) of
     Just f  -> f a ci arg
     Nothing -> viewUp a ci
 
@@ -73,25 +73,25 @@ runMenu a = do
         case mcmd of
           Just cmdStr -> do
             Log.write "sock" ("poll cmd=" <> cmdStr)
-            case CmdConfig.handlerLookup (cmdCache a) cmdStr of
+            case CmdConfig.handlerLookup (a ^. #cmdCache) cmdStr of
               Just ci -> do
                 a0 <- readIORef ref
                 case pureDispatch a0 ci of
                   Just a' -> do
-                    (vs', v') <- View.doRender (View.cur (stk a'))
-                                   (vs a') (Theme.styles (theme a'))
-                                   (heatMode a') (sparklines a')
-                    writeIORef ref (a' { stk = View.setCur (stk a') v', vs = vs' })
+                    (vs', v') <- View.doRender (View.cur (a' ^. #stk))
+                                   (a' ^. #vs) ((a' ^. #theme) ^. #styles)
+                                   (a' ^. #heatMode) (a' ^. #sparklines)
+                    writeIORef ref (a' & #stk .~ View.setCur (a' ^. #stk) v' & #vs .~ vs')
                     Term.present
                   Nothing -> pure ()
               Nothing -> pure ()
           Nothing -> pure ()
-  handler <- Fzf.cmdMode (testMode a) (cmdCache a) (View.vkind (View.cur (stk a))) poll
+  handler <- Fzf.cmdMode (a ^. #testMode) (a ^. #cmdCache) (View.cur (a ^. #stk) ^. #vkind) poll
   a' <- readIORef ref
   _ <- Socket.pollCmd  -- drain stale command from fzf focus
   case handler of
     Just h -> do
-      case CmdConfig.handlerLookup (cmdCache a') h of
+      case CmdConfig.handlerLookup (a' ^. #cmdCache) h of
         Just ci -> dispatch a' ci ""
         Nothing -> pure (ActOk a')
     Nothing -> pure (ActOk a')
@@ -117,17 +117,17 @@ commands = Nav.commands <> Filter.commands <> Ops.commands
 renderSnap :: IORef AppState -> ViewStack AdbcTable -> V.Vector Word32 -> IO ()
 renderSnap ref stk' styles_ = do
   a <- readIORef ref
-  (vs', v') <- View.doRender (View.cur stk') (vs a) styles_
-                 (heatMode a) (sparklines a)
-  writeIORef ref (a { stk = View.setCur stk' v', vs = vs' })
+  (vs', v') <- View.doRender (View.cur stk') (a ^. #vs) styles_
+                 (a ^. #heatMode) (a ^. #sparklines)
+  writeIORef ref (a & #stk .~ View.setCur stk' v' & #vs .~ vs')
   tabLine (View.tabNames stk') 0 (View.opsStr (View.cur stk'))
-  when (info a) $ do
+  when (a ^. #info) $ do
     h <- Term.height; w <- Term.width
-    UIInfo.render (fromIntegral h) (fromIntegral w) (View.vkind (View.cur stk'))
+    UIInfo.render (fromIntegral h) (fromIntegral w) (View.cur stk' ^. #vkind)
   Term.present
 
 freqH :: HandlerFn
-freqH = \a ci _ -> case Freq.update (stk a) (ciCmd ci) of
+freqH = \a ci _ -> case Freq.update (a ^. #stk) (ci ^. #ciCmd) of
   Just (s', e) -> runViewEffect (withStk a ci s') ci (View.cur s') e
   Nothing      -> viewUp a ci
 
@@ -136,23 +136,23 @@ localCmds = V.fromList
   [ hdl (mkEntry CmdRowSearch "ca" "/"  "Search for value in current column" True "")
         (\a _ arg -> do
           if not (T.null arg)
-            then stackIO a (Filter.searchWith (stk a) arg)
+            then stackIO a (Filter.searchWith (a ^. #stk) arg)
             else do
               ref <- newIORef a
               let preview :: ViewStack AdbcTable -> IO ()
                   preview stk' = do
                     a' <- readIORef ref
-                    renderSnap ref stk' (Theme.styles (theme a'))
-              stk' <- Filter.rowSearchLive (testMode a) (stk a) preview
+                    renderSnap ref stk' ((a' ^. #theme) ^. #styles)
+              stk' <- Filter.rowSearchLive (a ^. #testMode) (a ^. #stk) preview
               a' <- readIORef ref
-              pure $ ActOk $ resetVS (a' { stk = stk' }))
+              pure $ ActOk $ resetVS (a' & #stk .~ stk'))
   , hdl (mkEntry CmdTblMenu   ""  " "  "Open command menu"                  False "") (\a _ _ -> runMenu a)
   , hdl (mkEntry CmdStkSwap   "S" "S"  "Swap top two views"                 False "") stkH
   , hdl (mkEntry CmdStkPop    ""  "q"  "Close current view"                 True  "") stkH
   , hdl (mkEntry CmdStkDup    ""  ""   "Duplicate current view"             False "") stkH
   , hdl (mkEntry CmdTblQuit   ""  ""   ""                                   False "") (\_ _ _ -> pure ActQuit)
   , hdl (mkEntry CmdInfoTog   ""  "I"  "Toggle info overlay"                False "")
-        (\a ci _ -> pure $ case UIInfo.update (info a) (ciCmd ci) of
+        (\a ci _ -> pure $ case UIInfo.update (a ^. #info) (ci ^. #ciCmd) of
                              Just i' -> ActOk (a & #info .~ i')
                              Nothing -> ActUnhandled)
   , hdl (mkEntry CmdPrecDec   ""  ""   "Decrease decimal precision"         False "") (precAdj (-1))
@@ -165,8 +165,8 @@ localCmds = V.fromList
         (\a _ _ -> pure $ ActOk $ a & #prevScroll %~ (+ 5))
   , hdl (mkEntry CmdCellYank  "rc" "y"  "Copy current cell to clipboard (OSC 52)" False "")
         (\a _ _ -> do
-          let nav_ = View.nav (View.cur (stk a))
-          txt <- Ops.cellStr (Nav.tbl nav_) (Nav.cur (Nav.row nav_)) (Nav.colIdx nav_)
+          let nav_ = View.cur (a ^. #stk) ^. #nav
+          txt <- Ops.cellStr (nav_ ^. #tbl) (nav_ ^. #row % #cur) (Nav.colIdx nav_)
           Clip.copy txt
           Render.statusMsg ("copied: " <> clipMsg txt)
           pure (ActOk a))
@@ -183,16 +183,16 @@ localCmds = V.fromList
               render_ styles_ = do
                 writeIORef Theme.stylesRef styles_
                 a' <- readIORef ref
-                renderSnap ref (stk a') styles_
-          mt <- Theme.run (testMode a) (theme a) render_
+                renderSnap ref (a' ^. #stk) styles_
+          mt <- Theme.run (a ^. #testMode) (a ^. #theme) render_
           case mt of
             Just t  -> do
               a' <- readIORef ref
-              pure $ ActOk $ resetVS (a' { theme = t })
+              pure $ ActOk $ resetVS (a' & #theme .~ t)
             Nothing -> do
-              writeIORef Theme.stylesRef (Theme.styles (theme a))
+              writeIORef Theme.stylesRef ((a ^. #theme) ^. #styles)
               a' <- readIORef ref
-              pure $ ActOk $ resetVS (a' { theme = theme a }))
+              pure $ ActOk $ resetVS (a' & #theme .~ (a ^. #theme)))
   , hdl (mkEntry CmdThemePreview "" "" "" False "") (\a _ _ -> pure (ActOk a))
   ]
 
@@ -200,7 +200,7 @@ initHandlers :: (CmdConfig.CmdCache, HashMap.HashMap Cmd HandlerFn)
 initHandlers =
   let cc = CmdConfig.buildCache (V.map fst commands)
       m  = V.foldl' (\acc (e, mfn) -> case mfn of
-                Just f  -> HashMap.insert (cmd e) f acc
+                Just f  -> HashMap.insert (e ^. #cmd) f acc
                 Nothing -> acc)
             HashMap.empty commands
   in (cc, m)
@@ -217,38 +217,38 @@ dispatchHandler a cmdStr = do
         []         -> (cmdStr, "")
         [single]   -> (single, "")
         (x : rest) -> (x, T.unwords rest)
-  case CmdConfig.handlerLookup (cmdCache a) h of
+  case CmdConfig.handlerLookup (a ^. #cmdCache) h of
     Nothing -> do
       Log.write "cmd" ("unknown command: " <> h)
       pure a
     Just ci -> do
       act <- dispatch a ci arg
       case act of
-        ActOk a' -> pure (a' { prevScroll = 0 })
+        ActOk a' -> pure (a' & #prevScroll .~ 0)
         _        -> pure a
 
 -- Render --
 
 renderBase :: AppState -> IO AppState
 renderBase a0 = do
-  a <- if V.null (sparklines a0)
+  a <- if V.null (a0 ^. #sparklines)
          then do
-           sp <- Sparkline.compute (View.tbl (stk a0)) 20
+           sp <- Sparkline.compute (View.tbl (a0 ^. #stk)) 20
            pure (a0 & #sparklines .~ sp)
          else pure a0
-  (vs', v') <- View.doRender (View.cur (stk a)) (vs a) (Theme.styles (theme a))
-                 (heatMode a) (sparklines a)
-  let a' = a & #stk .~ View.setCur (stk a) v' & #vs .~ vs'
-  tabLine (View.tabNames (stk a')) 0 (View.opsStr (View.cur (stk a')))
-  let colName = Nav.colName (View.nav (View.cur (stk a')))
-      sc      = statusCache a'
-  a'' <- if cachedPath sc == View.path (View.cur (stk a')) && cachedCol sc == colName
+  (vs', v') <- View.doRender (View.cur (a ^. #stk)) (a ^. #vs) ((a ^. #theme) ^. #styles)
+                 (a ^. #heatMode) (a ^. #sparklines)
+  let a' = a & #stk .~ View.setCur (a ^. #stk) v' & #vs .~ vs'
+  tabLine (View.tabNames (a' ^. #stk)) 0 (View.opsStr (View.cur (a' ^. #stk)))
+  let colName = Nav.colName (View.cur (a' ^. #stk) ^. #nav)
+      ColCache{cachedPath, cachedCol} = a' ^. #statusCache
+  a'' <- if cachedPath == View.cur (a' ^. #stk) ^. #path && cachedCol == colName
            then pure a'
            else do
-             desc <- Ops.columnComment (View.path (View.cur (stk a'))) colName
+             desc <- Ops.columnComment (View.cur (a' ^. #stk) ^. #path) colName
              pure (a' & #statusCache .~
-                          ColCache (View.path (View.cur (stk a'))) colName desc)
-  let desc = cachedVal (statusCache a'')
+                          ColCache (View.cur (a' ^. #stk) ^. #path) colName desc)
+  let ColCache{cachedVal = desc} = a'' ^. #statusCache
   unless (T.null desc) $ do
     ht <- Term.height
     w  <- Term.width
@@ -258,16 +258,16 @@ renderBase a0 = do
                    then T.take maxLen label0 <> "…"
                    else label0
     Term.print 0 (ht - 1)
-      (Theme.styleFg (Theme.styles (theme a'')) Theme.sStatus)
-      (Theme.styleBg (Theme.styles (theme a'')) Theme.sStatus)
+      (Theme.styleFg ((a'' ^. #theme) ^. #styles) Theme.sStatus)
+      (Theme.styleBg ((a'' ^. #theme) ^. #styles) Theme.sStatus)
       label
-  agg' <- StatusAgg.update (aggCache a'') (View.tbl (stk a''))
-            (View.path (View.cur (stk a'')))
-            (Nav.colIdx (View.nav (View.cur (stk a''))))
-  let a''' = a'' { aggCache = agg' }
-  when (info a''') $ do
+  agg' <- StatusAgg.update (a'' ^. #aggCache) (View.tbl (a'' ^. #stk))
+            (View.cur (a'' ^. #stk) ^. #path)
+            (Nav.colIdx (View.cur (a'' ^. #stk) ^. #nav))
+  let a''' = a'' & #aggCache .~ agg'
+  when (a''' ^. #info) $ do
     h <- Term.height; w <- Term.width
-    UIInfo.render (fromIntegral h) (fromIntegral w) (View.vkind (View.cur (stk a''')))
+    UIInfo.render (fromIntegral h) (fromIntegral w) (View.cur (a''' ^. #stk) ^. #vkind)
   pure a'''
 
 renderFrame :: Bool -> AppState -> IO AppState
@@ -276,11 +276,11 @@ renderFrame showPreview a0 = do
   when showPreview $ do
     h <- Term.height
     w <- Term.width
-    let nav_ = View.nav (View.cur (stk a))
-    cellText <- Ops.cellStr (Nav.tbl nav_) (Nav.cur (Nav.row nav_)) (Nav.colIdx nav_)
-    let colW = min (fromMaybe 10 (View.widths (View.cur (stk a)) V.!? Nav.cur (Nav.col nav_))) 50
+    let nav_ = View.cur (a ^. #stk) ^. #nav
+    cellText <- Ops.cellStr (nav_ ^. #tbl) (nav_ ^. #row % #cur) (Nav.colIdx nav_)
+    let colW = min (fromMaybe 10 ((View.cur (a ^. #stk) ^. #widths) V.!? (nav_ ^. #col % #cur))) 50
     when (T.length cellText + 2 > colW) $
-      UIPreview.render (fromIntegral h) (fromIntegral w) cellText (prevScroll a)
+      UIPreview.render (fromIntegral h) (fromIntegral w) cellText (a ^. #prevScroll)
   Term.present
   pure a
 
@@ -303,19 +303,19 @@ loopProg a0 = do
         else if T.null key
           then loopProg a'
           else do
-            let vkStr = ctxStr (View.vkind (View.cur (stk a')))
-            case CmdConfig.keyLookup (cmdCache a') key vkStr of
+            let vkStr = ctxStr (View.cur (a' ^. #stk) ^. #vkind)
+            case CmdConfig.keyLookup (a' ^. #cmdCache) key vkStr of
               Just ci -> do
-                let isArg = CmdConfig.isArgCmd (cmdCache a') (ciCmd ci)
+                let isArg = CmdConfig.isArgCmd (a' ^. #cmdCache) (ci ^. #ciCmd)
                 arg <- if isArg then AppM.readArg' else pure ""
                 act <- liftIO_ (dispatch a' ci arg)
                 case act of
                   ActQuit      -> pure a'
                   ActUnhandled -> loopProg a'
                   ActOk a''0   -> do
-                    let a'' = if ciCmd ci == CmdCellUp || ciCmd ci == CmdCellDn
+                    let a'' = if ci ^. #ciCmd == CmdCellUp || ci ^. #ciCmd == CmdCellDn
                                 then a''0
-                                else a''0 { prevScroll = 0 }
+                                else a''0 & #prevScroll .~ 0
                     loopProg a''
               Nothing -> loopProg a'
   where

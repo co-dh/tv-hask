@@ -21,6 +21,8 @@ common shared
     MultiParamTypeClasses
     UndecidableInstances
     TypeFamilies
+    NoFieldSelectors
+    DuplicateRecordFields
   ghc-options: -Wall -O2
 
 library

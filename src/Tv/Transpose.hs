@@ -29,15 +29,15 @@ maxRows = 200
 push :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 push s = do
   let t = View.tbl s
-  if V.null (Table.colNames t) || Table.nRows t == 0
+  if V.null (t ^. #colNames) || t ^. #nRows == 0
     then pure Nothing
     else do
-      mBase <- Prql.compile (Prql.queryRender (Table.query t))
+      mBase <- Prql.compile (Prql.queryRender (t ^. #query))
       case mBase of
         Nothing -> pure Nothing
         Just baseSql -> do
-          let n   = min (Table.nRows t) maxRows
-              sql = transposeSql (stripSemi baseSql) (Table.colNames t) n
+          let n   = min (t ^. #nRows) maxRows
+              sql = transposeSql (stripSemi baseSql) (t ^. #colNames) n
           tblName <- tmpName "xpose"
           createTempTable tblName ("(" <> sql <> ")")
           mAdbc <- fromTmp tblName
@@ -45,10 +45,10 @@ push s = do
             Nothing -> pure Nothing
             Just adbc ->
               pure $ fmap (\v -> View.push s (v & #disp .~ "xpose"))
-                         $ View.fromTbl adbc (View.path $ View.cur s) 0 V.empty 0
+                         $ View.fromTbl adbc (View.cur s ^. #path) 0 V.empty 0
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
   [ hdl (mkEntry CmdTblXpose "" "X" "Transpose table (rows <-> columns)" False "")
-        (\a ci _ -> tryStk a ci (push (stk a)))
+        (\a ci _ -> tryStk a ci (push (a ^. #stk)))
   ]

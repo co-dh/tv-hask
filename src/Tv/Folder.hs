@@ -126,24 +126,24 @@ pathIdx names =
 -- | Get single cell value as string from current row
 cellStr :: View AdbcTable -> Int -> IO Text
 cellStr v colIdx = do
-  let rowCur = Nav.cur (Nav.row (View.nav v))
-  cols <- Ops.getCols (Nav.tbl (View.nav v)) (V.singleton colIdx) rowCur (rowCur + 1)
+  let rowCur = v ^. #nav % #row % #cur
+  cols <- Ops.getCols (v ^. #nav ^. #tbl) (V.singleton colIdx) rowCur (rowCur + 1)
   pure $ fromMaybe "" $ cols V.!? 0 >>= (V.!? 0)
 
 -- | Get path column value from current row
 curPath :: View AdbcTable -> IO (Maybe Text)
-curPath v = case View.vkind v of
+curPath v = case v ^. #vkind of
   VkFld _ _ ->
     maybe (pure Nothing) (fmap Just . cellStr v) $
-      pathIdx (Nav.colNames (View.nav v))
+      pathIdx (Nav.colNames (v ^. #nav))
   _ -> pure Nothing
 
 -- | Get type column value from current row
 -- Normalizes: 'f'/"file" -> 'f', 'd'/"dir" -> 'd', ' ' (HF/S3 file) -> 'f'
 curType :: View AdbcTable -> IO (Maybe Char)
-curType v = case View.vkind v of
+curType v = case v ^. #vkind of
   VkFld _ _ ->
-    case Nav.idxOf (Nav.colNames (View.nav v)) "type" of
+    case Nav.idxOf (Nav.colNames (v ^. #nav)) "type" of
       Nothing      -> pure (Just 'f')
       Just typeCol -> do
         s <- cellStr v typeCol
@@ -167,7 +167,7 @@ mkView noSign_ path_ depth = case Source.findSource path_ of
     case m of
       Nothing -> pure Nothing
       Just adbc -> do
-        let grp = maybe V.empty V.singleton (Source.grpCol src)
+        let grp = maybe V.empty V.singleton (src ^. #grpCol)
         pure $ fldView adbc path_ depth (Remote.dispName path_) grp
   Nothing -> do
       -- canonicalizePath throws on missing paths; fall back to the input on error
@@ -188,7 +188,7 @@ mkView noSign_ path_ depth = case Source.findSource path_ of
 push :: Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 push noSign_ s = do
   mp <- curPath (View.cur s)
-  let path_ = fromMaybe (case View.vkind (View.cur s) of
+  let path_ = fromMaybe (case View.cur s ^. #vkind of
                            VkFld p _ -> p
                            _         -> ".") mp
   fmap (View.push s) <$> mkView noSign_ path_ 1
@@ -207,7 +207,7 @@ tryView noSign_ s path_ depth push_ =
 
 -- | Get current folder depth
 curDepth :: ViewStack AdbcTable -> Int
-curDepth s = case View.vkind (View.cur s) of
+curDepth s = case View.cur s ^. #vkind of
   VkFld _ d -> d
   _         -> 1
 
@@ -282,7 +282,7 @@ enter tm noSign_ s = do
       src = Source.findSource curDir_
   -- FileFormat-attach: the current view is a .duckdb file, rows are tables.
   -- Source-level attach (pg://) is now handled via `open → OpenAsTable`.
-  if maybe False FileFormat.attach (FileFormat.find curDir_)
+  if maybe False (^. #attach) (FileFormat.find curDir_)
     then enterAttach s curDir_
     else do
       mTyp <- curType (View.cur s)
@@ -332,18 +332,18 @@ trashCmd = do
 
 -- | Get full paths of selected rows, or current row if none selected
 selPaths :: View AdbcTable -> IO (Vector Text)
-selPaths v = case View.vkind v of
+selPaths v = case v ^. #vkind of
   VkFld curDir_ _ ->
-    case pathIdx (Nav.colNames (View.nav v)) of
+    case pathIdx (Nav.colNames (v ^. #nav)) of
       Nothing -> pure V.empty
       Just pathCol -> do
-        cols <- Ops.getCols (Nav.tbl (View.nav v)) (V.singleton pathCol)
-                  0 (View.nRows v)
+        cols <- Ops.getCols (v ^. #nav ^. #tbl) (V.singleton pathCol)
+                  0 (v ^. #nRows)
         let c = fromMaybe V.empty (cols V.!? 0)
             rows =
-              if V.null (Nav.sels (Nav.row (View.nav v)))
-                then V.singleton (Nav.cur (Nav.row (View.nav v)))
-                else Nav.sels (Nav.row (View.nav v))
+              if V.null (v ^. #nav % #row % #sels)
+                then V.singleton (v ^. #nav % #row % #cur)
+                else v ^. #nav % #row % #sels
         pure $ V.map (\r -> joinPath curDir_ (fromMaybe "" (c V.!? r))) rows
   _ -> pure V.empty
 
@@ -386,18 +386,16 @@ drawDialog title lines_ footer = do
 -- | Wait for y/n keypress
 waitYN :: IO Bool
 waitYN = do
-  ev <- Term.pollEvent
-  if Term.typ ev /= Term.eventKey
+  Term.Event{Term.typ, Term.ch, Term.keyCode} <- Term.pollEvent
+  if typ /= Term.eventKey
     then waitYN
     else
-      let ch = Term.ch ev
-          k  = Term.keyCode ev
-          yC = fromIntegral (ord 'y')
+      let yC = fromIntegral (ord 'y')
           yU = fromIntegral (ord 'Y')
           nC = fromIntegral (ord 'n')
           nU = fromIntegral (ord 'N')
       in if ch == yC || ch == yU then pure True
-         else if ch == nC || ch == nU || k == Term.keyEsc then pure False
+         else if ch == nC || ch == nU || keyCode == Term.keyEsc then pure False
          else waitYN
 
 -- | Confirm deletion with popup dialog (auto-decline in test mode)
@@ -440,18 +438,17 @@ refreshView noSign_ s path_ depth = do
   case m of
     Nothing -> pure (Just s)
     Just v ->
-      let oldRow = Nav.cur (Nav.row (View.nav (View.cur s)))
-          row_ = min oldRow (if View.nRows v > 0 then View.nRows v - 1 else 0)
-          mv' = View.fromTbl (Nav.tbl (View.nav v)) path_ 0 V.empty row_
+      let oldRow = View.cur s ^. #nav % #row % #cur
+          row_ = min oldRow (if v ^. #nRows > 0 then v ^. #nRows - 1 else 0)
+          mv' = View.fromTbl (v ^. #nav ^. #tbl) path_ 0 V.empty row_
       in pure $ fmap
-        (\x -> View.setCur s x
-                 { View.vkind = VkFld path_ depth
-                 , View.disp = View.disp (View.cur s)
-                 })
+        (\x -> View.setCur s
+                 $ x & #vkind .~ VkFld path_ depth
+                     & #disp  .~ View.cur s ^. #disp)
         mv'
 
 del :: Bool -> Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
-del tm noSign_ s = case View.vkind (View.cur s) of
+del tm noSign_ s = case View.cur s ^. #vkind of
   VkFld path_ depth -> case Source.findSource path_ of
     Just _  -> pure (Just s)
     Nothing -> do
@@ -468,7 +465,7 @@ del tm noSign_ s = case View.vkind (View.cur s) of
   _ -> pure Nothing
 
 setDepth :: Bool -> ViewStack AdbcTable -> Int -> IO (Maybe (ViewStack AdbcTable))
-setDepth noSign_ s delta = case View.vkind (View.cur s) of
+setDepth noSign_ s delta = case View.cur s ^. #vkind of
   VkFld path_ depth -> case Source.findSource path_ of
     Just _  -> pure (Just s)
     Nothing -> do
@@ -481,18 +478,18 @@ setDepth noSign_ s delta = case View.vkind (View.cur s) of
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
   [ hdl (mkEntry CmdFolderPush     "r" "D"     "Browse folder"               True  "")
-        (\a ci _ -> tryStk a ci (push (noSign a) (stk a)))
+        (\a ci _ -> tryStk a ci (push (a ^. #noSign) (a ^. #stk)))
   , hdl (mkEntry CmdFolderEnter    "r" "<ret>" "Open file or enter directory" True "fld")
-        (\a ci _ -> tryStk a ci (enter (testMode a) (noSign a) (stk a)))
+        (\a ci _ -> tryStk a ci (enter (a ^. #testMode) (a ^. #noSign) (a ^. #stk)))
   , hdl (mkEntry CmdFolderParent   ""  "<bs>"  "Go to parent directory"       True "fld")
-        (\a ci _ -> tryStk a ci (goParent (noSign a) (stk a)))
+        (\a ci _ -> tryStk a ci (goParent (a ^. #noSign) (a ^. #stk)))
   , hdl (mkEntry CmdFolderDel      "r" ""      "Move to trash"               True  "")
-        (\a ci _ -> case View.vkind (View.cur (stk a)) of
-            VkFld _ _ -> tryStk a ci (del (testMode a) (noSign a) (stk a))
+        (\a ci _ -> case View.cur (a ^. #stk) ^. #vkind of
+            VkFld _ _ -> tryStk a ci (del (a ^. #testMode) (a ^. #noSign) (a ^. #stk))
             _         -> viewUp a ci)
   , hdl (mkEntry CmdFolderDepthDec ""  ""      "Decrease folder depth"       True  "")
-        (\a ci _ -> tryStk a ci (setDepth (noSign a) (stk a) (-1)))
+        (\a ci _ -> tryStk a ci (setDepth (a ^. #noSign) (a ^. #stk) (-1)))
   , hdl (mkEntry CmdFolderDepthInc ""  ""      "Increase folder depth"       True  "")
-        (\a ci _ -> tryStk a ci (setDepth (noSign a) (stk a) 1))
+        (\a ci _ -> tryStk a ci (setDepth (a ^. #noSign) (a ^. #stk) 1))
   ]
 

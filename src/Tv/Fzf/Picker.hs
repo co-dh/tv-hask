@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TemplateHaskell #-}
 -- | In-process fuzzy picker, rendered as a popup overlay on the existing
 -- TUI cell buffer — not a separate full-screen mode.
 --
@@ -36,6 +37,8 @@ import qualified Data.Vector as V
 
 import Tv.Fzf.Match (match)
 import qualified Tv.Term as Term
+import Optics.Core ((^.))
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Options for one picker invocation.
 data PickerOpts = PickerOpts
@@ -53,6 +56,7 @@ data PickerOpts = PickerOpts
   , poll       :: IO ()
   , initial    :: Text
   }
+makeFieldLabelsNoPrefix ''PickerOpts
 
 defaultOpts :: PickerOpts
 defaultOpts = PickerOpts
@@ -62,24 +66,26 @@ defaultOpts = PickerOpts
   , initial = ""
   }
 
+-- | Popup geometry on screen (pixel-ish cell coordinates).
+data Box = Box { bx, by, bw, bh :: !Int } deriving Show
+makeFieldLabelsNoPrefix ''Box
+
 data PickerState = PickerState
   { psQuery  :: !Text
   , psCur    :: !Int
   , psMatch  :: !(Vector (Int, Int, [Int]))
   , psBox    :: !Box
   }
-
--- | Popup geometry on screen (pixel-ish cell coordinates).
-data Box = Box { bx, by, bw, bh :: !Int } deriving Show
+makeFieldLabelsNoPrefix ''PickerState
 
 runPicker :: PickerOpts -> IO Text
-runPicker opts = do
+runPicker opts@PickerOpts{items, header, initial} = do
   sw <- fromIntegral <$> Term.width
   sh <- fromIntegral <$> Term.height
   -- Width = 70% of screen, clamped to a reasonable range. Height grows
   -- with item count up to 12 list rows. The border takes 2 rows + 2 cols.
-  let its     = items opts
-      hasHdr  = not (T.null (header opts))
+  let its     = items
+      hasHdr  = not (T.null header)
       boxW    = max 40 (min (sw - 2) ((sw * 7) `div` 10))
       rowsN   = V.length its
       listH   = min 12 (max 1 rowsN)
@@ -88,8 +94,8 @@ runPicker opts = do
       boxX    = max 0 ((sw - boxW) `div` 2)
       boxY    = max 0 ((sh - boxH) `div` 2)
       box     = Box { bx = boxX, by = boxY, bw = boxW, bh = boxH }
-      ms0     = computeMatches (initial opts) its
-      st0     = PickerState { psQuery = initial opts, psCur = 0
+      ms0     = computeMatches initial its
+      st0     = PickerState { psQuery = initial, psCur = 0
                             , psMatch = ms0, psBox = box }
   drawFrame opts st0
   -- fireFocus instead of inlining: it does the redraw-after-callback
@@ -104,7 +110,7 @@ runPicker opts = do
   -- caller's next render then repaints normally; invalidate ensures
   -- cells outside the popup area also re-emit to pick up whatever
   -- changed in the underlying view.
-  erasePopup (psBox st0)
+  erasePopup (st0 ^. #psBox)
   Term.present
   Term.clear
   Term.invalidate
@@ -112,10 +118,10 @@ runPicker opts = do
 
 -- | Overwrite the popup area with blank default-style cells.
 erasePopup :: Box -> IO ()
-erasePopup b =
-  forM_ [0 .. bh b - 1] $ \dy ->
-    Term.padC (fromIntegral (bx b)) (fromIntegral (by b + dy))
-              (fromIntegral (bw b)) 0 0 (T.replicate (bw b) " ") 0
+erasePopup Box{bx, by, bw, bh} =
+  forM_ [0 .. bh - 1] $ \dy ->
+    Term.padC (fromIntegral bx) (fromIntegral (by + dy))
+              (fromIntegral bw) 0 0 (T.replicate bw " ") 0
 
 data Key
   = KChar Char | KEnter | KEsc | KBackspace
@@ -126,24 +132,24 @@ data Key
 
 -- | Translate a 'Term.Event' into the picker's 'Key' enum.
 toKey :: Term.Event -> Key
-toKey ev
-  | Term.typ ev /= Term.eventKey     = KIgnore
-  | Term.keyCode ev == Term.keyArrowUp    = KUp
-  | Term.keyCode ev == Term.keyArrowDown  = KDown
-  | Term.keyCode ev == Term.keyEnter      = KEnter
-  | Term.keyCode ev == Term.keyEsc        = KEsc
-  | Term.keyCode ev == Term.keyBackspace  = KBackspace
-  | Term.keyCode ev == Term.keyBackspace2 = KBackspace
-  | Term.keyCode ev == Term.keyHome       = KHome
-  | Term.keyCode ev == Term.keyEnd        = KEnd
-  | Term.keyCode ev == Term.keyPageUp     = KPgUp
-  | Term.keyCode ev == Term.keyPageDown   = KPgDn
-  | Term.ch ev == Term.ctrlU              = KCtrlU
-  | Term.ch ev == 0x0B                    = KCtrlK
-  | Term.ch ev == 0x0A                    = KCtrlJ
-  | Term.ch ev == 0x0D                    = KEnter
-  | Term.ch ev /= 0                       = KChar (chr (fromIntegral (Term.ch ev)))
-  | otherwise                             = KIgnore
+toKey Term.Event{Term.typ, Term.keyCode, Term.ch}
+  | typ /= Term.eventKey          = KIgnore
+  | keyCode == Term.keyArrowUp    = KUp
+  | keyCode == Term.keyArrowDown  = KDown
+  | keyCode == Term.keyEnter      = KEnter
+  | keyCode == Term.keyEsc        = KEsc
+  | keyCode == Term.keyBackspace  = KBackspace
+  | keyCode == Term.keyBackspace2 = KBackspace
+  | keyCode == Term.keyHome       = KHome
+  | keyCode == Term.keyEnd        = KEnd
+  | keyCode == Term.keyPageUp     = KPgUp
+  | keyCode == Term.keyPageDown   = KPgDn
+  | ch == Term.ctrlU              = KCtrlU
+  | ch == 0x0B                    = KCtrlK
+  | ch == 0x0A                    = KCtrlJ
+  | ch == 0x0D                    = KEnter
+  | ch /= 0                       = KChar (chr (fromIntegral ch))
+  | otherwise                     = KIgnore
 
 -- | Read-key loop. Polls for input every 30 ms, firing the caller's poll
 -- callback in between so background work keeps ticking.
@@ -151,21 +157,21 @@ loop :: PickerOpts -> PickerState -> IO Text
 loop opts st = do
   mev <- Term.waitEventTimeout 30
   case mev of
-    Nothing -> poll opts *> loop opts st
+    Nothing -> (opts ^. #poll) *> loop opts st
     Just ev -> case toKey ev of
       KEsc       -> pure ""
       KEnter     -> pure (selection opts st)
-      KChar c    -> typed opts st (psQuery st <> T.singleton c) >>= loop opts
-      KBackspace -> typed opts st (dropLast (psQuery st))       >>= loop opts
-      KCtrlU     -> typed opts st ""                            >>= loop opts
-      KUp        -> moveCur opts st (-1)                        >>= loop opts
-      KCtrlK     -> moveCur opts st (-1)                        >>= loop opts
-      KDown      -> moveCur opts st 1                           >>= loop opts
-      KCtrlJ     -> moveCur opts st 1                           >>= loop opts
-      KPgUp      -> moveCur opts st (negate (listRows st))      >>= loop opts
-      KPgDn      -> moveCur opts st (listRows st)               >>= loop opts
-      KHome      -> setCur opts st 0                            >>= loop opts
-      KEnd       -> setCur opts st (V.length (psMatch st) - 1)  >>= loop opts
+      KChar c    -> typed opts st (st ^. #psQuery <> T.singleton c) >>= loop opts
+      KBackspace -> typed opts st (dropLast (st ^. #psQuery))       >>= loop opts
+      KCtrlU     -> typed opts st ""                                >>= loop opts
+      KUp        -> moveCur opts st (-1)                            >>= loop opts
+      KCtrlK     -> moveCur opts st (-1)                            >>= loop opts
+      KDown      -> moveCur opts st 1                               >>= loop opts
+      KCtrlJ     -> moveCur opts st 1                               >>= loop opts
+      KPgUp      -> moveCur opts st (negate (listRows st))          >>= loop opts
+      KPgDn      -> moveCur opts st (listRows st)                   >>= loop opts
+      KHome      -> setCur opts st 0                                >>= loop opts
+      KEnd       -> setCur opts st (V.length (st ^. #psMatch) - 1)  >>= loop opts
       KIgnore    -> loop opts st
 
 dropLast :: Text -> Text
@@ -176,24 +182,24 @@ dropLast t = if T.null t then t else T.init t
 -- re-trigger the caller's live preview.
 typed :: PickerOpts -> PickerState -> Text -> IO PickerState
 typed opts st q' = do
-  let ms'     = computeMatches q' (items opts)
+  let ms'     = computeMatches q' (opts ^. #items)
       st'     = st { psQuery = q', psMatch = ms', psCur = 0 }
-      prevTop = (\(i,_,_) -> i) <$> (psMatch st V.!? psCur st)
+      prevTop = (\(i,_,_) -> i) <$> ((st ^. #psMatch) V.!? (st ^. #psCur))
       newTop  = (\(i,_,_) -> i) <$> (ms' V.!? 0)
   drawFrame opts st'
   when (prevTop /= newTop) (fireFocus opts st')
   pure st'
 
 moveCur :: PickerOpts -> PickerState -> Int -> IO PickerState
-moveCur opts st d = setCur opts st (psCur st + d)
+moveCur opts st d = setCur opts st (st ^. #psCur + d)
 
 setCur :: PickerOpts -> PickerState -> Int -> IO PickerState
 setCur opts st i = do
-  let n   = V.length (psMatch st)
+  let n   = V.length (st ^. #psMatch)
       i'  = if n == 0 then 0 else max 0 (min (n - 1) i)
       st' = st { psCur = i' }
   drawFrame opts st'
-  when (psCur st /= i') (fireFocus opts st')
+  when (st ^. #psCur /= i') (fireFocus opts st')
   pure st'
 
 -- | Run the caller's onFocus callback then *redraw the popup*. The
@@ -204,17 +210,17 @@ setCur opts st i = do
 -- event.
 fireFocus :: PickerOpts -> PickerState -> IO ()
 fireFocus opts st = do
-  case psMatch st V.!? psCur st of
-    Just (i, _, _) -> onFocus opts i (items opts V.! i)
+  case (st ^. #psMatch) V.!? (st ^. #psCur) of
+    Just (i, _, _) -> (opts ^. #onFocus) i ((opts ^. #items) V.! i)
     Nothing        -> pure ()
   drawFrame opts st
 
 selection :: PickerOpts -> PickerState -> Text
-selection opts st = case psMatch st V.!? psCur st of
-  Just (i, _, _) -> items opts V.! i
+selection opts st = case (st ^. #psMatch) V.!? (st ^. #psCur) of
+  Just (i, _, _) -> (opts ^. #items) V.! i
   Nothing
-    | printQuery opts -> psQuery st
-    | otherwise       -> ""
+    | opts ^. #printQuery -> st ^. #psQuery
+    | otherwise           -> ""
 
 -- | Re-run fuzzy filter. Empty query → all items in original order.
 computeMatches :: Text -> Vector Text -> Vector (Int, Int, [Int])
@@ -228,7 +234,7 @@ computeMatches q its
 -- Rendering --------------------------------------------------------------
 
 listRows :: PickerState -> Int
-listRows st = bh (psBox st) - 3  -- minus top border, prompt, bottom border
+listRows st = (st ^. #psBox ^. #bh) - 3  -- minus top border, prompt, bottom border
 
 -- | Strip the index field for display when 'withNth' is True.
 display :: Bool -> Text -> Text
@@ -251,33 +257,33 @@ display False line = line
 --   row bh-1              bottom border   └────────────┘
 drawFrame :: PickerOpts -> PickerState -> IO ()
 drawFrame opts st = do
-  let box      = psBox st
-      hasHdr   = not (T.null (header opts))
-      innerW   = bw box - 2
-      promptY  = by box + 1
-      hdrY     = by box + 2
-      firstRow = by box + 2 + (if hasHdr then 1 else 0)
-      nRows    = bh box - 3 - (if hasHdr then 1 else 0)
-      scroll   = scrollOff (psCur st) nRows
-      promptLn = prompt opts <> psQuery st
-  drawBorder (bx box) (by box) (bw box) (bh box)
-  drawLine (bx box) promptY innerW promptLn fgPrompt bgPanel
+  let Box{bx, by, bw, bh} = st ^. #psBox
+      hasHdr   = not (T.null (opts ^. #header))
+      innerW   = bw - 2
+      promptY  = by + 1
+      hdrY     = by + 2
+      firstRow = by + 2 + (if hasHdr then 1 else 0)
+      nRows    = bh - 3 - (if hasHdr then 1 else 0)
+      scroll   = scrollOff (st ^. #psCur) nRows
+      promptLn = (opts ^. #prompt) <> (st ^. #psQuery)
+  drawBorder bx by bw bh
+  drawLine bx promptY innerW promptLn fgPrompt bgPanel
   when hasHdr $
-    drawLine (bx box) hdrY innerW (header opts) fgHdr bgPanel
+    drawLine bx hdrY innerW (opts ^. #header) fgHdr bgPanel
   forM_ [0 .. nRows - 1] $ \r -> do
     let y = firstRow + r
-    case psMatch st V.!? (scroll + r) of
+    case (st ^. #psMatch) V.!? (scroll + r) of
       Nothing ->
-        drawLine (bx box) y innerW "" fgRow bgPanel
+        drawLine bx y innerW "" fgRow bgPanel
       Just (idx, _, poses) -> do
-        let selected = (scroll + r) == psCur st
-            raw      = items opts V.! idx
-            shown    = display (withNth opts) raw
-            adj      = if withNth opts then adjustPositions raw poses else poses
+        let selected = (scroll + r) == st ^. #psCur
+            raw      = (opts ^. #items) V.! idx
+            shown    = display (opts ^. #withNth) raw
+            adj      = if opts ^. #withNth then adjustPositions raw poses else poses
             bgLine   = if selected then bgSel else bgPanel
             fgLine   = if selected then fgSel else fgRow
             marker   = if selected then "> " else "  "
-        drawItem (bx box) y innerW marker shown adj
+        drawItem bx y innerW marker shown adj
                  fgLine bgLine fgMatch bgLine
   Term.present
 

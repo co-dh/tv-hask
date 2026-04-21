@@ -123,36 +123,36 @@ vkToJ vk = case vk of
 -- Encode a View as a JSON Encoding (ordered, matching Lean byte-for-byte).
 viewEncoding :: View AdbcTable -> E.Encoding
 viewEncoding v =
-  let q = AdbcTable.query (Nav.tbl (View.nav v))
-      searchEnc = case search v of
+  let q = v ^. #nav ^. #tbl ^. #query
+      searchEnc = case v ^. #search of
         Just (i, s) ->
           E.pairs
             ( E.pair "col" (E.int i)
            <> E.pair "val" (E.text s) )
         Nothing -> E.null_
-      opsEnc = E.list (E.value . opToJ) (V.toList (ops q))
+      opsEnc = E.list (E.value . opToJ) (V.toList (q ^. #ops))
       queryEnc =
         E.pairs
-          ( E.pair "base" (E.text (base q))
+          ( E.pair "base" (E.text (q ^. #base))
          <> E.pair "ops" opsEnc )
-      n = View.nav v
+      n = v ^. #nav
   in E.pairs
-       ( E.pair "path"     (E.text (View.path v))
-      <> E.pair "vkind"    (E.value (vkToJ (View.vkind v)))
-      <> E.pair "disp"     (E.text (View.disp v))
-      <> E.pair "prec"     (E.int (View.prec v))
-      <> E.pair "widthAdj" (E.int (View.widthAdj v))
-      <> E.pair "row"      (E.int (Nav.cur (Nav.row n)))
-      <> E.pair "col"      (E.int (Nav.cur (Nav.col n)))
-      <> E.pair "grp"      (E.list E.text (V.toList (Nav.grp n)))
-      <> E.pair "hidden"   (E.list E.text (V.toList (Nav.hidden n)))
-      <> E.pair "colSels"  (E.list E.text (V.toList (Nav.sels (Nav.col n))))
+       ( E.pair "path"     (E.text (v ^. #path))
+      <> E.pair "vkind"    (E.value (vkToJ (v ^. #vkind)))
+      <> E.pair "disp"     (E.text (v ^. #disp))
+      <> E.pair "prec"     (E.int (v ^. #prec))
+      <> E.pair "widthAdj" (E.int (v ^. #widthAdj))
+      <> E.pair "row"      (E.int (n ^. #row % #cur))
+      <> E.pair "col"      (E.int (n ^. #col % #cur))
+      <> E.pair "grp"      (E.list E.text (V.toList (n ^. #grp)))
+      <> E.pair "hidden"   (E.list E.text (V.toList (n ^. #hidden)))
+      <> E.pair "colSels"  (E.list E.text (V.toList (n ^. #col % #sels)))
       <> E.pair "search"   searchEnc
       <> E.pair "query"    queryEnc )
 
 stkToJ :: ViewStack AdbcTable -> Text
 stkToJ s =
-  let views = View.hd s : View.tl s
+  let views = (s ^. #hd) : (s ^. #tl)
       viewsEnc = E.list viewEncoding views
       topEnc = E.pairs
         ( E.pair "version" (E.int 1)
@@ -197,7 +197,7 @@ openView :: Bool -> ViewKind -> Query -> IO (Maybe AdbcTable)
 openView noSign_ vkind_ query_ = tryIO $ case vkind_ of
   VkFld p depth -> do
     mv <- Folder.mkView noSign_ p depth
-    pure $ fmap (Nav.tbl . View.nav) mv
+    pure $ fmap (\v -> v ^. #nav ^. #tbl) mv
   _ -> do
     total <- AdbcTable.queryCount query_
     AdbcTable.requery query_ total
@@ -205,8 +205,8 @@ openView noSign_ vkind_ query_ = tryIO $ case vkind_ of
 -- | Build a View from an opened table and apply saved metadata (cursor, hidden, search…).
 applyFields :: AdbcTable -> Value -> Text -> ViewKind -> Maybe (View AdbcTable)
 applyFields tbl j path_ vkind_ =
-  let nRows_ = AdbcTable.nRows tbl
-      nCols_ = V.length (AdbcTable.colNames tbl)
+  let nRows_ = tbl ^. #nRows
+      nCols_ = V.length (tbl ^. #colNames)
       row_   = jd j "row" 0 :: Int
       col_   = jd j "col" 0 :: Int
       grp_   = jd j "grp" V.empty :: Vector Text
@@ -263,7 +263,7 @@ save stk name = do
   let nm = if T.null name then autoName stk else name
   p <- sessPath nm
   TIO.writeFile p (stkToJ stk)
-  let views = View.hd stk : View.tl stk
+  let views = (stk ^. #hd) : (stk ^. #tl)
   Log.write "session"
     ("saved " <> T.pack (show (length views)) <> " view(s) to " <> T.pack p)
   Render.statusMsg ("session saved: " <> nm)
@@ -343,12 +343,12 @@ loadWith noSign_ name =
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
   [ hdl (mkEntry CmdSessSave "a" "W" "Save session" False "")
-        (\a _ arg -> stackIO a (do saveWith (stk a) arg; pure (stk a)))
+        (\a _ arg -> stackIO a (do saveWith (a ^. #stk) arg; pure (a ^. #stk)))
   , hdl (mkEntry CmdSessLoad "a" ""  "Load session"  False "")
         (\a _ arg -> stackIO a (do
-          ms <- loadWith (noSign a) arg
+          ms <- loadWith (a ^. #noSign) arg
           case ms of
             Just stk' -> pure stk'
-            Nothing   -> pure (stk a)))
+            Nothing   -> pure (a ^. #stk)))
   ]
 

@@ -5,6 +5,7 @@
   Literal port of Tc/Tc/Theme.lean.
 -}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Tv.Theme where
 
 import Tv.Prelude
@@ -21,12 +22,14 @@ import Text.Read (readMaybe)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Term as Term
 import Tv.Types (headD, getD)
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Theme state
 data State = State
   { styles   :: Vector Word32
   , themeIdx :: Int
   }
+makeFieldLabelsNoPrefix ''State
 
 
 -- | Style names → index into styles array. Styles 0-8 used by C render, 9+ by Lean UI.
@@ -208,7 +211,7 @@ applyIdx s idx = do
 -- Returns (selectedIdx, styles), or none on cancel.
 run :: Bool -> State -> (Vector Word32 -> IO ()) -> IO (Maybe State)
 run tm cur applyAndRender = do
-  let curIdx = themeIdx cur
+  let State{themeIdx = curIdx} = cur
   if tm
     then do
       let idx = (curIdx + 1) `mod` V.length themes

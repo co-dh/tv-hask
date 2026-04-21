@@ -16,6 +16,7 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Tv.Types (Cmd, StrEnum(..))
+import Optics.Core ((^.))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Lookup result for dispatch
@@ -23,6 +24,7 @@ data CmdInfo = CmdInfo
   { ciCmd    :: Cmd
   , ciResets :: Bool
   }
+makeFieldLabelsNoPrefix ''CmdInfo
 
 -- | Command entry: metadata for key binding, menu, and dispatch
 data Entry = Entry
@@ -44,17 +46,18 @@ data CmdCache = CmdCache
   , ccArgCmds :: HashSet Cmd
   , ccMenu    :: Vector Entry
   }
+makeFieldLabelsNoPrefix ''CmdCache
 
 -- | Build cache from command entries (pure, no IO).
 buildCache :: Vector Entry -> CmdCache
 buildCache cmds =
-  let step (kI, cI, aS) e =
-        let ci = CmdInfo { ciCmd = cmd e, ciResets = resets e }
-            kI' = if T.null (key e) then kI
-                  else HashMap.insert (key e, viewCtx e) ci kI
-            cI' = HashMap.insert (cmd e) ci cI
-            aS' = if T.any (== 'a') (ctx e)
-                    then HashSet.insert (cmd e) aS else aS
+  let step (kI, cI, aS) Entry{..} =
+        let ci = CmdInfo { ciCmd = cmd, ciResets = resets }
+            kI' = if T.null key then kI
+                  else HashMap.insert (key, viewCtx) ci kI
+            cI' = HashMap.insert cmd ci cI
+            aS' = if T.any (== 'a') ctx
+                    then HashSet.insert cmd aS else aS
         in (kI', cI', aS')
       (keyInfo, cmdInfo, argSet) =
         V.foldl' step (HashMap.empty, HashMap.empty, HashSet.empty) cmds
@@ -64,13 +67,13 @@ buildCache cmds =
 -- | O(1) context-aware lookup: try (key, viewCtx) first, fall back to (key, "")
 keyLookup :: CmdCache -> Text -> Text -> Maybe CmdInfo
 keyLookup cc key_ viewCtx_ =
-  HashMap.lookup (key_, viewCtx_) (ccKeyInfo cc)
-    <|> HashMap.lookup (key_, "") (ccKeyInfo cc)
+  HashMap.lookup (key_, viewCtx_) (cc ^. #ccKeyInfo)
+    <|> HashMap.lookup (key_, "") (cc ^. #ccKeyInfo)
 
 -- | O(1) lookup by Cmd -> CmdInfo.
 cmdLookup :: CmdCache -> Cmd -> CmdInfo
 cmdLookup cc c =
-  HashMap.lookupDefault (CmdInfo { ciCmd = c, ciResets = False }) c (ccCmdInfo cc)
+  HashMap.lookupDefault (CmdInfo { ciCmd = c, ciResets = False }) c (cc ^. #ccCmdInfo)
 
 -- | Lookup by handler name string (socket/external boundary only)
 handlerLookup :: CmdCache -> Text -> Maybe CmdInfo
@@ -78,16 +81,16 @@ handlerLookup cc h = fmap (cmdLookup cc) (ofStringQ h)
 
 -- | O(1) check if command takes user input (ctx contains 'a').
 isArgCmd :: CmdCache -> Cmd -> Bool
-isArgCmd cc c = HashSet.member c (ccArgCmds cc)
+isArgCmd cc c = HashSet.member c (cc ^. #ccArgCmds)
 
 -- | Menu items for fzf, filtered by view context. Returns (handler, ctx, key, label).
 menuItems :: CmdCache -> Text -> Vector (Text, Text, Text, Text)
-menuItems cc vctx = V.mapMaybe go (ccMenu cc)
+menuItems cc vctx = V.mapMaybe go (cc ^. #ccMenu)
   where
-    go e
-      | T.null (label e) = Nothing
-      | not (T.null (viewCtx e)) && viewCtx e /= vctx = Nothing
-      | otherwise = Just (toString (cmd e), ctx e, key e, label e)
+    go Entry{..}
+      | T.null label = Nothing
+      | not (T.null viewCtx) && viewCtx /= vctx = Nothing
+      | otherwise = Just (toString cmd, ctx, key, label)
 
 -- | Entry constructor shorthand.
 mkEntry :: Cmd -> Text -> Text -> Text -> Bool -> Text -> Entry

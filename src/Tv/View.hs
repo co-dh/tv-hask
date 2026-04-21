@@ -26,11 +26,12 @@ import qualified Tv.Render as Render
 import Tv.Types (Cmd(..), Effect(..), ViewKind(..))
 
 -- $setup
--- >>> :set -XOverloadedStrings
+-- >>> :set -XOverloadedStrings -XOverloadedLabels -XDataKinds
 -- >>> import qualified Data.Text as Text
 -- >>> import qualified Data.Vector as V
 -- >>> import qualified Tv.Nav as Nav
 -- >>> import Tv.Types (Cmd(..), ColType(..), Effect(..), ViewKind(..))
+-- >>> import Optics.Core ((%), (^.))
 -- >>> data MockTable = MockTable { mockRows :: Int, mockNames :: V.Vector Text.Text }
 -- >>> let mockNames53 = V.fromList ["c0","c1","c2"]
 -- >>> let mockTypes53 = V.fromList [ColTypeStr, ColTypeStr, ColTypeStr]
@@ -119,10 +120,10 @@ doRender v vs styles heatMode sparklines = do
 fromTbl
   :: AdbcTable -> Text -> Int -> Vector Text -> Int -> Maybe (View AdbcTable)
 fromTbl tbl_ path_ col_ grp_ row_ =
-  let names  = Table.colNames tbl_
-      types  = Table.colTypes tbl_
-      nRows_ = Table.nRows tbl_
-      total  = Table.totalRows tbl_
+  let names  = tbl_ ^. #colNames
+      types  = tbl_ ^. #colTypes
+      nRows_ = tbl_ ^. #nRows
+      total  = tbl_ ^. #totalRows
       nCols_ = V.length names
   in if nCols_ > 0 && nRows_ > 0
        then Just (new (Nav.newAt nRows_ total names types tbl_ col_ grp_ row_) path_)
@@ -133,10 +134,10 @@ fromTbl tbl_ path_ col_ grp_ row_ =
 rebuild
   :: View AdbcTable -> AdbcTable -> Int -> Vector Text -> Int -> Maybe (View AdbcTable)
 rebuild old tbl_ col_ grp_ row_ =
-  let names  = Table.colNames tbl_
-      types  = Table.colTypes tbl_
-      nRows_ = Table.nRows tbl_
-      total  = Table.totalRows tbl_
+  let names  = tbl_ ^. #colNames
+      types  = tbl_ ^. #colTypes
+      nRows_ = tbl_ ^. #nRows
+      total  = tbl_ ^. #totalRows
       nCols_ = V.length names
   in if nCols_ > 0 && nRows_ > 0
        then
@@ -151,11 +152,11 @@ rebuild old tbl_ col_ grp_ row_ =
 -- Just (EffectSort 0 [] [] True)
 -- >>> fmap snd (update testView CmdSortDesc 1)
 -- Just (EffectSort 0 [] [] False)
--- >>> fmap (Nav.cur . Nav.row . nav . fst) (update testView CmdRowInc 1)
+-- >>> fmap ((^. #nav % #row % #cur) . fst) (update testView CmdRowInc 1)
 -- Just 1
 -- >>> fmap snd (update testView CmdRowInc 1)
 -- Just EffectNone
--- >>> fmap (Nav.cur . Nav.row . nav . fst) (update testView CmdRowDec 1)
+-- >>> fmap ((^. #nav % #row % #cur) . fst) (update testView CmdRowDec 1)
 -- Just 0
 update :: View t -> Cmd -> Int -> Maybe (View t, Effect)
 update v h rowPg =
@@ -228,17 +229,17 @@ tabNames s = V.fromList $ map tabName $ s ^. #hd : s ^. #tl
 
 -- | Pure update by command. q on empty stack -> quit
 --
--- >>> fmap (path . hd . fst) (updateStack testStack CmdStkSwap)
+-- >>> fmap ((^. #hd % #path) . fst) (updateStack testStack CmdStkSwap)
 -- Just "data/test.csv"
 -- >>> fmap snd (updateStack testStack CmdStkSwap)
 -- Just EffectNone
--- >>> fmap (length . tl . fst) (updateStack testStack CmdStkDup)
+-- >>> fmap (length . (^. #tl) . fst) (updateStack testStack CmdStkDup)
 -- Just 1
 -- >>> fmap snd (updateStack testStack CmdStkDup)
 -- Just EffectNone
 -- >>> fmap snd (updateStack testStack CmdStkPop)
 -- Just EffectQuit
--- >>> let twoStack = dup testStack in fmap (length . tl . fst) (updateStack twoStack CmdStkPop)
+-- >>> let twoStack = dup testStack in fmap (length . (^. #tl) . fst) (updateStack twoStack CmdStkPop)
 -- Just 0
 -- >>> let twoStack = dup testStack in fmap snd (updateStack twoStack CmdStkPop)
 -- Just EffectNone
@@ -255,4 +256,4 @@ updateStack s h = case h of
 
 -- | PRQL pipeline ops string from view's query (for tab line display).
 opsStr :: View AdbcTable -> Text
-opsStr v = Prql.renderOps $ Table.query $ Nav.tbl $ nav v
+opsStr v = Prql.renderOps $ v ^. #nav ^. #tbl ^. #query
