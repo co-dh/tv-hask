@@ -7,11 +7,7 @@
   read from data/finance/sample_ohlc.csv and run the same preprocessing
   the R script does (cumprod, cummax, rolling SMA / stddev) in Haskell.
 -}
-module Tv.Plot.Chart
-  ( renderChart
-    -- Math helpers exposed for doctest / unit tests
-  , returnsOf, cumretOf, drawdownOf, sma, rollingSd, qnorm, quantiles5
-  ) where
+module Tv.Plot.Chart where
 
 import Control.Exception (SomeException, try)
 import Data.Default.Class (def)

@@ -5,9 +5,7 @@
 
   Literal port of Tc/Tc/Sparkline.lean.
 -}
-module Tv.Sparkline
-  ( compute
-  ) where
+module Tv.Sparkline where
 
 import Control.Exception (SomeException, try)
 import Data.Maybe (fromMaybe)

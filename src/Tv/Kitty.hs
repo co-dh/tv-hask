@@ -5,12 +5,7 @@
   (kitty, WezTerm, ghostty). Format ref:
   https://sw.kovidgoyal.net/kitty/graphics-protocol/
 -}
-module Tv.Kitty
-  ( displayPng
-  , clearImages
-  , supportsKittyGraphics
-  , splitChunks
-  ) where
+module Tv.Kitty where
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base64 as B64

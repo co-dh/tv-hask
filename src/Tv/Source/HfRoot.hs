@@ -2,7 +2,7 @@
 -- | HuggingFace root (hf://): lists all public datasets from a pre-populated
 -- DuckDB file under ~/.cache/tv. The listing script runs once per process
 -- if the cache is stale or missing. Selecting a row jumps to hf://datasets/<id>/.
-module Tv.Source.HfRoot (hfRoot) where
+module Tv.Source.HfRoot where
 
 import Control.Exception (SomeException, try)
 import Data.Text (Text)

@@ -3,7 +3,7 @@
 -- | Populate ~/.cache/tv/hf_datasets.duckdb with the top Hugging Face datasets
 -- (sorted by downloads). Paginates the API, cleans descriptions, writes via
 -- read_json_auto on a temp file. Refreshes when existing listing is >24h old.
-module Tv.Source.HfRootSetup (run, cleanDesc, findTag, linkNext) where
+module Tv.Source.HfRootSetup where
 
 import Control.Exception (bracket_)
 import qualified Data.Aeson as A

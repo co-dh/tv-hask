@@ -9,28 +9,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Tv.View
-  ( View(..)
-  , new
-  , curDir
-  , tabName
-  , doRender
-  , fromTbl
-  , rebuild
-  , update
-  , ViewStack(..)
-  , cur
-  , tbl
-  , hasParent
-  , setCur
-  , push
-  , pop
-  , swap
-  , dup
-  , tabNames
-  , updateStack
-  , opsStr
-  ) where
+module Tv.View where
 
 import Data.Text (Text)
 import qualified Data.Text as T

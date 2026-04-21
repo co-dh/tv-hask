@@ -7,13 +7,7 @@
   comments. No invented abstractions.
 -}
 {-# LANGUAGE OverloadedStrings #-}
-module Tv.Meta
-  ( push
-  , setKey
-  , stats
-  , corr
-  , commands
-  ) where
+module Tv.Meta where
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)

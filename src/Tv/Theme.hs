@@ -5,21 +5,7 @@
   Literal port of Tc/Tc/Theme.lean.
 -}
 {-# LANGUAGE OverloadedStrings #-}
-module Tv.Theme
-  ( State(..)
-  , styleNames
-  , sStatus, sStatusDim, sBar, sBarDim, sError, sErrorDim, sHint
-  , styleFg, styleBg
-  , parseStyle
-  , defaultDark
-  , stylesRef, getStyles
-  , isDark
-  , themes
-  , themeName
-  , load, loadIdx
-  , stateInit, applyIdx
-  , run
-  ) where
+module Tv.Theme where
 
 import Control.Exception (SomeException, try)
 import Data.List (find)

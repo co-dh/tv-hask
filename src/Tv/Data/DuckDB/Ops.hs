@@ -6,30 +6,7 @@
   Literal port of Tc/Data/ADBC/Ops.lean. Each Lean def maps to a Haskell
   top-level def.
 -}
-module Tv.Data.DuckDB.Ops
-  ( -- * Table operations (were typeclass methods, now plain functions)
-    getCols
-  , colType
-  , cellStr
-  , modifyTableHide
-  , modifyTableSort
-    -- * Meta / helpers
-  , toText
-  , queryMeta
-  , queryMetaStats
-  , queryCorrMatrix
-  , metaIdxs
-  , metaNames
-  , quoteId
-  , columnComment
-  , enrichComments
-    -- * SQL builders / runners (shared by Ops/Transpose/StatusAgg)
-  , maxSplitParts
-  , transposeSql
-  , colAggSql
-  , createTempView
-  , createTempTable
-  ) where
+module Tv.Data.DuckDB.Ops where
 
 import Prelude hiding (filter)
 import Control.Exception (SomeException, try)

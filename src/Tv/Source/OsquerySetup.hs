@@ -5,7 +5,7 @@
 -- `main.listing` (name, safety, rows, description) and `osq.<tbl>` stub
 -- views carrying typed columns + COMMENT ON COLUMN. Schema is fetched from
 -- the osquery-site repo and cached 30 days; row counts are cached 24 h.
-module Tv.Source.OsquerySetup (run) where
+module Tv.Source.OsquerySetup where
 
 import Control.Concurrent.Async (forConcurrently)
 import Control.Concurrent.QSemN (newQSemN, signalQSemN, waitQSemN)

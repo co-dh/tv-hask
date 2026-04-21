@@ -2,7 +2,7 @@
 -- | Osquery (osquery://) backend: lists all osqueryi tables from a
 -- pre-populated DuckDB file, entering one runs `osqueryi --json` and
 -- applies typed columns from the corresponding stub view.
-module Tv.Source.Osquery (osquery) where
+module Tv.Source.Osquery where
 
 import Control.Exception (SomeException, try)
 import Data.Text (Text)

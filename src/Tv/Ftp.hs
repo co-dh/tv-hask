@@ -3,9 +3,7 @@
   URL encoding helpers were dropped along with the curl shellout
   (a751fcc → 7d2826c).
 -}
-module Tv.Ftp
-  ( parseLs
-  ) where
+module Tv.Ftp where
 
 import Data.List (foldl')
 import Data.Text (Text)

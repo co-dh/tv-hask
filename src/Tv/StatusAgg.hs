@@ -5,11 +5,7 @@
   Literal port of Tc/Tc/StatusAgg.lean.
 -}
 {-# LANGUAGE OverloadedStrings #-}
-module Tv.StatusAgg
-  ( Cache
-  , cacheEmpty
-  , update
-  ) where
+module Tv.StatusAgg where
 
 import Control.Exception (SomeException, try)
 import Control.Monad (unless)

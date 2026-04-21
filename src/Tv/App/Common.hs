@@ -2,26 +2,7 @@
 -- Types and combinators live in App.Types; domain commands in their feature modules.
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module Tv.App.Common
-  ( -- * Dispatch
-    dispatch
-  , pureDispatch
-  , runMenu
-  , dispatchHandler
-  , initHandlers
-    -- * Command table
-  , commands
-    -- * Render
-  , renderBase
-  , renderFrame
-    -- * Main loop
-  , loopProg
-  , delayMs
-  , prodInterp
-  , testInterp
-  , mainLoop
-  , ctxStr
-  ) where
+module Tv.App.Common where
 
 import qualified Control.Concurrent
 import Control.Monad (unless, when)

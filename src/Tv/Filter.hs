@@ -7,19 +7,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module Tv.Filter
-  ( -- Tc.ViewStack namespace
-    colSearch
-  , rowSearch
-  , rowSearchLive
-  , searchDir
-  , rowFilter
-  , jumpCol
-  , filterWith
-  , searchWith
-    -- Tc.Filter namespace
-  , commands
-  ) where
+module Tv.Filter where
 
 import Control.Monad (guard)
 import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT, hoistMaybe)

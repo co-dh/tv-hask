@@ -14,41 +14,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Tv.Nav
-  ( -- * Utility
-    clamp
-  , adjOff
-  , finClamp
-    -- * NavAxis
-  , NavAxis(..)
-  , defAxis
-  , RowNav
-  , ColNav
-    -- * Display order
-  , idxOf
-  , dispOrder
-  , idxAt
-    -- * NavState
-  , NavState(..)
-  , colNames
-  , colIdx
-  , colName
-  , colType
-  , dispNames
-  , selIdxs
-  , hiddenIdxs
-    -- * Constructors
-  , new
-  , newAt
-    -- * Lenses
-  , rowCur
-  , colCur
-  , rowSels
-    -- * Exec
-  , exec
-    -- * Commands
-  , commands
-  ) where
+module Tv.Nav where
 
 import Data.Text (Text)
 import Data.Vector (Vector)

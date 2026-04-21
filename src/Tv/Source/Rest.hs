@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | REST (rest://) backend: fetch a JSON URL over HTTPS, read as a table.
-module Tv.Source.Rest (rest) where
+module Tv.Source.Rest where
 
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)

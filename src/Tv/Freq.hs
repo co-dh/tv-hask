@@ -3,10 +3,7 @@
   Pure update returns residual Effect; dispatch executes IO inline.
 -}
 {-# LANGUAGE OverloadedStrings #-}
-module Tv.Freq
-  ( filterIO
-  , update
-  ) where
+module Tv.Freq where
 
 import Data.Text (Text)
 import qualified Data.Text as T

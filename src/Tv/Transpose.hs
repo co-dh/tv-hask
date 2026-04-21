@@ -5,10 +5,7 @@
 
   Literal port of Tc/Tc/Transpose.lean.
 -}
-module Tv.Transpose
-  ( push
-  , commands
-  ) where
+module Tv.Transpose where
 
 import qualified Data.Vector as V
 
