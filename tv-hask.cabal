@@ -82,6 +82,7 @@ library
     Tv.Theme
     Tv.Transpose
     Tv.Types
+    Tv.Types.TH
     Tv.UI.Info
     Tv.UI.Preview
     Tv.Log
@@ -122,6 +123,7 @@ library
     optics-th >= 0.4 && < 0.5,
     process >= 1.6,
     scientific >= 0.3,
+    template-haskell >= 2.18,
     text >= 2.0,
     time >= 1.11,
     transformers >= 0.6,

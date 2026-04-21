@@ -58,6 +58,7 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 import Optics.TH (makeFieldLabelsNoPrefix)
 import Data.Hashable (Hashable(..))
+import Tv.Types.TH (deriveStrEnum)
 -- | Enum-ish types that have a conventional string name. Defaults let
 -- types with payloads (e.g. 'ViewKind') provide only 'toString'; plain
 -- enums override 'all' and 'ofStringQ' for roundtrip.
@@ -85,29 +86,7 @@ data ColType
   | ColTypeOther
   deriving (Eq, Show)
 
-instance StrEnum ColType where
-  toString ColTypeInt       = "int"
-  toString ColTypeFloat     = "float"
-  toString ColTypeDecimal   = "decimal"
-  toString ColTypeStr       = "str"
-  toString ColTypeDate      = "date"
-  toString ColTypeTime      = "time"
-  toString ColTypeTimestamp = "timestamp"
-  toString ColTypeBool      = "bool"
-  toString ColTypeOther     = "other"
-  all = V.fromList
-    [ ColTypeInt, ColTypeFloat, ColTypeDecimal, ColTypeStr
-    , ColTypeDate, ColTypeTime, ColTypeTimestamp, ColTypeBool, ColTypeOther
-    ]
-  ofStringQ "int"       = Just ColTypeInt
-  ofStringQ "float"     = Just ColTypeFloat
-  ofStringQ "decimal"   = Just ColTypeDecimal
-  ofStringQ "str"       = Just ColTypeStr
-  ofStringQ "date"      = Just ColTypeDate
-  ofStringQ "time"      = Just ColTypeTime
-  ofStringQ "timestamp" = Just ColTypeTimestamp
-  ofStringQ "bool"      = Just ColTypeBool
-  ofStringQ _           = Nothing
+$(deriveStrEnum ''ColType)
 
 -- | Total parse: falls back to 'ColTypeOther' on any unknown string.
 -- Used at FFI boundaries where input is user/DB-supplied and must not fail.
@@ -318,23 +297,7 @@ data Agg
   | AggDist
   deriving (Eq, Show)
 
-instance StrEnum Agg where
-  toString AggCount  = "count"
-  toString AggSum    = "sum"
-  toString AggAvg    = "avg"
-  toString AggMin    = "min"
-  toString AggMax    = "max"
-  toString AggStddev = "stddev"
-  toString AggDist   = "dist"
-  all = V.fromList [AggCount, AggSum, AggAvg, AggMin, AggMax, AggStddev, AggDist]
-  ofStringQ "count"  = Just AggCount
-  ofStringQ "sum"    = Just AggSum
-  ofStringQ "avg"    = Just AggAvg
-  ofStringQ "min"    = Just AggMin
-  ofStringQ "max"    = Just AggMax
-  ofStringQ "stddev" = Just AggStddev
-  ofStringQ "dist"   = Just AggDist
-  ofStringQ _        = Nothing
+$(deriveStrEnum ''Agg)
 
 
 -- | Table operation (single pipeline stage)
@@ -443,47 +406,7 @@ data PlotKind
   | PlotCandle      -- OHLC candlestick (needs 4 numeric cols)
   deriving (Eq, Show)
 
-instance StrEnum PlotKind where
-  toString PlotLine     = "line"
-  toString PlotBar      = "bar"
-  toString PlotScatter  = "scatter"
-  toString PlotHist     = "hist"
-  toString PlotBox      = "box"
-  toString PlotArea     = "area"
-  toString PlotDensity  = "density"
-  toString PlotStep     = "step"
-  toString PlotViolin   = "violin"
-  toString PlotReturns  = "returns"
-  toString PlotCumRet   = "cumret"
-  toString PlotDrawdown = "drawdown"
-  toString PlotMA       = "ma"
-  toString PlotVol      = "vol"
-  toString PlotQQ       = "qq"
-  toString PlotBB       = "bb"
-  toString PlotCandle   = "candle"
-  all = V.fromList
-    [ PlotLine, PlotBar, PlotScatter, PlotHist, PlotBox
-    , PlotArea, PlotDensity, PlotStep, PlotViolin
-    , PlotReturns, PlotCumRet, PlotDrawdown, PlotMA
-    , PlotVol, PlotQQ, PlotBB, PlotCandle ]
-  ofStringQ "line"     = Just PlotLine
-  ofStringQ "bar"      = Just PlotBar
-  ofStringQ "scatter"  = Just PlotScatter
-  ofStringQ "hist"     = Just PlotHist
-  ofStringQ "box"      = Just PlotBox
-  ofStringQ "area"     = Just PlotArea
-  ofStringQ "density"  = Just PlotDensity
-  ofStringQ "step"     = Just PlotStep
-  ofStringQ "violin"   = Just PlotViolin
-  ofStringQ "returns"  = Just PlotReturns
-  ofStringQ "cumret"   = Just PlotCumRet
-  ofStringQ "drawdown" = Just PlotDrawdown
-  ofStringQ "ma"       = Just PlotMA
-  ofStringQ "vol"      = Just PlotVol
-  ofStringQ "qq"       = Just PlotQQ
-  ofStringQ "bb"       = Just PlotBB
-  ofStringQ "candle"   = Just PlotCandle
-  ofStringQ _          = Nothing
+$(deriveStrEnum ''PlotKind)
 
 data ExportFmt
   = ExportCsv
@@ -492,17 +415,7 @@ data ExportFmt
   | ExportNdjson
   deriving (Eq, Show)
 
-instance StrEnum ExportFmt where
-  toString ExportCsv     = "csv"
-  toString ExportParquet = "parquet"
-  toString ExportJson    = "json"
-  toString ExportNdjson  = "ndjson"
-  all = V.fromList [ExportCsv, ExportParquet, ExportJson, ExportNdjson]
-  ofStringQ "csv"     = Just ExportCsv
-  ofStringQ "parquet" = Just ExportParquet
-  ofStringQ "json"    = Just ExportJson
-  ofStringQ "ndjson"  = Just ExportNdjson
-  ofStringQ _         = Nothing
+$(deriveStrEnum ''ExportFmt)
 
 -- | Residual effects from pure code that can't do IO (View.update, ViewStack.update, Freq.update).
 data Effect
