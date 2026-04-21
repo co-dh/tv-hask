@@ -38,6 +38,7 @@ import Tv.Types
   )
 import qualified Tv.Log as Log
 import qualified Tv.Tmp as Tmp
+import Optics.Core ((^.))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- ----------------------------------------------------------------------------
@@ -260,9 +261,9 @@ fromTable table = do
 -- | Sort: append sort op and re-query (all columns use given direction)
 sortBy :: AdbcTable -> Vector Int -> Bool -> IO AdbcTable
 sortBy t idxs asc = do
-  let sortCols = V.map (\idx -> (fromMaybe "" (colNames t V.!? idx), asc)) idxs
-      newQuery = Prql.pipe (query t) (OpSort sortCols)
-  m <- requery newQuery (totalRows t)
+  let sortCols = V.map (\idx -> (fromMaybe "" ((t ^. #colNames) V.!? idx), asc)) idxs
+      newQuery = Prql.pipe (t ^. #query) (OpSort sortCols)
+  m <- requery newQuery (t ^. #totalRows)
   case m of
     Just t' -> pure t'
     Nothing -> pure t
@@ -270,8 +271,8 @@ sortBy t idxs asc = do
 -- | Hide columns: append select op and re-query
 hideCols :: AdbcTable -> Vector Int -> IO AdbcTable
 hideCols t hideIdxs = do
-  let kept = keepCols (V.length (colNames t)) hideIdxs (colNames t)
-  m <- requery (Prql.pipe (query t) (OpSel kept)) (totalRows t)
+  let kept = keepCols (V.length (t ^. #colNames)) hideIdxs (t ^. #colNames)
+  m <- requery (Prql.pipe (t ^. #query) (OpSel kept)) (t ^. #totalRows)
   case m of
     Just t' -> pure t'
     Nothing -> pure t
@@ -279,7 +280,7 @@ hideCols t hideIdxs = do
 -- | Exclude columns: append EXCLUDE op and re-query (DuckDB SELECT * EXCLUDE)
 excludeCols :: AdbcTable -> Vector Text -> IO AdbcTable
 excludeCols t cols = do
-  m <- requery (Prql.pipe (query t) (OpExclude cols)) (totalRows t)
+  m <- requery (Prql.pipe (t ^. #query) (OpExclude cols)) (t ^. #totalRows)
   case m of
     Just t' -> pure t'
     Nothing -> pure t
@@ -287,13 +288,13 @@ excludeCols t cols = do
 -- | Fetch more rows (increase limit by prqlLimit)
 fetchMore :: AdbcTable -> IO (Maybe AdbcTable)
 fetchMore t
-  | nRows t >= totalRows t = pure Nothing
+  | t ^. #nRows >= t ^. #totalRows = pure Nothing
   | otherwise = do
-      let limit_ = nRows t + prqlLimit
-      m <- prqlQuery (Prql.queryRender (query t) <> " | take " <> T.pack (show limit_))
+      let limit_ = (t ^. #nRows) + prqlLimit
+      m <- prqlQuery (Prql.queryRender (t ^. #query) <> " | take " <> T.pack (show limit_))
       case m of
         Nothing  -> pure Nothing
-        Just qr_ -> Just <$> ofResult qr_ (query t) (totalRows t)
+        Just qr_ -> Just <$> ofResult qr_ (t ^. #query) (t ^. #totalRows)
 
 -- | Build the plot PRQL pipeline: ds_trunc for time x-axis (SUBSTRING bucketing),
 -- ds_nth for non-time (every-Nth-row sampling). The _cat suffix keeps a grouping
@@ -366,7 +367,7 @@ plotExport
   -> Int           -- truncLen
   -> IO (Maybe (Vector Text))
 plotExport t xName yName catName_ xIsTime _step truncLen = do
-  let baseR = Prql.queryRender (query t)
+  let baseR = Prql.queryRender (t ^. #query)
       prqlStr = plotPrql baseR xName yName catName_ xIsTime truncLen
   Log.write "prql" prqlStr
   mSql <- Prql.compile prqlStr
@@ -390,7 +391,7 @@ plotExportOhlc
   -> Text   -- closeName
   -> IO Bool
 plotExportOhlc t xName openName highName lowName closeName = do
-  let baseR = Prql.queryRender (query t)
+  let baseR = Prql.queryRender (t ^. #query)
       q     = Prql.ref
       prqlStr = baseR
         <> " | select { " <> q xName
@@ -467,7 +468,7 @@ freqTable t cNames
   | V.null cNames = pure Nothing
   | otherwise = do
       let cols = T.intercalate ", " (V.toList (V.map Prql.ref cNames))
-          baseR = Prql.queryRender (query t)
+          baseR = Prql.queryRender (t ^. #query)
       -- total distinct groups
       totalGroups <- do
         m <- prqlQuery (baseR <> " | cntdist {" <> cols <> "}")
@@ -498,15 +499,15 @@ freqTable t cNames
 -- | Filter: requery with filter (queries new filtered count)
 filter :: AdbcTable -> Text -> IO (Maybe AdbcTable)
 filter t expr = do
-  let q = Prql.queryFilter (query t) expr
+  let q = Prql.queryFilter (t ^. #query) expr
   total <- queryCount q
   requery q total
 
 -- | Distinct: use SQL DISTINCT
 distinct :: AdbcTable -> Int -> IO (Vector Text)
 distinct t col = do
-  let cName = fromMaybe "" (colNames t V.!? col)
-  m <- prqlQuery (Prql.queryRender (query t) <> " | uniq " <> Prql.ref cName)
+  let cName = fromMaybe "" ((t ^. #colNames) V.!? col)
+  m <- prqlQuery (Prql.queryRender (t ^. #query) <> " | uniq " <> Prql.ref cName)
   case m of
     Nothing -> pure V.empty
     Just qr_ -> do
@@ -518,8 +519,8 @@ distinct t col = do
 --   PRQL row_number is 1-based; we subtract 1 here for 0-based indexing.
 findRow :: AdbcTable -> Int -> Text -> Int -> Bool -> IO (Maybe Int)
 findRow t col val start fwd = do
-  let cName = Prql.ref (fromMaybe "" (colNames t V.!? col))
-      prql  = Prql.queryRender (query t)
+  let cName = Prql.ref (fromMaybe "" ((t ^. #colNames) V.!? col))
+      prql  = Prql.queryRender (t ^. #query)
            <> " | derive {_rn = row_number this} | filter ("
            <> cName <> " == '" <> escSql val <> "') | select {_rn}"
   m <- prqlQuery prql

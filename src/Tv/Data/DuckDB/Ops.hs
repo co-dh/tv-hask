@@ -22,6 +22,7 @@ import Tv.Data.DuckDB.Table (AdbcTable(..))
 import Data.List (nub)
 import Tv.Types (ColType(..), colText, escSql, isNumeric)
 import qualified Tv.Log as Log
+import Optics.Core ((^.))
 
 -- ----------------------------------------------------------------------------
 -- Table operations (were typeclass methods, now plain functions)
@@ -30,21 +31,21 @@ import qualified Tv.Log as Log
 getCols :: AdbcTable -> Vector Int -> Int -> Int -> IO (Vector (Vector Text))
 getCols t idxs r0_ r1_ =
   V.mapM (\i -> V.generateM (r1_ - r0_) $ \ri ->
-    Conn.cellStr (Table.qr t) (fromIntegral (r0_ + ri) :: Word64) (fromIntegral i :: Word64)
+    Conn.cellStr (t ^. #qr) (fromIntegral (r0_ + ri) :: Word64) (fromIntegral i :: Word64)
   ) idxs
 
 colType :: AdbcTable -> Int -> ColType
-colType t col = fromMaybe ColTypeOther (Table.colTypes t V.!? col)
+colType t col = fromMaybe ColTypeOther ((t ^. #colTypes) V.!? col)
 
 cellStr :: AdbcTable -> Int -> Int -> IO Text
 cellStr t row col =
-  Conn.cellStr (Table.qr t) (fromIntegral row :: Word64) (fromIntegral col :: Word64)
+  Conn.cellStr (t ^. #qr) (fromIntegral row :: Word64) (fromIntegral col :: Word64)
 
 -- | Hide columns at cursor + selections, return new table and filtered group
 modifyTableHide :: AdbcTable -> Int -> Vector Int -> Vector Text -> IO (AdbcTable, Vector Text)
 modifyTableHide tbl_ cursor sels grp = do
   let idxs = if V.elem cursor sels then sels else V.snoc sels cursor
-      names = Table.colNames tbl_
+      names = tbl_ ^. #colNames
       hideNames = V.map (\i -> fromMaybe "" (names V.!? i)) idxs
   newTbl <- Table.hideCols tbl_ idxs
   pure (newTbl, V.filter (not . (`V.elem` hideNames)) grp)
@@ -63,11 +64,11 @@ modifyTableSort tbl_ cursor selIdxs grpIdxs asc =
 
 toText :: AdbcTable -> IO Text
 toText t = do
-  let nc = V.length (Table.colNames t)
+  let nc = V.length (t ^. #colNames)
   cols <- V.generateM nc $ \i ->
-    V.generateM (Table.nRows t) $ \r ->
-      Conn.cellStr (Table.qr t) (fromIntegral r :: Word64) (fromIntegral i :: Word64)
-  pure $ colText (Table.colNames t) cols (Table.nRows t)
+    V.generateM (t ^. #nRows) $ \r ->
+      Conn.cellStr (t ^. #qr) (fromIntegral r :: Word64) (fromIntegral i :: Word64)
+  pure $ colText (t ^. #colNames) cols (t ^. #nRows)
 
 -- ----------------------------------------------------------------------------
 -- ## Meta: column statistics from parquet metadata or SQL aggregation
@@ -139,13 +140,13 @@ queryMetaStats t sel = queryMetaImpl True (V.foldr Set.insert Set.empty sel) t
 
 queryMetaImpl :: Bool -> Set.HashSet Text -> AdbcTable -> IO (Maybe AdbcTable)
 queryMetaImpl withStats selSet t = do
-  let names = Table.colNames t
-      types = Table.colTypes t
+  let names = t ^. #colNames
+      types = t ^. #colTypes
   if V.null names
     then pure Nothing
     else do
       let parquetPath =
-            case extractPath (Prql.base (Table.query t)) of
+            case extractPath ((t ^. #query) ^. #base) of
               Just p | T.isSuffixOf ".parquet" p -> Just p
               _ -> Nothing
       mMetaSql <- case parquetPath of
@@ -153,7 +154,7 @@ queryMetaImpl withStats selSet t = do
         -- requested, fall through to the aggregate path.
         Just p | not withStats -> Prql.compile (metaPrql p)
         _ -> do
-          mBase <- Prql.compile (Prql.base (Table.query t))
+          mBase <- Prql.compile ((t ^. #query) ^. #base)
           case mBase of
             Nothing -> pure Nothing
             Just baseSql ->
@@ -173,13 +174,13 @@ queryMetaImpl withStats selSet t = do
 -- Non-numeric column names are silently dropped from the input.
 queryCorrMatrix :: AdbcTable -> Vector Text -> IO (Maybe AdbcTable)
 queryCorrMatrix t rawSel = do
-  let typeOf nm = fromMaybe ColTypeOther $ V.find (== nm) (Table.colNames t)
-                    *> (fmap (Table.colTypes t V.!) (V.findIndex (== nm) (Table.colNames t)))
+  let typeOf nm = fromMaybe ColTypeOther $ V.find (== nm) (t ^. #colNames)
+                    *> (fmap ((t ^. #colTypes) V.!) (V.findIndex (== nm) (t ^. #colNames)))
       sel = V.filter (\nm -> isNumeric (typeOf nm)) rawSel
   if V.length sel < 2
     then pure Nothing
     else do
-      mBase <- Prql.compile (Prql.base (Table.query t))
+      mBase <- Prql.compile ((t ^. #query) ^. #base)
       case mBase of
         Nothing -> pure Nothing
         Just baseSql -> do

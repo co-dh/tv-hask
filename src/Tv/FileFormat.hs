@@ -67,7 +67,7 @@ stripGz p = if T.isSuffixOf ".gz" p then T.dropEnd 3 p else p
 find :: Text -> Maybe Format
 find path_ =
   let p = stripGz path_
-  in V.find (\fmt -> V.any (`T.isSuffixOf` p) (exts fmt)) formats
+  in V.find (\fmt -> V.any (`T.isSuffixOf` p) (fmt ^. #exts)) formats
 
 -- | Is file a recognized data format?
 isData :: Text -> Bool
@@ -118,9 +118,9 @@ readCsv path_ = do
 
 -- | ATTACH database file and list its tables as a folder view
 attachFile :: Text -> Format -> IO (Maybe (View AdbcTable))
-attachFile ap fmt = do
-  Table.loadExt (duckdbExt fmt)
-  let typClause = if T.null (attachType fmt) then "" else "TYPE " <> attachType fmt <> ", "
+attachFile ap Format{duckdbExt, attachType} = do
+  Table.loadExt duckdbExt
+  let typClause = if T.null attachType then "" else "TYPE " <> attachType <> ", "
   _ <- Conn.query "DETACH DATABASE IF EXISTS extdb"
   _ <- Conn.query ("ATTACH '" <> escSql ap <> "' AS extdb (" <> typClause <> "READ_ONLY)")
   mQr <- Table.prqlQuery Prql.ducktabs
@@ -145,11 +145,11 @@ openFile :: Text -> IO (Maybe (View AdbcTable))
 openFile path_ = do
   ap <- absPath path_
   case find path_ of
-    Just fmt ->
-      if attach fmt
+    Just fmt@Format{attach, reader, duckdbExt} ->
+      if attach
         then attachFile ap fmt
         else do
-          mt <- Table.fileWith ap (reader fmt) (duckdbExt fmt)
+          mt <- Table.fileWith ap reader duckdbExt
           pure $ mt >>= \t -> View.fromTbl t path_ 0 V.empty 0
     Nothing -> do
       mt <- Table.fromFile ap

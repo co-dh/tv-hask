@@ -20,6 +20,7 @@ import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import Tv.Types (ColCache(..), ColType (..), isNumeric)
+import Optics.Core ((^.))
 
 -- | Cache: path + colIdx keyed → formatted agg string.
 type Cache = ColCache Int Text
@@ -32,13 +33,13 @@ cacheEmpty = ColCache "" 0 ""
 -- For large files, skip expensive SUM/AVG (no parquet shortcut) and show count only.
 compute :: AdbcTable -> Int -> IO Text
 compute t colIdx = do
-  if Table.totalRows t > Table.prqlLimit
-    then pure (T.pack ("#" ++ show (Table.totalRows t)))
+  if t ^. #totalRows > Table.prqlLimit
+    then pure (T.pack ("#" ++ show (t ^. #totalRows)))
     else do
-      let colName = fromMaybe "" $ Table.colNames t V.!? colIdx
-          colTy   = fromMaybe ColTypeOther $ Table.colTypes t V.!? colIdx
+      let colName = fromMaybe "" $ (t ^. #colNames) V.!? colIdx
+          colTy   = fromMaybe ColTypeOther $ (t ^. #colTypes) V.!? colIdx
           isNum   = isNumeric colTy
-      mBase <- Prql.compile $ Prql.queryRender $ Table.query t
+      mBase <- Prql.compile $ Prql.queryRender $ t ^. #query
       case mBase of
         Nothing -> pure ""
         Just baseSql -> do
@@ -68,9 +69,9 @@ render agg = unless (T.null agg) $ do
 
 -- | Update cache if column changed, then render. Returns updated cache.
 update :: Cache -> AdbcTable -> Text -> Int -> IO Cache
-update cache tbl path colIdx = do
+update cache@ColCache{cachedPath, cachedCol} tbl path colIdx = do
   cache' <-
-    if cachedPath cache == path && cachedCol cache == colIdx
+    if cachedPath == path && cachedCol == colIdx
       then pure cache
       else do
         agg <- do
@@ -79,5 +80,6 @@ update cache tbl path colIdx = do
             Left _  -> pure ""
             Right a -> pure a
         pure (ColCache path colIdx agg)
-  render (cachedVal cache')
+  let ColCache{cachedVal} = cache'
+  render cachedVal
   pure cache'

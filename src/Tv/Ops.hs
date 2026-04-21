@@ -35,13 +35,13 @@ import qualified Tv.Log as Log
 -- and push with a display label. The common tail of split and derive.
 pipeAndPush :: ViewStack AdbcTable -> Op -> Text -> (AdbcTable -> Int) -> IO (ViewStack AdbcTable)
 pipeAndPush s op label colIdxFn = do
-  let q = Prql.pipe (Table.query (View.tbl s)) op
+  let q = Prql.pipe (View.tbl s ^. #query) op
   Log.write "ops" (Prql.queryRender q)
-  mTbl <- Table.requery q (Table.totalRows (View.tbl s))
+  mTbl <- Table.requery q (View.tbl s ^. #totalRows)
   case mTbl of
     Nothing -> pure s
     Just tbl' ->
-      case View.rebuild (View.cur s) tbl' (colIdxFn tbl') (Nav.grp (View.nav (View.cur s))) 0 of
+      case View.rebuild (View.cur s) tbl' (colIdxFn tbl') (View.cur s ^. #nav ^. #grp) 0 of
         Nothing -> pure s
         Just v  -> pure (View.push s (v & #disp .~ label))
 
@@ -62,23 +62,23 @@ splitBindings col ep qc n =
 
 splitRunWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
 splitRunWith s pat = do
-  let nav = View.nav (View.cur s)
+  let nav = View.cur s ^. #nav
       curName = Nav.colName nav
   if Nav.colType nav /= ColTypeStr || T.null pat then pure s
   else do
     let ep = escSql pat
-    mBase <- Prql.compile (Prql.queryRender (Table.query (View.tbl s)))
+    mBase <- Prql.compile (Prql.queryRender (View.tbl s ^. #query))
     case mBase of
       Nothing -> pure s
       Just baseSql -> do
         n <- maxSplitParts (stripSemi baseSql) curName ep
         if n <= 1 then pure s
         else pipeAndPush s (OpDerive (splitBindings curName ep (Prql.ref curName) n))
-               (":" <> curName) (\t -> V.length (Table.colNames t) - n)
+               (":" <> curName) (\t -> V.length (t ^. #colNames) - n)
 
 splitRun :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 splitRun tm s = do
-  let curName = Nav.colName (View.nav (View.cur s))
+  let curName = Nav.colName (View.cur s ^. #nav)
       header = "Split '" <> curName <> "' by delimiter or regex"
   mRaw <- Fzf.fzf tm
     (V.fromList ["--print-query", "--prompt=split: ", "--header=" <> header])
@@ -137,16 +137,16 @@ deriveRunWith s input = case parseDerive input of
     Just msg -> Render.errorPopup ("derive: " <> msg) >> pure s
     Nothing  ->
       pipeAndPush s (OpDerive (V.singleton (name, expr)))
-        ("=" <> name) (\t -> V.length (Table.colNames t) - 1)
+        ("=" <> name) (\t -> V.length (t ^. #colNames) - 1)
 
 deriveRun :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 deriveRun tm s = do
-  let nav     = View.nav (View.cur s)
+  let nav     = View.cur s ^. #nav
       names   = Nav.colNames nav
       curName = Nav.colName nav
       typ     = Nav.colType nav
       header  = "name = expr\n" <> samples curName typ
-      hint    = colHints names (Table.colTypes (View.tbl s))
+      hint    = colHints names (View.tbl s ^. #colTypes)
   mRaw <- Fzf.fzf tm
     (V.fromList ["--print-query", "--prompt=derive: ", "--header=" <> header])
     hint
@@ -195,7 +195,7 @@ allOps = V.fromList [JoinInner, JoinLeft, JoinRight, JoinUnion, JoinDiff]
 prepareView :: AdbcTable -> Text -> IO (Text, Text)
 prepareView tbl suffix = do
   name <- tmpName ("j" <> suffix)
-  let prql = Prql.queryRender (Table.query tbl)
+  let prql = Prql.queryRender (tbl ^. #query)
   Log.write "prql" prql
   mSql <- Prql.compile prql
   case mSql of
@@ -204,10 +204,10 @@ prepareView tbl suffix = do
 
 execJoin :: ViewStack AdbcTable -> JoinOp -> Vector Text -> IO (Maybe (ViewStack AdbcTable))
 execJoin s op leftGrp = do
-  case listToMaybe (View.tl s) of
+  case listToMaybe (s ^. #tl) of
     Nothing -> pure Nothing
     Just parent -> do
-      (lName, lSql) <- prepareView (Nav.tbl (View.nav parent)) "l"
+      (lName, lSql) <- prepareView (parent ^. #nav ^. #tbl) "l"
       (rName, rSql) <- prepareView (View.tbl s) "r"
       createTempView lName lSql
       createTempView rName rSql
@@ -229,23 +229,23 @@ execJoin s op leftGrp = do
                       JoinUnion -> "union"
                       JoinDiff  -> "diff"
                       _ -> "⋈ (" <> T.intercalate ", " (V.toList leftGrp) <> ")"
-                    mView = View.fromTbl adbc (View.path (View.cur s')) 0 V.empty 0
+                    mView = View.fromTbl adbc (View.cur s' ^. #path) 0 V.empty 0
                 in pure $ fmap (\v -> View.setCur s' (v & #disp .~ disp_)) mView
 
 resolveOps :: ViewStack AdbcTable -> Maybe (Vector JoinOp, Vector Text)
 resolveOps s = do
-  parent <- listToMaybe (View.tl s)
-  let leftGrp = Nav.grp (View.nav parent)
-      joinOk  = not (V.null leftGrp) && leftGrp == Nav.grp (View.nav (View.cur s))
+  parent <- listToMaybe (s ^. #tl)
+  let leftGrp = parent ^. #nav ^. #grp
+      joinOk  = not (V.null leftGrp) && leftGrp == (View.cur s ^. #nav ^. #grp)
   pure (if joinOk then allOps else V.fromList [JoinUnion, JoinDiff], leftGrp)
 
 joinRun :: Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 joinRun tm s = case resolveOps s of
   Nothing -> pure Nothing
-  Just (ops, leftGrp) -> case listToMaybe (View.tl s) of
+  Just (ops, leftGrp) -> case listToMaybe (s ^. #tl) of
     Nothing -> pure Nothing
     Just parent -> do
-      (lName, _) <- prepareView (Nav.tbl (View.nav parent)) "l"
+      (lName, _) <- prepareView (parent ^. #nav ^. #tbl) "l"
       (rName, _) <- prepareView (View.tbl s) "r"
       let items = V.map (\op -> opLabel op <> "  |  " <> prqlStr lName rName leftGrp op) ops
       mIdx <- fzfIdx tm (V.fromList ["--prompt=join> "]) items
@@ -271,13 +271,13 @@ joinRunWith s idxStr = case resolveOps s of
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
   [ hdl (mkEntry CmdColSplit "ca" ":" "Split column by delimiter" False "")
-        (\a _ arg -> stackIO a (if T.null arg then splitRun (testMode a) (stk a) else splitRunWith (stk a) arg))
+        (\a _ arg -> stackIO a (if T.null arg then splitRun (a ^. #testMode) (a ^. #stk) else splitRunWith (a ^. #stk) arg))
   , hdl (mkEntry CmdColDerive "a" "=" "Derive new column (name = expr)" False "")
-        (\a _ arg -> stackIO a (if T.null arg then deriveRun (testMode a) (stk a) else deriveRunWith (stk a) arg))
+        (\a _ arg -> stackIO a (if T.null arg then deriveRun (a ^. #testMode) (a ^. #stk) else deriveRunWith (a ^. #stk) arg))
   , hdl (mkEntry CmdTblJoin "Sa" "J" "Join tables" False "")
         (\a _ arg -> stackIO a (do
-          ms <- joinRunWith (stk a) arg
+          ms <- joinRunWith (a ^. #stk) arg
           case ms of
             Just s' -> pure s'
-            Nothing -> pure (stk a)))
+            Nothing -> pure (a ^. #stk)))
   ]

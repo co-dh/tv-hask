@@ -24,6 +24,7 @@ import Tv.Types (Cmd(..), ExportFmt(..), StrEnum(toString, ofStringQ), escSql)
 import qualified Tv.Log as Log
 import Tv.View (ViewStack)
 import qualified Tv.View as View
+import Optics.Core ((^.))
 
 
 -- | DuckDB COPY option clause for an export format
@@ -48,7 +49,7 @@ pickFmt tm = do
 -- | Export current view to file via DuckDB COPY
 exportView :: AdbcTable -> Text -> ExportFmt -> IO ()
 exportView t path fmt = do
-  mSql <- Prql.compile (Prql.queryRender (Table.query t))
+  mSql <- Prql.compile (Prql.queryRender (t ^. #query))
   case mSql of
     Nothing  -> ioError (userError "PRQL compile failed")
     Just sql -> do
@@ -83,11 +84,11 @@ exportH :: HandlerFn
 exportH = \a _ arg -> stackIO a
   (if T.null arg
      then do
-       mf <- pickFmt (testMode a)
+       mf <- pickFmt (a ^. #testMode)
        case mf of
-         Just f  -> run (stk a) f
-         Nothing -> pure (stk a)
-     else runWith (stk a) arg)
+         Just f  -> run (a ^. #stk) f
+         Nothing -> pure (a ^. #stk)
+     else runWith (a ^. #stk) arg)
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList

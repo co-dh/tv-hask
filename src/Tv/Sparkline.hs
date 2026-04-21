@@ -19,6 +19,7 @@ import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.Types (isNumeric, joinWith)
 import qualified Tv.Log as Log
+import Optics.Core ((^.))
 
 -- 9 levels: space + 8 Unicode block elements
 blocks :: Vector Char
@@ -79,21 +80,21 @@ sparkFor nBars buckets
 -- nBars = number of histogram buckets.
 compute :: AdbcTable -> Int -> IO (Vector Text)
 compute t nBars = do
-  let names = Table.colNames t
-      types = Table.colTypes t
+  let names = t ^. #colNames
+      types = t ^. #colTypes
       empty = V.map (const "") names
       stepQuery (ps, is) i name = case types V.!? i of
         Just tp | isNumeric tp -> (V.snoc ps (bucketSql nBars i name), V.snoc is i)
         _                      -> (ps, is)
       (parts, numIdxs) = V.ifoldl' stepQuery (V.empty :: Vector Text, V.empty :: Vector Int) names
-  if V.null names || Table.nRows t == 0 || V.null parts
+  if V.null names || t ^. #nRows == 0 || V.null parts
     then pure empty
     else do
       -- Sample for sparklines: DuckDB can't use parquet metadata for histogram bucketing,
       -- so a full scan on large files is catastrophic. LIMIT is fast (sequential read).
-      let prql = if Table.totalRows t > Table.prqlLimit
-                   then Prql.queryRender (Table.query t) <> " | take " <> T.pack (show Table.prqlLimit)
-                   else Prql.queryRender (Table.query t)
+      let prql = if t ^. #totalRows > Table.prqlLimit
+                   then Prql.queryRender (t ^. #query) <> " | take " <> T.pack (show Table.prqlLimit)
+                   else Prql.queryRender (t ^. #query)
       mBase <- Prql.compile prql
       case mBase of
         Nothing -> empty <$ Log.errorLog "sparkline: PRQL compile failed"

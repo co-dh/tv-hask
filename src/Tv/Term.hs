@@ -1159,21 +1159,21 @@ pickHeat heatMode heatCols c si origIdx ri texts heatDoubles fgBase bgBase
     || si == _STYLE_CUR_ROW                    = base
   | otherwise = case heatCols V.!? c of
       Nothing -> base
-      Just hc
-        | hkKind hc == HeatNone                        -> base
-        | hkKind hc == HeatNum && not (testBit heatMode 0) -> base
-        | hkKind hc == HeatStr && not (testBit heatMode 1) -> base
-        | hkKind hc == HeatNum && hkDate hc ->
+      Just HeatCol{..}
+        | hkKind == HeatNone                        -> base
+        | hkKind == HeatNum && not (testBit heatMode 0) -> base
+        | hkKind == HeatStr && not (testBit heatMode 1) -> base
+        | hkKind == HeatNum && hkDate ->
             if T.null cellText then base
             else let v = heatDateToNum cellText
-                     t = (v - hkMn hc) / (hkMx hc - hkMn hc)
+                     t = (v - hkMn) / (hkMx - hkMn)
                  in (_HEAT_FG, heatColor t)
-        | hkKind hc == HeatNum ->
+        | hkKind == HeatNum ->
             let hdCol = if origIdx < V.length heatDoubles
                         then heatDoubles V.! origIdx else V.empty
                 val   = fromMaybe (0/0) $ hdCol V.!? ri
             in if isNaN val then base
-               else let t = (val - hkMn hc) / (hkMx hc - hkMn hc)
+               else let t = (val - hkMn) / (hkMx - hkMn)
                     in (_HEAT_FG, heatColor t)
         | otherwise ->  -- HeatStr
             if T.null cellText then base

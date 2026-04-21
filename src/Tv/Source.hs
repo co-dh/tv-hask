@@ -51,20 +51,20 @@ sources = V.fromList
 findSource :: Text -> Maybe Source
 findSource path_ = V.foldl' step Nothing sources
   where
-    step best src =
-      if not (T.null (pfx src)) && T.isPrefixOf (pfx src) path_
+    step best src@Source{pfx} =
+      if not (T.null pfx) && T.isPrefixOf pfx path_
         then case best of
-               Just b
-                 | T.length (pfx src) > T.length (pfx b) -> Just src
-                 | otherwise                              -> best
+               Just Source{pfx = bpfx}
+                 | T.length pfx > T.length bpfx -> Just src
+                 | otherwise                    -> best
                Nothing -> Just src
         else best
 
 runList :: Bool -> Source -> Text -> IO (Maybe AdbcTable)
-runList n src p = Core.withCache p (list src n p)
+runList n Source{list} p = Core.withCache p (list n p)
 
 runOpen :: Bool -> Source -> Text -> IO OpenResult
-runOpen n src p = open src n p
+runOpen n Source{open} p = open n p
 
 configParent :: Source -> Text -> Maybe Text
-configParent = parent
+configParent Source{parent} = parent

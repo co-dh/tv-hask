@@ -43,7 +43,7 @@ moveRowTo
 moveRowTo s rowIdx search_ =
   let v      = cur s
       n      = v ^. #nav
-      nRows_ = Table.nRows (n ^. #tbl)
+      nRows_ = n ^. #tbl ^. #nRows
       delta  = rowIdx - n ^. #row % #cur
       nav'   = over rowCur (\f -> finClamp nRows_ f delta) n
   in setCur s (v & #nav .~ nav'
@@ -54,7 +54,7 @@ moveTo :: ViewStack AdbcTable -> Int -> ViewStack AdbcTable
 moveTo s colIdx =
   let v      = cur s
       n      = v ^. #nav
-      nCols_ = V.length (Table.colNames (n ^. #tbl))
+      nCols_ = V.length (n ^. #tbl ^. #colNames)
       delta  = colIdx - n ^. #col % #cur
       nav'   = over colCur (\f -> finClamp nCols_ f delta) n
   in setCur s (v & #nav .~ nav')
@@ -63,7 +63,7 @@ moveTo s colIdx =
 colSearch :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 colSearch tm s = orKeep s $ do
   idx <- MaybeT $ Fzf.fzfIdx tm (V.fromList ["--prompt=Column: "])
-                    (Nav.dispNames (nav (cur s)))
+                    (Nav.dispNames (cur s ^. #nav))
   pure $ moveTo s idx
 
 -- | Shared: resolve current column, fetch sorted distinct values
@@ -260,9 +260,9 @@ searchWith s val = orKeep s $ do
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
   [ hdl (mkEntry CmdRowFilter     "a"  "\\" "Filter rows by PRQL expression"    True  "")
-        (\a _ arg -> stackIO a (if T.null arg then rowFilter (testMode a) (stk a) else filterWith (stk a) arg))
+        (\a _ arg -> stackIO a (if T.null arg then rowFilter (a ^. #testMode) (a ^. #stk) else filterWith (a ^. #stk) arg))
   , hdl (mkEntry CmdRowSearchNext "rc" "n"  "Jump to next search match"         False "") (onStk (fmap Just . (`searchDir` True)))
   , hdl (mkEntry CmdRowSearchPrev "rc" "N"  "Jump to previous search match"     False "") (onStk (fmap Just . (`searchDir` False)))
   , hdl (mkEntry CmdColSearch     "a"  "g"  "Jump to column by name"            True  "")
-        (\a _ arg -> stackIO a (if T.null arg then colSearch (testMode a) (stk a) else jumpCol (stk a) arg))
+        (\a _ arg -> stackIO a (if T.null arg then colSearch (a ^. #testMode) (a ^. #stk) else jumpCol (a ^. #stk) arg))
   ]

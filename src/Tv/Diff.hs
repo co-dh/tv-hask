@@ -41,25 +41,25 @@ commonCols :: AdbcTable -> AdbcTable -> Vector (Text, ColType)
 commonCols left right =
   V.mapMaybe
     (\name -> do
-       li <- Nav.idxOf (Table.colNames left) name
-       ri <- Nav.idxOf (Table.colNames right) name
-       let lt = fromMaybe ColTypeOther (Table.colTypes left V.!? li)
-           rt = fromMaybe ColTypeOther (Table.colTypes right V.!? ri)
+       li <- Nav.idxOf (left ^. #colNames) name
+       ri <- Nav.idxOf (right ^. #colNames) name
+       let lt = fromMaybe ColTypeOther ((left ^. #colTypes) V.!? li)
+           rt = fromMaybe ColTypeOther ((right ^. #colTypes) V.!? ri)
        if lt == rt then Just (name, lt) else Nothing)
-    (Table.colNames left)
+    (left ^. #colNames)
 
 -- | Columns in `tbl` that don't appear in `common` or `keys`
 onlyCols :: AdbcTable -> Vector (Text, ColType) -> Vector Text -> Vector Text
 onlyCols tbl common keys =
   V.filter
     (\n -> not (V.any (\(c, _) -> c == n) common) && not (V.elem n keys))
-    (Table.colNames tbl)
+    (tbl ^. #colNames)
 
 -- | Compile PRQL query to SQL for creating temp views
 prepareView :: AdbcTable -> Text -> IO (Text, Text)
 prepareView tbl sfx = do
   name <- Table.tmpName sfx
-  mSql <- Prql.compile (Prql.queryRender (Table.query tbl))
+  mSql <- Prql.compile (Prql.queryRender (tbl ^. #query))
   case mSql of
     Nothing  -> ioError (userError "PRQL compile failed")
     Just sql -> pure (name, Table.stripSemi sql)
@@ -143,17 +143,17 @@ renameCols tblName valCols = do
 
 -- | FULL OUTER JOIN top 2 stack views on shared categorical columns.
 run :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
-run s = case tl s of
+run s = case s ^. #tl of
   [] -> pure Nothing
   (parent : _) -> do
-    let left  = Nav.tbl (View.nav parent)
+    let left  = parent ^. #nav ^. #tbl
         right = View.tbl s
         common = commonCols left right
     if V.null common
       then do
         Render.statusMsg "diff: no common columns"
         pure Nothing
-      else case resolveKeys (Nav.grp (View.nav parent)) (Nav.grp (View.nav (View.cur s))) common of
+      else case resolveKeys (parent ^. #nav ^. #grp) (View.cur s ^. #nav ^. #grp) common of
         Nothing -> do
           Render.statusMsg "diff: no key columns (need categorical columns with same name+type)"
           pure Nothing
@@ -170,7 +170,7 @@ run s = case tl s of
               Just s' ->
                 pure $ fmap
                   (\v -> View.setCur s' (v & #disp .~ "diff" & #sameHide .~ sameHide_))
-                  $ View.fromTbl adbc (View.path (View.cur s')) 0 allKeys 0
+                  $ View.fromTbl adbc (View.cur s' ^. #path) 0 allKeys 0
 
 -- | Clear sameHide to reveal identical-value columns (toggle)
 showSame :: View AdbcTable -> View AdbcTable
@@ -180,8 +180,8 @@ commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
   [ hdl (mkEntry CmdTblDiff "S" "d" "Diff top two views" False "")
         (\a ci _ ->
-          if V.null (View.sameHide (View.cur (stk a)))
-            then tryStk a ci (run (stk a))
+          if V.null (View.cur (a ^. #stk) ^. #sameHide)
+            then tryStk a ci (run (a ^. #stk))
             else pure (ActOk (resetVS
-                    (a & #stk .~ View.setCur (stk a) (showSame (View.cur (stk a)))))))
+                    (a & #stk .~ View.setCur (a ^. #stk) (showSame (View.cur (a ^. #stk)))))))
   ]

@@ -19,6 +19,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Tv.Data.DuckDB as DB
 import qualified Tv.Types as Tc
+import Optics.Core ((^.))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Global Conn — singleton in-process DuckDB connection.
@@ -93,13 +94,13 @@ queryParam :: Text -> Text -> IO QueryResult
 queryParam sql _param = query sql
 
 ncols :: QueryResult -> IO Word64
-ncols qr = pure $ fromIntegral $ V.length $ colNames qr
+ncols qr = pure $ fromIntegral $ V.length $ qr ^. #colNames
 
 nrows :: QueryResult -> IO Word64
-nrows qr = pure $ fromIntegral $ nRows qr
+nrows qr = pure $ fromIntegral $ qr ^. #nRows
 
 colName :: QueryResult -> Word64 -> IO Text
-colName qr i = pure $ colNames qr V.! fromIntegral i
+colName qr i = pure $ (qr ^. #colNames) V.! fromIntegral i
 
 -- | Column format char. Lean returns the Arrow ArrowSchema.format string. DuckDB
 -- doesn't surface that directly, so we synthesize the first character per
@@ -110,7 +111,7 @@ colName qr i = pure $ colNames qr V.! fromIntegral i
 -- them to the '@' header indicator.
 colFmt :: QueryResult -> Word64 -> IO Text
 colFmt qr i =
-  let ty = colTypes qr V.! fromIntegral i
+  let ty = (qr ^. #colTypes) V.! fromIntegral i
   in pure $ T.singleton $ case ty of
        Tc.ColTypeInt       -> 'l'
        Tc.ColTypeFloat     -> 'g'
@@ -131,7 +132,7 @@ colFmt qr i =
 -- emit Arrow names — leaving this as-is for now so the ColType round-trip
 -- stays symmetric with Tv.Types.
 colType :: QueryResult -> Word64 -> IO Text
-colType qr i = pure $ ctToString $ colTypes qr V.! fromIntegral i
+colType qr i = pure $ ctToString $ (qr ^. #colTypes) V.! fromIntegral i
   where
     ctToString :: Tc.ColType -> Text
     ctToString Tc.ColTypeInt       = "int"
@@ -175,11 +176,11 @@ cellFloat qr r c = do
 -- over the prescanned chunk offsets.
 findChunk :: QueryResult -> Int -> Maybe (DB.DataChunk, Int)
 findChunk qr row
-  | row < 0 || row >= nRows qr = Nothing
-  | V.null (chunks qr) = Nothing
+  | row < 0 || row >= qr ^. #nRows = Nothing
+  | V.null (qr ^. #chunks) = Nothing
   | otherwise =
-      let offs = offsets qr
-          chs  = chunks qr
+      let offs = qr ^. #offsets
+          chs  = qr ^. #chunks
           go lo hi
             | lo >= hi  = lo
             | otherwise =
@@ -230,8 +231,8 @@ formatCellFromCV cv local prec_ typ = case typ of
 -- (≤ 1000 rows) live in one chunk, so the cross-chunk loop runs once.
 fetchRows :: QueryResult -> Int -> Int -> Int -> IO (V.Vector (V.Vector T.Text))
 fetchRows qr r0 r1 prec_ = do
-  let nc = V.length (colNames qr)
-      types = colTypes qr
+  let nc = V.length (qr ^. #colNames)
+      types = qr ^. #colTypes
   if r1 <= r0
     then pure (V.replicate nc V.empty)
     else V.generateM nc $ \c -> do
@@ -248,8 +249,8 @@ fetchRows qr r0 r1 prec_ = do
 -- yield NaN.
 fetchHeatDoubles :: QueryResult -> Int -> Int -> IO (V.Vector (V.Vector Double))
 fetchHeatDoubles qr r0 r1 = do
-  let nc = V.length (colNames qr)
-      types = colTypes qr
+  let nc = V.length (qr ^. #colNames)
+      types = qr ^. #colTypes
       isNumTy t = t == Tc.ColTypeInt || t == Tc.ColTypeFloat || t == Tc.ColTypeDecimal
       nan = 0/0 :: Double
   if r1 <= r0

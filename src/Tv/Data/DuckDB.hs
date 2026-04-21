@@ -101,6 +101,12 @@ data Conn = Conn
   , connHdl :: !(ForeignPtr DuckDBConnection)
   }
 
+connDb :: Conn -> ForeignPtr DuckDBDatabase
+connDb (Conn d _) = d
+
+connHdl :: Conn -> ForeignPtr DuckDBConnection
+connHdl (Conn _ h) = h
+
 -- | A query result. Holds a heap-allocated 'DuckDBResult' struct whose
 -- finalizer runs @duckdb_destroy_result@. 'Conn' is retained via a
 -- concurrent finalizer.
@@ -111,12 +117,26 @@ data Result = Result
   , resRawTypes :: !(Vector DuckDBType)
   }
 
+resPtr      :: Result -> ForeignPtr DuckDBResult
+resPtr      (Result p _ _ _) = p
+resColNames :: Result -> Vector Text
+resColNames (Result _ n _ _) = n
+resColTypes :: Result -> Vector ColType
+resColTypes (Result _ _ t _) = t
+resRawTypes :: Result -> Vector DuckDBType
+resRawTypes (Result _ _ _ r) = r
+
 -- | One DuckDB data chunk (≤ 2048 rows). The ForeignPtr finalizer runs
 -- @duckdb_destroy_data_chunk@ and retains the parent 'Result'.
 data DataChunk = DataChunk
   { chunkFp    :: !(ForeignPtr ())
   , chunkOwner :: !Result
   }
+
+chunkFp    :: DataChunk -> ForeignPtr ()
+chunkFp    (DataChunk p _) = p
+chunkOwner :: DataChunk -> Result
+chunkOwner (DataChunk _ o) = o
 
 -- | Zero-copy view into one column of one chunk.
 --
@@ -131,6 +151,19 @@ data ColumnView = ColumnView
   , cvValidity :: !(Ptr Word64)
   , cvChunk    :: !DataChunk  -- retains chunk for lifetime of reads
   }
+
+cvType     :: ColumnView -> ColType
+cvType     (ColumnView t _ _ _ _ _) = t
+cvRawType  :: ColumnView -> DuckDBType
+cvRawType  (ColumnView _ r _ _ _ _) = r
+cvSize     :: ColumnView -> Int
+cvSize     (ColumnView _ _ s _ _ _) = s
+cvData     :: ColumnView -> Ptr ()
+cvData     (ColumnView _ _ _ d _ _) = d
+cvValidity :: ColumnView -> Ptr Word64
+cvValidity (ColumnView _ _ _ _ v _) = v
+cvChunk    :: ColumnView -> DataChunk
+cvChunk    (ColumnView _ _ _ _ _ c) = c
 
 data DuckDBError = DuckDBError String deriving Show
 instance Exception DuckDBError

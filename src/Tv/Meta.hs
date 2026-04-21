@@ -28,7 +28,7 @@ import Tv.Data.DuckDB.Table (AdbcTable)
 -- | Extract meta table name from the current view's AdbcTable query base.
 --   e.g. "from tc_meta_3" -> "tc_meta_3"
 tblName :: ViewStack AdbcTable -> Text
-tblName s = T.strip (T.drop 5 (Prql.base (Table.query (View.tbl s))))  -- drop "from "
+tblName s = T.strip (T.drop 5 ((View.tbl s ^. #query) ^. #base))  -- drop "from "
 
 -- | Push column metadata view onto stack
 push :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
@@ -38,11 +38,11 @@ push s = do
     Nothing -> pure Nothing
     Just adbc0 -> do
       -- Enrich meta with DuckDB column comments (e.g. osquery views with COMMENT ON COLUMN)
-      let metaBase = T.strip $ T.drop 5 (Prql.base (Table.query adbc0))
+      let metaBase = T.strip $ T.drop 5 ((adbc0 ^. #query) ^. #base)
       enriched <- Ops.enrichComments metaBase (View.cur s ^. #path)
       adbc <-
         if enriched
-          then fromMaybe adbc0 <$> Table.requery (Table.query adbc0) (Table.totalRows adbc0)
+          then fromMaybe adbc0 <$> Table.requery (adbc0 ^. #query) (adbc0 ^. #totalRows)
           else pure adbc0
       let mV = View.fromTbl adbc (View.cur s ^. #path) 0 mempty 0
       pure $ fmap (\v -> View.push s (v & #vkind .~ VkColMeta & #disp .~ "meta")) mV
@@ -120,7 +120,7 @@ setKey s =
     colNames <- Ops.metaNames (tblName s) (View.cur s ^. #nav % #row % #sels)
     case View.pop s of
       Just s' -> do
-        let di = Nav.dispOrder colNames (Table.colNames (View.tbl s'))
+        let di = Nav.dispOrder colNames (View.tbl s' ^. #colNames)
             v  = View.cur s'
                  & #nav % #grp      .~ colNames
                  & #nav % #dispIdxs .~ di
@@ -132,9 +132,9 @@ commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList $
   [ hdl (mkEntry CmdMetaPush      ""  "M"     "Open column metadata view"       True  "")        (onStk push)
   , hdl (mkEntry CmdMetaSetKey    "s" "<ret>" "Set selected rows as key columns" True  "colMeta")
-        (\a ci _ -> if View.cur (stk a) ^. #vkind == VkColMeta then tryStk a ci (setKey (stk a)) else viewUp a ci)
+        (\a ci _ -> if View.cur (a ^. #stk) ^. #vkind == VkColMeta then tryStk a ci (setKey (a ^. #stk)) else viewUp a ci)
   , hdl (mkEntry CmdMetaStats     "s" "S"     "Compute stats for selected numeric cols" True "colMeta")
-        (\a ci _ -> if View.cur (stk a) ^. #vkind == VkColMeta then tryStk a ci (stats (stk a)) else viewUp a ci)
+        (\a ci _ -> if View.cur (a ^. #stk) ^. #vkind == VkColMeta then tryStk a ci (stats (a ^. #stk)) else viewUp a ci)
   , hdl (mkEntry CmdMetaCorr      "s" "C"     "Correlation matrix for selected numeric cols" True "colMeta")
-        (\a ci _ -> if View.cur (stk a) ^. #vkind == VkColMeta then tryStk a ci (corr (stk a)) else viewUp a ci)
+        (\a ci _ -> if View.cur (a ^. #stk) ^. #vkind == VkColMeta then tryStk a ci (corr (a ^. #stk)) else viewUp a ci)
   ] ++ [ hdl (mkEntry c "" k lbl True "") (selByH flt) | (c, k, lbl, flt) <- metaSels ]

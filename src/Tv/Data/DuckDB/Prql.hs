@@ -23,12 +23,14 @@ import Tv.Types
   , joinWith
   )
 import qualified Tv.Log as Log
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | PRQL query: base table + operations (PRQL-specific base format)
 data Query = Query
   { base :: Text      -- PRQL from clause
   , ops  :: Vector Op
   }
+makeFieldLabelsNoPrefix ''Query
 
 -- | Default query: "from df" with no ops
 defaultQuery :: Query
@@ -92,20 +94,20 @@ opRender (OpTake n) = "take " <> T.pack (show n)
 
 -- | Render just the ops portion (no base/from clause)
 renderOps :: Query -> Text
-renderOps q =
-  if V.null (ops q)
+renderOps Query{ops} =
+  if V.null ops
     then ""
-    else joinWith (V.map opRender (ops q)) " | "
+    else joinWith (V.map opRender ops) " | "
 
 -- | Render full query to PRQL string
 queryRender :: Query -> Text
-queryRender q =
+queryRender q@Query{base} =
   let os = renderOps q
-  in if T.null os then base q else base q <> " | " <> os
+  in if T.null os then base else base <> " | " <> os
 
 -- | Pipe: append operation to query
 pipe :: Query -> Op -> Query
-pipe q op = q { ops = V.snoc (ops q) op }
+pipe q@Query{ops} op = q { ops = V.snoc ops op }
 
 -- | Filter helper
 queryFilter :: Query -> Text -> Query

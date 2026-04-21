@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-
   Source.Core: shared glue for per-source modules.
 
@@ -32,6 +33,7 @@ import Tv.Data.DuckDB.Table (AdbcTable, tmpName)
 import qualified Tv.Log as Log
 import qualified Tv.Render as Render
 import qualified Tv.Tmp as Tmp
+import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | A remote directory backend: prefix match + two behavior closures.
 -- Folder and App.Main treat every source uniformly through this record.
@@ -44,6 +46,13 @@ import qualified Tv.Tmp as Tmp
 -- One-time setup (e.g. DuckDB ATTACH, python script) happens inside
 -- `list`/`open` via `Core.onceFor` keyed on `pfx`, so the closures
 -- stay idempotent without a separate `setup` field.
+-- | What a source's `open` produced for a path.
+data OpenResult
+  = OpenAsTable AdbcTable       -- open-row-as-table (osquery script, pg ATTACH table)
+  | OpenAsFile  FilePath        -- local path ready for FileFormat.openFile
+  | OpenAsDir   Text            -- URI to re-enter as a folder (e.g. "hf://datasets/foo/")
+  | OpenNothing                 -- can't open / source doesn't support it
+
 data Source = Source
   { pfx    :: Text                                     -- URI prefix, e.g. "s3://"
   , parent :: Text -> Maybe Text                       -- parent URI or Nothing at root
@@ -51,13 +60,7 @@ data Source = Source
   , list   :: Bool -> Text -> IO (Maybe AdbcTable)     -- noSign, path → listing
   , open   :: Bool -> Text -> IO OpenResult            -- noSign, fullPath → what to do
   }
-
--- | What a source's `open` produced for a path.
-data OpenResult
-  = OpenAsTable AdbcTable       -- open-row-as-table (osquery script, pg ATTACH table)
-  | OpenAsFile  FilePath        -- local path ready for FileFormat.openFile
-  | OpenAsDir   Text            -- URI to re-enter as a folder (e.g. "hf://datasets/foo/")
-  | OpenNothing                 -- can't open / source doesn't support it
+makeFieldLabelsNoPrefix ''Source
 
 -- | AdbcTable has no Show instance, so we summarise the variant only.
 instance Show OpenResult where

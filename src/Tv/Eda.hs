@@ -41,7 +41,7 @@ sample = pushWith "sample" $ \baseSql _s ->
 dupes :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 dupes = pushWith "dupes" $ \baseSql s ->
   let grp    = View.cur s ^. #nav % #grp
-      allCol = Table.colNames (View.tbl s)
+      allCol = View.tbl s ^. #colNames
       keys   = if V.null grp then allCol else grp
   in if V.null keys
        then pure Nothing
@@ -75,7 +75,7 @@ pushWith
   -> (Text -> ViewStack AdbcTable -> IO (Maybe Text))
   -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 pushWith label mk s = do
-  mBase <- Prql.compile (Prql.queryRender (Table.query (View.tbl s)))
+  mBase <- Prql.compile (Prql.queryRender (View.tbl s ^. #query))
   case mBase of
     Nothing -> pure Nothing
     Just baseSql -> do
@@ -88,14 +88,14 @@ pushWith label mk s = do
           mAdbc <- fromTmp tbl
           pure $ mAdbc >>= \adbc ->
             fmap (\v -> View.push s (v & #disp .~ label))
-              (View.fromTbl adbc (View.path (View.cur s)) 0 V.empty 0)
+              (View.fromTbl adbc (View.cur s ^. #path) 0 V.empty 0)
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
   [ hdl (mkEntry CmdSample   ""  "?" "Random sample 1000 rows" True "")
-        (\a ci _ -> tryStk a ci (sample (stk a)))
+        (\a ci _ -> tryStk a ci (sample (a ^. #stk)))
   , hdl (mkEntry CmdDupes    ""  "u" "Rows sharing group-column values with others" True "")
-        (\a ci _ -> tryStk a ci (dupes (stk a)))
+        (\a ci _ -> tryStk a ci (dupes (a ^. #stk)))
   , hdl (mkEntry CmdCrosstab ""  "P" "2-way crosstab/pivot (requires exactly two grouped cols)" True "")
-        (\a ci _ -> tryStk a ci (crosstab (stk a)))
+        (\a ci _ -> tryStk a ci (crosstab (a ^. #stk)))
   ]

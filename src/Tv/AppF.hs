@@ -88,7 +88,7 @@ run i = go
     go m = case m of
       Pure x       -> pure x
       LiftIO io k  -> do b  <- io;          go (k b )
-      Render s k   -> do s' <- render  i s; go (k s')
-      NextKey k    -> do o  <- nextKey i;   go (k o )
-      ReadArg k    -> do s  <- readArg i;   go (k s )
+      Render s k   -> do s' <- (i ^. #render) s; go (k s')
+      NextKey k    -> do o  <- i ^. #nextKey;    go (k o )
+      ReadArg k    -> do s  <- i ^. #readArg;    go (k s )
       Halt         -> ioError (userError "AppM.halt reached (unreachable sentinel)")

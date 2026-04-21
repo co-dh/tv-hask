@@ -157,7 +157,7 @@ propPushPop =
         v1   = View.new nav0 "b.csv"
         s0   = View.ViewStack { View.hd = v0, View.tl = [] }
         s1   = View.push s0 v1
-    in fmap (View.path . View.hd) (View.pop s1) === Just (View.path v0)
+    in fmap ((^. #hd % #path)) (View.pop s1) === Just (v0 ^. #path)
 
 -- ViewStack.swap: swap (swap s) == s for non-empty (hasParent) stack.
 propSwapInvolutive :: Property
@@ -170,7 +170,7 @@ propSwapInvolutive =
         s    = View.ViewStack { View.hd = v1, View.tl = [v0] }
         s'   = View.swap (View.swap s)
     in View.hasParent s ==>
-         (View.path (View.hd s') === View.path (View.hd s))
+         (s' ^. #hd % #path === s ^. #hd % #path)
 
 -- ViewStack.dup: tl length increases by exactly 1.
 propDupLength :: Property
@@ -182,7 +182,7 @@ propDupLength =
         v0   = View.new nav0 "a.csv"
         s0   = View.ViewStack { View.hd = v0, View.tl = replicate tlLen v0 }
         s1   = View.dup s0
-    in length (View.tl s1) === length (View.tl s0) + 1
+    in length (s1 ^. #tl) === length (s0 ^. #tl) + 1
 
 -- Nav.dispOrder / idxOf: for each index i in dispOrder, names !? i is some
 -- name, and idxOf names name returns Just i (names are unique).

@@ -56,6 +56,7 @@ import qualified Tv.Log as Log
 import qualified Tv.Tmp as Tmp
 import Tv.View (ViewStack)
 import qualified Tv.View as View
+import Optics.Core ((^.))
 
 -- $setup
 -- >>> :set -XOverloadedStrings
@@ -298,13 +299,13 @@ exportCandleWithHeaders t xName (o, h, l, c) = do
 -- loop because OHLC data is already time-bucketed.
 runCandle :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 runCandle s = do
-  let n  = View.nav (View.cur s)
-      gp = Nav.grp n
+  let n  = View.cur s ^. #nav
+      gp = n ^. #grp
   if V.length gp < 5
     then err s "candle: group 5 columns first — x, open, high, low, close (!)"
     else do
       let [xName, oName, hName, lName, cName] = V.toList (V.take 5 gp)
-          tbl    = Nav.tbl n
+          tbl    = n ^. #tbl
           names  = Nav.colNames n
       case Nav.idxOf names xName of
         Nothing -> err s ("candle: x column '" <> xName <> "' not found")
@@ -346,10 +347,10 @@ renderFrame pngPath intervals idx err_ = do
         bar =
           T.intercalate " "
             (V.toList (V.imap
-              (\i iv ->
+              (\i Interval{label} ->
                  if i == idx
-                   then "\x1b[1;7m " <> label iv <> " \x1b[0m"
-                   else " " <> label iv <> " ")
+                   then "\x1b[1;7m " <> label <> " \x1b[0m"
+                   else " " <> label <> " ")
               intervals))
     TIO.putStrLn ("\r                                  " <> hi "," <> "/" <> hi "." <> ":" <> bar)
 
@@ -372,7 +373,7 @@ sniffXType tbl xIdx xType0 = do
 -- then block on keys until the user quits.
 runSingle :: ViewStack AdbcTable -> PlotKind -> IO (Maybe (ViewStack AdbcTable))
 runSingle s kind = do
-  let n = View.nav (View.cur s)
+  let n = View.cur s ^. #nav
       yIdx = Nav.colIdx n
       yName = Nav.colName n
       yType = Nav.colType n
@@ -383,8 +384,8 @@ runSingle s kind = do
       altEnter
       datPath <- Table.plotDatPath
       pngPath <- Tmp.tmpPath "plot.png"
-      let nr = min (Table.nRows (Nav.tbl n)) maxPoints
-      cols <- Ops.getCols (Nav.tbl n) (V.singleton yIdx) 0 nr
+      let nr = min ((n ^. #tbl) ^. #nRows) maxPoints
+      cols <- Ops.getCols (n ^. #tbl) (V.singleton yIdx) 0 nr
       let vals = fromMaybe V.empty $ cols V.!? 0
       TIO.writeFile datPath $
         yName <> "\n"
@@ -421,16 +422,16 @@ plotLoop tbl kind xName yName hasCat catName exportCat xType xIsTime baseStep
           nr_ <- readIORef needRenderRef
           when nr_ $ do
             idx <- readIORef idxRef
-            let iv = fromMaybe (Interval "" 0) $ intervals V.!? idx
+            let Interval{label, truncLen} = fromMaybe (Interval "" 0) $ intervals V.!? idx
             Log.write "plot" $
               "kind=" <> T.pack (show kind)
-                <> " interval=" <> label iv
-                <> " truncLen=" <> T.pack (show (truncLen iv))
+                <> " interval=" <> label
+                <> " truncLen=" <> T.pack (show truncLen)
                 <> " idx=" <> T.pack (show idx)
             -- export may fail (type mismatch, empty filter) — surface as overlay, not crash
             exportResult <- do
               r <- try $
-                exportWithHeaders tbl xName yName exportCat xIsTime baseStep (truncLen iv)
+                exportWithHeaders tbl xName yName exportCat xIsTime baseStep truncLen
               case r :: Either SomeException (Maybe (Vector Text)) of
                 Right (Just _)  -> pure (Nothing :: Maybe Text)
                 Right Nothing   -> pure (Just "export returned no data")
@@ -460,34 +461,35 @@ plotLoop tbl kind xName yName hasCat catName exportCat xType xIsTime baseStep
 -- Validates args, sniffs xType if string, then enters the interactive loop.
 runGroup :: ViewStack AdbcTable -> PlotKind -> IO (Maybe (ViewStack AdbcTable))
 runGroup s kind = do
-  let n = View.nav (View.cur s)
+  let n = View.cur s ^. #nav
       names = Nav.colNames n
-  if V.null (Nav.grp n)
+      gp = n ^. #grp
+  if V.null gp
     then err s "group a column first (!)"
     else do
-      let xName = fromMaybe "" $ Nav.grp n V.!? 0
+      let xName = fromMaybe "" $ gp V.!? 0
       case Nav.idxOf names xName of
         Nothing -> err s $ "x-axis column '" <> xName <> "' not found"
         Just xIdx -> do
-          let hasFacet = V.length (Nav.grp n) > 2
-              facetName = if hasFacet then fromMaybe "" $ Nav.grp n V.!? 1 else ""
+          let hasFacet = V.length gp > 2
+              facetName = if hasFacet then fromMaybe "" $ gp V.!? 1 else ""
               catName
-                | hasFacet  = fromMaybe "" $ Nav.grp n V.!? 2
-                | otherwise = fromMaybe "" $ Nav.grp n V.!? 1
+                | hasFacet  = fromMaybe "" $ gp V.!? 2
+                | otherwise = fromMaybe "" $ gp V.!? 1
               exportCat
-                | V.length (Nav.grp n) > 2 = Just facetName
-                | V.length (Nav.grp n) > 1 = Just catName
-                | otherwise                = Nothing
+                | V.length gp > 2 = Just facetName
+                | V.length gp > 1 = Just catName
+                | otherwise       = Nothing
               yName = Nav.colName n
               yType = Nav.colType n
-          if V.elem yName (Nav.grp n)
+          if V.elem yName gp
             then err s "move cursor to a non-group column"
           else if not (isNumeric yType)
             then err s $ "y-axis '" <> yName <> "' must be numeric (got "
                          <> toString yType <> ")"
           else do
-            let tbl = Nav.tbl n
-                nr = Table.totalRows tbl
+            let tbl = n ^. #tbl
+                nr = tbl ^. #totalRows
                 xType0 = Ops.colType tbl xIdx
             xType <- sniffXType tbl xIdx xType0
             Log.write "plot" $
@@ -498,7 +500,7 @@ runGroup s kind = do
             let xIsTime = isTime xType
                 needsDownsample = nr > maxPoints
                 baseStep = if needsDownsample then nr `div` maxPoints else 1
-                hasCat = V.length (Nav.grp n) > 1 && not hasFacet
+                hasCat = V.length gp > 1 && not hasFacet
                 intervals = if needsDownsample
                               then getIntervals xType baseStep
                               else V.singleton (Interval "all" 1)

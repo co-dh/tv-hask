@@ -144,7 +144,7 @@ runTsv r nm pipe test_ ns th ks = case r of
 -- output table as plain text
 outputTable :: AppState -> IO ()
 outputTable a = do
-  txt <- Ops.toText (View.tbl (stk a))
+  txt <- Ops.toText (View.tbl (a ^. #stk))
   TIO.putStrLn txt
 
 -- | Init backend + log file + tmp dir. Returns backend error ("" on success).
@@ -192,9 +192,9 @@ dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
     -- Source-driven direct entry (e.g. tv osquery://groups): try `open` for
     -- paths that name a single thing (no trailing '/') under a source prefix.
     handled <- case srcCfg of
-      Just src | not (T.null (Source.pfx src))
+      Just src | not (T.null (src ^. #pfx))
                , not (T.isSuffixOf "/" p)
-               , T.length p > T.length (Source.pfx src) -> do
+               , T.length p > T.length (src ^. #pfx) -> do
           r <- Source.runOpen noSign_ src p
           case r of
             Source.OpenAsTable adbc ->
@@ -267,12 +267,12 @@ appMain args
   let cli = parseArgs args
       CliArgs { path = path_, keys = keys_, noSign = noSign_ } = cli
   envTest  <- maybe False (const True) <$> lookupEnv "TV_TEST_MODE"
-  let testMode = test cli || envTest
+  let testMode = cli ^. #test || envTest
   pipeMode <- if testMode then pure False else not <$> Term.isattyStdin
   theme    <- Theme.stateInit
   err      <- initLogging
   unless (T.null err) $ TIO.hPutStrLn stderr err
-  when (T.null err) $ case session cli of
+  when (T.null err) $ case cli ^. #session of
     Just sessName -> finallyCleanup (runSession sessName theme testMode noSign_ keys_)
     Nothing
       | pipeMode && path_ == Nothing -> do

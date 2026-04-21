@@ -162,12 +162,12 @@ signHeaders httpMethod host_ cPath cQuery payload = do
 buildSigned
   :: Creds -> UTCTime -> BS.ByteString -> Text -> Text -> Text -> Text
   -> [(HeaderName, BS.ByteString)]
-buildSigned c now httpMethod host_ cPath cQuery payload =
+buildSigned Creds{ckAccess, ckSecret, ckToken, ckRegion} now httpMethod host_ cPath cQuery payload =
   let amzDate = BS8.pack (formatTime defaultTimeLocale "%Y%m%dT%H%M%SZ" now)
       dateStamp = BS8.pack (formatTime defaultTimeLocale "%Y%m%d" now)
       payloadHash = hexSha256 (TE.encodeUtf8 payload)
       hostBs = TE.encodeUtf8 host_
-      tokenPair = case ckToken c of
+      tokenPair = case ckToken of
         Nothing -> []
         Just t  -> [("x-amz-security-token", t)]
       -- Headers participating in the signature, sorted by lowercased name.
@@ -191,16 +191,16 @@ buildSigned c now httpMethod host_ cPath cQuery payload =
         ]
       crHash = hexSha256 canonicalReq
       scope = BS.intercalate "/"
-        [dateStamp, ckRegion c, "s3", "aws4_request"]
+        [dateStamp, ckRegion, "s3", "aws4_request"]
       stringToSign = BS.intercalate "\n"
         ["AWS4-HMAC-SHA256", amzDate, scope, crHash]
-      kDate    = hmacRaw ("AWS4" <> ckSecret c) dateStamp
-      kRegion  = hmacRaw kDate (ckRegion c)
+      kDate    = hmacRaw ("AWS4" <> ckSecret) dateStamp
+      kRegion  = hmacRaw kDate ckRegion
       kService = hmacRaw kRegion "s3"
       kSigning = hmacRaw kService "aws4_request"
       sig = B16.encode (hmacRaw kSigning stringToSign)
       authValue = BS.concat
-        [ "AWS4-HMAC-SHA256 Credential=", ckAccess c, "/", scope
+        [ "AWS4-HMAC-SHA256 Credential=", ckAccess, "/", scope
         , ", SignedHeaders=", signedHeaderNames
         , ", Signature=", sig
         ]

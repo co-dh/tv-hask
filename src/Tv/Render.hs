@@ -22,6 +22,7 @@ import qualified Tv.Theme as Theme
 import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
+import Optics.Core ((%), (^.))
 import Tv.Types
   ( ColType
   , RenderCtx(..)
@@ -55,13 +56,13 @@ rowPg = 20
 
 -- | Fetch rows from AdbcTable and render via renderCols
 renderView :: AdbcTable -> RenderCtx -> IO (Vector Int)
-renderView t ctx = do
-  texts <- Conn.fetchRows (Table.qr t) (r0 ctx) (r1 ctx) (prec ctx)
-  heatDs <- if heatMode ctx == 0
+renderView t ctx@RenderCtx{r0, r1, prec, heatMode} = do
+  texts <- Conn.fetchRows (t ^. #qr) r0 r1 prec
+  heatDs <- if heatMode == 0
     then pure V.empty
-    else Conn.fetchHeatDoubles (Table.qr t) (r0 ctx) (r1 ctx)
-  renderCols texts (Table.colNames t) (Table.colFmts t) (Table.colTypes t)
-    (Table.nRows t) ctx (r0 ctx) (r1 ctx - r0 ctx) heatDs
+    else Conn.fetchHeatDoubles (t ^. #qr) r0 r1
+  renderCols texts (t ^. #colNames) (t ^. #colFmts) (t ^. #colTypes)
+    (t ^. #nRows) ctx r0 (r1 - r0) heatDs
 
 -- | Shared render helper: adjusts cursor/selections for window, calls renderer
 renderCols
@@ -106,30 +107,30 @@ render
   -> Vector Word32 -> Int -> Int
   -> ViewKind -> Word8 -> Vector Text -> Vector Int
   -> IO (ViewState, Vector Int)
-render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ extraHidden = do
+render nav ViewState{rowOff, lastCol} inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ extraHidden = do
   Term.clear
   h <- Term.height
   w <- Term.width
   let sparkOn = V.any (not . T.null) sparklines_
   let nVis = min visRows (fromIntegral h - reservedLines sparkOn)
-  let rowOff_ = adjOff (Nav.cur (Nav.row nav)) (rowOff view) nVis
+  let rowOff_ = adjOff (nav ^. #row % #cur) rowOff nVis
   let curColIdx_ = Nav.colIdx nav
   let moveDir_ =
-        if curColIdx_ > lastCol view then 1
-        else if curColIdx_ < lastCol view then -1
+        if curColIdx_ > lastCol then 1
+        else if curColIdx_ < lastCol then -1
         else 0
-  let nRows_ = Table.nRows (tbl nav)
+  let nRows_ = nav ^. #tbl ^. #nRows
   let ctx = RenderCtx
         { inWidths   = inWidths_
-        , dispIdxs   = Nav.dispIdxs nav
-        , nGrp       = V.length (grp nav)
+        , dispIdxs   = nav ^. #dispIdxs
+        , nGrp       = V.length (nav ^. #grp)
         , r0         = rowOff_
         , r1         = min nRows_ (rowOff_ + nVis)
-        , curRow     = Nav.cur (Nav.row nav)
+        , curRow     = nav ^. #row % #cur
         , curCol     = curColIdx_
         , moveDir    = moveDir_
         , selIdxs = Nav.selIdxs nav
-        , rowSels    = Nav.sels (Nav.row nav)
+        , rowSels    = nav ^. #row % #sels
         , hiddenIdxs = Nav.hiddenIdxs nav V.++ extraHidden
         , styles     = styles_
         , prec       = prec_
@@ -138,7 +139,7 @@ render nav view inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ ex
         , sparklines = sparklines_
         }
   -- C returns base widths (no widthAdj), store as-is
-  widths <- renderView (tbl nav) ctx
+  widths <- renderView (nav ^. #tbl) ctx
   statusLine nav vkind styles_ prec_ widthAdj_ curColIdx_ w h
   pure (ViewState { rowOff = rowOff_, lastCol = curColIdx_ }, widths)
 
@@ -150,7 +151,7 @@ statusLine
 statusLine nav vkind styles_ prec_ widthAdj_ curColIdx_ w h = do
   let total = case vkind of
         VkFreqV _ t -> t
-        _           -> Table.totalRows (tbl nav)
+        _           -> nav ^. #tbl ^. #totalRows
       colName = Nav.colName nav
       nCols_ = V.length (Nav.colNames nav)
       adj =
@@ -158,10 +159,10 @@ statusLine nav vkind styles_ prec_ widthAdj_ curColIdx_ w h = do
         <> (if widthAdj_ /= 0 then " w" <> T.pack (show widthAdj_) else "")
       right =
         "c" <> T.pack (show curColIdx_) <> "/" <> T.pack (show nCols_)
-        <> " grp=" <> T.pack (show (V.length (grp nav)))
-        <> " sel=" <> T.pack (show (V.length (Nav.sels (Nav.row nav))))
+        <> " grp=" <> T.pack (show (V.length (nav ^. #grp)))
+        <> " sel=" <> T.pack (show (V.length (nav ^. #row % #sels)))
         <> adj
-        <> " r" <> T.pack (show (Nav.cur (Nav.row nav)))
+        <> " r" <> T.pack (show (nav ^. #row % #cur))
         <> "/" <> T.pack (show total)
       pad = fromIntegral w - T.length colName - T.length right
   Term.print 0 (h - 1)
@@ -200,9 +201,9 @@ tabLine tabs curIdx replay = do
 -- | Wait for 'q' key press
 waitForQ :: IO ()
 waitForQ = do
-  ev <- Term.pollEvent
-  if Term.typ ev == Term.eventKey
-       && Term.ch ev == fromIntegral (fromEnum 'q')
+  Term.Event{Term.typ, Term.ch} <- Term.pollEvent
+  if typ == Term.eventKey
+       && ch == fromIntegral (fromEnum 'q')
     then pure ()
     else waitForQ
 
