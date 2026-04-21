@@ -9,12 +9,7 @@
 --
 -- Kept small and pure so it runs inside the picker hot loop (one call per
 -- (item, keystroke) pair) without allocating much.
-module Tv.Fzf.Match
-  ( match
-  , matchNoPos
-  , score
-  , isMatch
-  ) where
+module Tv.Fzf.Match where
 
 import Data.Char (isUpper, isLower, isAlphaNum, toLower)
 import Data.Text (Text)

@@ -24,11 +24,7 @@
 -- active, so the popup sits on top of whatever the TUI was showing. On
 -- exit we clear the buffer so the caller's next render repaints the
 -- underlying view cleanly.
-module Tv.Fzf.Picker
-  ( PickerOpts(..)
-  , defaultOpts
-  , runPicker
-  ) where
+module Tv.Fzf.Picker where
 
 import Control.Monad (when, forM_)
 import Data.Char (chr)

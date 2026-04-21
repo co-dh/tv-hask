@@ -8,31 +8,7 @@
   `compile`, which shells out to the `prqlc` CLI — matching Lean's layering
   where `compile` lives in `Tc/Data/ADBC/Prql.lean`, not the FFI module.
 -}
-module Tv.Data.DuckDB.Prql
-  ( -- * Query type
-    Query(..)
-  , defaultQuery
-    -- * Quoting / rendering
-  , quote
-  , ref
-  , renderSort
-  , aggName
-  , dqQuote
-  , opRender
-  , renderOps
-  , queryRender
-    -- * Query operations
-  , pipe
-  , queryFilter
-    -- * Common queries
-  , ducktabs
-  , ducktabsF
-    -- * PRQL prelude
-  , funcsBytes
-  , funcs
-    -- * Compilation
-  , compile
-  ) where
+module Tv.Data.DuckDB.Prql where
 
 import Control.Exception (SomeException, try)
 import Data.ByteString (ByteString)

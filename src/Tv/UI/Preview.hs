@@ -5,10 +5,7 @@
   Literal port of Tc/Tc/UI/Preview.lean.
 -}
 {-# LANGUAGE OverloadedStrings #-}
-module Tv.UI.Preview
-  ( wrapText
-  , render
-  ) where
+module Tv.UI.Preview where
 
 import Data.Text (Text)
 import qualified Data.Text as T

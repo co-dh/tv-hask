@@ -12,15 +12,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module Tv.Plot
-  ( maxPoints
-  , Interval(..)
-  , plotTitle
-  , KeyAction(..)
-  , handleKey
-  , run
-  , commands
-  ) where
+module Tv.Plot where
 
 import Control.Exception (SomeException, try)
 import Control.Monad (unless, when)

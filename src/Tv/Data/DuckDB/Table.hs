@@ -13,46 +13,7 @@
 
   NOTE: Table operations (getCols, renderView, etc.) are in DuckDB/Ops.hs.
 -}
-module Tv.Data.DuckDB.Table
-  ( -- top-level (Lean: def Prql.query in Table.lean)
-    prqlQuery
-    -- Tc namespace helpers
-  , prqlLimit
-  , stripSemi
-    -- AdbcTable record + counters
-  , AdbcTable (..)
-  , tblCounter
-  , tmpName
-  , extLoaded
-  , loadExt
-    -- AdbcTable namespace: lifecycle + builders
-  , init
-  , shutdown
-  , ofResult
-  , queryCount
-  , requery
-  , fromTmp
-  , remoteName
-  , fromFile
-  , listTables
-  , primaryKeys
-  , fromTable
-  , sortBy
-  , hideCols
-  , excludeCols
-  , fetchMore
-  , plotExport
-  , plotExportOhlc
-  , plotDatPath
-  , fromTsv
-  , fromJson
-  , fileWith
-    -- second AdbcTable block in Lean
-  , freqTable
-  , filter
-  , distinct
-  , findRow
-  ) where
+module Tv.Data.DuckDB.Table where
 
 import Prelude hiding (init, filter)
 import Control.Exception (SomeException, try)

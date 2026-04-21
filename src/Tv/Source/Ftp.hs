@@ -2,7 +2,7 @@
 -- | FTP (ftp://) backend: native ftp-client fetches `LIST`, Haskell parses
 -- it into TSV, DuckDB reads the TSV. URLs are not URL-encoded because the
 -- FTP protocol takes raw paths via CWD (no URL parser in the wire path).
-module Tv.Source.Ftp (ftp) where
+module Tv.Source.Ftp where
 
 import Data.Text (Text)
 import qualified Data.Text as T

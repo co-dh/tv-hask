@@ -3,11 +3,7 @@
   No handler names here -- all key->handler mapping lives in CmdConfig.
 -}
 {-# LANGUAGE OverloadedStrings #-}
-module Tv.Key
-  ( toKey
-  , tokenizeKeys
-  , nextKey
-  ) where
+module Tv.Key where
 
 import Data.Bits ((.&.))
 import Data.Maybe (fromMaybe, listToMaybe)

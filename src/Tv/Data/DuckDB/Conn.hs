@@ -7,25 +7,7 @@
   results into random-access QueryResult (eagerly fetched chunks with
   binary search for row indexing).
 -}
-module Tv.Data.DuckDB.Conn
-  ( QueryResult(..)
-  , init
-  , shutdown
-  , query
-  , queryParam
-  , ncols
-  , nrows
-  , colName
-  , colFmt
-  , cellStr
-  , cellInt
-  , cellFloat
-  , colType
-  , getConn
-  , fetchRows
-  , fetchHeatDoubles
-  , fmtIntComma
-  ) where
+module Tv.Data.DuckDB.Conn where
 
 import Prelude hiding (init)
 import Control.Exception (SomeException, try)

@@ -2,7 +2,7 @@
 -- | HuggingFace dataset browser (hf://datasets/<org>/<name>/…): lists files
 -- inside a dataset via the Hub tree API. When the tree API 404s at the
 -- org level, falls back to the `?author=` API for org-level dataset lists.
-module Tv.Source.HfDataset (hfDataset) where
+module Tv.Source.HfDataset where
 
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)

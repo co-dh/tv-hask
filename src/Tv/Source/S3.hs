@@ -2,7 +2,7 @@
 -- | S3 (s3://) backend. Native HTTPS via Tv.S3.Client (no `aws` CLI).
 -- Anonymous LIST/GET for public buckets when `+n` is passed; SigV4 from
 -- AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars otherwise.
-module Tv.Source.S3 (s3) where
+module Tv.Source.S3 where
 
 import Data.Text (Text)
 import qualified Data.Text as T

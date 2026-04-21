@@ -11,18 +11,7 @@
 -- (render, nextKey, readArg) are captured as AppM constructors; everything
 -- else lifts through `liftIO` so existing IO helpers (Socket.pollCmd,
 -- dispatchHandler, CmdConfig lookups, handler dispatch) stay put.
-module Tv.AppF
-  ( -- * Program type
-    AppM(..)
-  , bindApp
-    -- * Smart constructors
-  , doRender
-  , poll
-  , readArg'
-    -- * Interpreter
-  , Interp(..)
-  , run
-  ) where
+module Tv.AppF where
 
 import Control.Monad.IO.Class (MonadIO (..))
 import Data.Text (Text)

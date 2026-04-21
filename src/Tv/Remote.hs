@@ -1,11 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | URI path operations shared by remote backends (FTP, S3, HuggingFace, …).
-module Tv.Remote
-  ( joinRemote
-  , stripSlash
-  , parent
-  , dispName
-  ) where
+module Tv.Remote where
 
 import Data.Text (Text)
 import qualified Data.Text as T

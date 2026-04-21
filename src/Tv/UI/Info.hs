@@ -5,11 +5,7 @@
   struct was a single `vis : Bool`; here we use the Bool directly.
 -}
 {-# LANGUAGE OverloadedStrings #-}
-module Tv.UI.Info
-  ( update
-  , viewHints
-  , render
-  ) where
+module Tv.UI.Info where
 
 import Prelude hiding (print)
 import Data.Text (Text)

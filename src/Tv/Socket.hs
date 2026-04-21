@@ -13,14 +13,7 @@
 -- a second extern, and because a userland thread is enough: tv's main loop
 -- polls every tick, so the listener never needs to be faster than the
 -- render cadence.
-module Tv.Socket
-  ( sockStart
-  , pollCmd
-  , socketInit
-  , getPath
-  , shutdown
-  , bracket
-  ) where
+module Tv.Socket where
 
 import Control.Concurrent (forkIO)
 import Control.Exception (SomeException, try, bracket_)

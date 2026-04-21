@@ -5,12 +5,7 @@
   crosstab. Each pushes a new view tagged with its own disp label so
   the user can pop back to the source table.
 -}
-module Tv.Eda
-  ( sample
-  , dupes
-  , crosstab
-  , commands
-  ) where
+module Tv.Eda where
 
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)

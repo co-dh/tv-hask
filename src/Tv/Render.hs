@@ -8,19 +8,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
-module Tv.Render
-  ( ViewState(..)
-  , defVS
-  , reservedLines
-  , visRows
-  , rowPg
-  , renderCols
-  , render
-  , tabLine
-  , waitForQ
-  , errorPopup
-  , statusMsg
-  ) where
+module Tv.Render where
 
 import Prelude hiding (init, print)
 import Control.Monad (unless, when)

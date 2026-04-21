@@ -5,23 +5,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
-module Tv.CmdConfig
-  ( -- * Types
-    CmdInfo(..)
-  , Entry(..)
-  , CmdCache
-    -- * Entry constructors
-  , mkEntry
-  , navE
-  , hdl
-    -- * Cache build + pure lookup
-  , buildCache
-  , keyLookup
-  , cmdLookup
-  , handlerLookup
-  , isArgCmd
-  , menuItems
-  ) where
+module Tv.CmdConfig where
 
 import Control.Applicative ((<|>))
 import Data.HashMap.Strict (HashMap)

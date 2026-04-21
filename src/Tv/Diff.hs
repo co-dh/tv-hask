@@ -7,11 +7,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module Tv.Diff
-  ( run
-  , showSame
-  , commands
-  ) where
+module Tv.Diff where
 
 import Control.Monad (forM_)
 import Data.Either (partitionEithers)

@@ -1,11 +1,5 @@
 -- | Per-process temporary directory under <tmpdir>/tv-<pid>.
-module Tv.Tmp
-  ( tmpDir
-  , tmpPath
-  , threadPath
-  , rmFile
-  , cleanupTmp
-  ) where
+module Tv.Tmp where
 
 import Control.Concurrent (myThreadId)
 import Control.Exception (SomeException, try)

@@ -7,24 +7,7 @@
 -}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-module Tv.Folder
-  ( listDir
-  , curPath
-  , curType
-  , mkView
-  , push
-  , goParent
-  , enter
-  , trashCmd
-  , selPaths
-  , drawDialog
-  , waitYN
-  , confirmDel
-  , trashFiles
-  , del
-  , setDepth
-  , commands
-  ) where
+module Tv.Folder where
 
 import Control.Exception (SomeException, try)
 import Data.Char (ord)

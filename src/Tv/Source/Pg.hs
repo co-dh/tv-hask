@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | PostgreSQL (pg://) backend: ATTACH DSN as a read-only DuckDB database,
 -- list its tables via the shared `tbl_info_filtered` PRQL helper.
-module Tv.Source.Pg (pg) where
+module Tv.Source.Pg where
 
 import Control.Monad (forM_)
 import Data.Text (Text)

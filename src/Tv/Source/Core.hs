@@ -7,40 +7,7 @@
   struct auto-expansion. They live here so each source file can focus on
   its own URL/SQL/cmd specifics.
 -}
-module Tv.Source.Core
-  ( -- source interface
-    Source (..)
-  , OpenResult (..)
-    -- template expansion
-  , expand
-  , mkVars
-  , pathParts
-  , fromPath
-    -- shell safety
-  , checkShell
-  , shellMeta
-    -- cmd → tmp file
-  , runCmd
-  , writeCmdOut
-  , loadJsonToTbl
-  , loadEnterJson
-    -- HTTP fetching (http-client + TLS)
-  , fetchBytes
-  , fetchFile
-  , httpMgr
-    -- caching / idempotence
-  , withCache
-  , onceFor
-    -- table shaping
-  , addParentRow
-  , unnestStruct
-  , applyStubTypes
-    -- exception helpers
-  , ignoreErrs
-  , try_
-    -- shared home-dir helper
-  , homeText
-  ) where
+module Tv.Source.Core where
 
 import Control.Exception (SomeException, try)
 import Control.Monad (forM_, when)

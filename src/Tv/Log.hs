@@ -1,16 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | Centralized error/debug logging to ~/.cache/tv/tv.log.
-module Tv.Log
-  ( logDir
-  , dir
-  , path
-  , setLog
-  , localTimestamp
-  , timestamp
-  , write
-  , errorLog
-  , run
-  ) where
+module Tv.Log where
 
 import Data.IORef (IORef, newIORef, readIORef)
 import Data.Maybe (fromMaybe)

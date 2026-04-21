@@ -16,10 +16,7 @@
   Returns (ExitCode, Text, Text) so call sites mirror the curl/aws shell
   pattern used elsewhere (compare Tv.Ftp.Client).
 -}
-module Tv.S3.Client
-  ( listS3
-  , downloadS3
-  ) where
+module Tv.S3.Client where
 
 import Control.Exception (SomeException, try)
 import qualified Crypto.Hash as H
