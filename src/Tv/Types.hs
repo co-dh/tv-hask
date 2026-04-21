@@ -51,17 +51,13 @@ module Tv.Types
   , plotKind
   ) where
 
+import Tv.Prelude
 import qualified Data.Aeson as A
 import qualified Data.Aeson.Types as A
-import Data.Int (Int64)
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word8, Word32)
 import Optics.TH (makeFieldLabelsNoPrefix)
 import Data.Hashable (Hashable(..))
-import Data.Maybe (fromMaybe, listToMaybe)
 -- | Enum-ish types that have a conventional string name. Defaults let
 -- types with payloads (e.g. 'ViewKind') provide only 'toString'; plain
 -- enums override 'all' and 'ofStringQ' for roundtrip.

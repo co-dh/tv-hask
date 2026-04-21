@@ -20,6 +20,7 @@ module Tv.Session
   , commands
   ) where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
 import Data.Aeson (Value(..))
 import qualified Data.Aeson as A
@@ -29,12 +30,9 @@ import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Aeson.Types as A
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (isAlphaNum)
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.Directory (createDirectoryIfMissing, listDirectory)
 import Tv.Data.DuckDB.Prql (Query(..))
@@ -42,7 +40,6 @@ import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Table as AdbcTable
 import qualified Tv.Folder as Folder
 import qualified Tv.Fzf as Fzf
-import Optics.Core ((%), (&), (.~), (^.))
 import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
 import Tv.App.Types (AppState(..), HandlerFn, stackIO)

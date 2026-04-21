@@ -23,14 +23,12 @@ module Tv.CmdConfig
   , menuItems
   ) where
 
+import Tv.Prelude
 import Control.Applicative ((<|>))
-import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
 import qualified Data.HashSet as HashSet
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 import Tv.Types (Cmd, StrEnum(..))

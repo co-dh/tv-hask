@@ -32,13 +32,10 @@ module Tv.Data.DuckDB.Ops
   ) where
 
 import Prelude hiding (filter)
+import Tv.Prelude
 import Control.Exception (SomeException, try)
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word64)
 import qualified Data.HashSet as Set
 
 import qualified Tv.Data.DuckDB.Conn as Conn

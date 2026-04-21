@@ -9,14 +9,11 @@ module Tv.Key
   , nextKey
   ) where
 
+import Tv.Prelude
 import Data.Bits ((.&.))
-import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Char (chr)
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word16, Word32)
 import qualified Tv.Term as Term
 import Tv.Term (Event(..))
 

@@ -24,8 +24,8 @@ module Tv.AppF
   , run
   ) where
 
+import Tv.Prelude
 import Control.Monad.IO.Class (MonadIO (..))
-import Data.Text (Text)
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Program value: a small free monad describing what the event loop does.

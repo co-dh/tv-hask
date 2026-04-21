@@ -4,8 +4,8 @@
 -- applies typed columns from the corresponding stub view.
 module Tv.Source.Osquery (osquery) where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import System.Exit (ExitCode (..))

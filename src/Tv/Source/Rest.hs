@@ -2,8 +2,8 @@
 -- | REST (rest://) backend: fetch a JSON URL over HTTPS, read as a table.
 module Tv.Source.Rest (rest) where
 
+import Tv.Prelude
 import qualified Data.ByteString.Lazy as LBS
-import Data.Text (Text)
 import qualified Data.Text as T
 
 import qualified Tv.Data.DuckDB.Conn as Conn

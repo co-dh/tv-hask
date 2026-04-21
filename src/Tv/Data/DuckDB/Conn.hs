@@ -28,15 +28,11 @@ module Tv.Data.DuckDB.Conn
   ) where
 
 import Prelude hiding (init)
+import Tv.Prelude
 import Control.Exception (SomeException, try)
 import Numeric (showFFloat)
-import Data.IORef
-import Data.Maybe (fromMaybe)
-import Data.Int (Int64)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
-import Data.Word (Word64)
 import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Tv.Data.DuckDB as DB

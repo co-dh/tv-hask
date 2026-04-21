@@ -10,12 +10,9 @@ module Tv.UI.Preview
   , render
   ) where
 
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Maybe (fromMaybe)
-import Data.Word (Word32)
 
 import qualified Tv.Term as Term
 

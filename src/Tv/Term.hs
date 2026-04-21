@@ -35,24 +35,17 @@ module Tv.Term
 -- >>> :set -XOverloadedStrings
 
 import Prelude hiding (init, print)
-import Control.Monad (forM, forM_, unless, when, zipWithM_)
+import Tv.Prelude
 import Data.Bits ((.&.), (.|.), testBit)
 import qualified Data.Bits
 import Data.Char (chr)
-import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
-import Data.Int (Int32, Int64)
 import qualified Data.IntSet as IS
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Data.ByteString.Builder as BSB
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 import qualified Data.Vector.Storable.Mutable as VSM
-import Data.Word (Word8, Word16, Word32, Word64)
 import Foreign.C.Types (CInt(..))
 import Foreign.Marshal.Alloc (allocaBytes)
 import Foreign.Ptr (Ptr)

@@ -7,7 +7,7 @@ module Tv.Remote
   , dispName
   ) where
 
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
 
 -- | Join URI prefix with child name

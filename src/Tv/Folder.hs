@@ -26,23 +26,18 @@ module Tv.Folder
   , commands
   ) where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
 import Data.Char (ord)
 import Data.List (isPrefixOf)
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (POSIXTime, posixSecondsToUTCTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word32)
 import System.Directory (canonicalizePath, doesDirectoryExist, findExecutable, listDirectory)
 import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import qualified System.Posix.Files as Posix
-
-import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, tryStk, viewUp)
 import Tv.CmdConfig (Entry, mkEntry, hdl)

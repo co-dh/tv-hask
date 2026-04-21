@@ -5,6 +5,7 @@
 -- read_json_auto on a temp file. Refreshes when existing listing is >24h old.
 module Tv.Source.HfRootSetup (run, cleanDesc, findTag, linkNext) where
 
+import Tv.Prelude
 import Control.Exception (bracket_)
 import qualified Data.Aeson as A
 import qualified Data.Aeson.Encoding as E
@@ -12,9 +13,7 @@ import qualified Data.Aeson.Key as K
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as BL
-import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import Data.Scientific (toRealFloat)
-import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import qualified Data.Vector as V

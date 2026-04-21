@@ -13,14 +13,12 @@ module Tv.Plot.Chart
   , returnsOf, cumretOf, drawdownOf, sma, rollingSd, qnorm, quantiles5
   ) where
 
+import Tv.Prelude hiding ((&), (^.), (.~), (%~), (%), view, set, over)
 import Control.Exception (SomeException, try)
 import Data.Default.Class (def)
 import Data.List (sort)
-import Data.Maybe (mapMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Control.Monad (forM_)
 import Graphics.Rendering.Chart.Backend.Cairo (renderableToFile, FileFormat(..), FileOptions(..))
 import Graphics.Rendering.Chart.Easy hiding (sort)
 import qualified Graphics.Rendering.Chart.Grid as Grid

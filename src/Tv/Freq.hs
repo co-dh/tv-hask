@@ -8,10 +8,8 @@ module Tv.Freq
   , update
   ) where
 
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
-import Data.Maybe (fromMaybe)
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 
 import qualified Tv.Nav as Nav

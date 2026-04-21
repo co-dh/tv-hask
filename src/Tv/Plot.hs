@@ -22,14 +22,10 @@ module Tv.Plot
   , commands
   ) where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
-import Control.Monad (unless, when)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.Vector (Vector)
 import qualified Data.Vector as V
 import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, findExecutable)
 import System.Environment (lookupEnv)

@@ -10,9 +10,8 @@ module Tv.Transpose
   , commands
   ) where
 
+import Tv.Prelude
 import qualified Data.Vector as V
-
-import Optics.Core ((&), (.~))
 
 import Tv.App.Types (AppState(..), HandlerFn, tryStk)
 import Tv.CmdConfig (Entry, mkEntry, hdl)

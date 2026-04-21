@@ -18,10 +18,9 @@ module Tv.Clip
   ( copy
   ) where
 
+import Tv.Prelude
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base64 as B64
-import Data.Maybe (isJust)
-import Data.Text (Text)
 import qualified Data.Text.Encoding as TE
 import System.Environment (lookupEnv)
 import System.IO (hFlush, stdout)

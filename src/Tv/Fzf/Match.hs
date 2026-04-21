@@ -16,8 +16,8 @@ module Tv.Fzf.Match
   , isMatch
   ) where
 
+import Tv.Prelude
 import Data.Char (isUpper, isLower, isAlphaNum, toLower)
-import Data.Text (Text)
 import qualified Data.Text as T
 
 -- | Word-boundary start: position 0, or prior char is a non-alnum separator,

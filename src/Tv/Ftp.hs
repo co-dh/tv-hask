@@ -7,8 +7,8 @@ module Tv.Ftp
   ( parseLs
   ) where
 
+import Tv.Prelude
 import Data.List (foldl')
-import Data.Text (Text)
 import qualified Data.Text as T
 
 import Tv.Types (headD, getD)

@@ -32,13 +32,10 @@ module Tv.View
   , opsStr
   ) where
 
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
-import Data.Vector (Vector)
 import qualified Data.Vector as V
-import Data.Word (Word8, Word32)
 
-import Optics.Core ((%), (&), (.~), (^.))
 import Optics.TH (makeFieldLabelsNoPrefix)
 import qualified Tv.Data.DuckDB.Prql as Prql
 import qualified Tv.Data.DuckDB.Table as Table

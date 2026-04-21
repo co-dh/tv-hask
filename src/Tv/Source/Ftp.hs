@@ -4,7 +4,7 @@
 -- FTP protocol takes raw paths via CWD (no URL parser in the wire path).
 module Tv.Source.Ftp (ftp) where
 
-import Data.Text (Text)
+import Tv.Prelude
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (createDirectoryIfMissing)

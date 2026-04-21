@@ -8,10 +8,9 @@ module Tv.Data.DuckDB.PrqlC
   ( compileFFI
   ) where
 
+import Tv.Prelude
 import Control.Exception (bracket)
-import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Word (Word8)
 import Foreign.C.String (CString, newCString, peekCString)
 import Foreign.C.Types (CSize(..), CChar)
 import Foreign.Marshal.Alloc (allocaBytes, free)

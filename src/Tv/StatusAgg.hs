@@ -11,10 +11,8 @@ module Tv.StatusAgg
   , update
   ) where
 
+import Tv.Prelude
 import Control.Exception (SomeException, try)
-import Control.Monad (unless)
-import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 

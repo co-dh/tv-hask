@@ -75,6 +75,7 @@ library
     Tv.Source.Pg
     Tv.Sparkline
     Tv.Ops
+    Tv.Prelude
     Tv.StatusAgg
 
     Tv.Term
