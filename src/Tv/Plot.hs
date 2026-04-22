@@ -304,7 +304,9 @@ runCandle s = do
   if V.length gp < 5
     then err s "candle: group 5 columns first — x, open, high, low, close (!)"
     else do
-      let [xName, oName, hName, lName, cName] = V.toList (V.take 5 gp)
+      -- Length-5 guaranteed by the `V.length gp < 5` guard above.
+      let (xName, oName, hName, lName, cName) =
+            (gp V.! 0, gp V.! 1, gp V.! 2, gp V.! 3, gp V.! 4)
           tbl    = n ^. #tbl
           names  = Nav.colNames n
       case Nav.idxOf names xName of
