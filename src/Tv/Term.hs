@@ -898,7 +898,7 @@ colWidths
 colWidths nCols texts names inWidths hidBits widthAdj =
   (baseWidthsV, dataWidthsV, headerWidthsV)
   where
-    dataW c =
+    dataWV = V.generate nCols $ \c ->
       let col = if c < V.length texts then texts V.! c else V.empty
       in V.foldl' (\acc t -> max acc (T.length t)) 1 col
     headerW c = if c < V.length names then T.length (names V.! c) else 0
@@ -907,11 +907,11 @@ colWidths nCols texts names inWidths hidBits widthAdj =
       if IS.member c hidBits then 0
       else let cached = if c < V.length inWidths
                         then fromIntegral $ inWidths V.! c else 0 :: Int
-               full = max (max (dataW c) (headerW c)) _MIN_HDR_WIDTH + 2
+               full = max (max (dataWV V.! c) (headerW c)) _MIN_HDR_WIDTH + 2
            in max full cached
     dataWidthsV = V.generate nCols $ \c ->
       if IS.member c hidBits then 3
-      else adjust $ max (dataW c) _MIN_HDR_WIDTH + 2
+      else adjust $ max (dataWV V.! c) _MIN_HDR_WIDTH + 2
     headerWidthsV = V.generate nCols $ \c ->
       if IS.member c hidBits then 3
       else adjust $ baseWidthsV V.! c
