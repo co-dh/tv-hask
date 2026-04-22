@@ -37,8 +37,7 @@ import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import qualified Tv.Transpose as Transpose
 import Tv.Types (Cmd(..), ColCache(..), ViewKind(..), toString, noEffect)
-import qualified Tv.UI.Info as UIInfo
-import qualified Tv.UI.Preview as UIPreview
+import qualified Tv.UI as UI
 import qualified Tv.Log as Log
 import qualified Tv.Socket as Socket
 import qualified Tv.Data.DuckDB.Ops as Ops
@@ -123,7 +122,7 @@ renderSnap ref stk' styles_ = do
   tabLine (View.tabNames stk') 0 (View.opsStr (View.cur stk'))
   when (a ^. #info) $ do
     h <- Term.height; w <- Term.width
-    UIInfo.render (fromIntegral h) (fromIntegral w) (View.cur stk' ^. #vkind)
+    UI.infoRender (fromIntegral h) (fromIntegral w) (View.cur stk' ^. #vkind)
   Term.present
 
 freqH :: HandlerFn
@@ -152,7 +151,7 @@ localCmds = V.fromList
   , hdl (mkEntry CmdStkDup    ""  ""   "Duplicate current view"             False "") stkH
   , hdl (mkEntry CmdTblQuit   ""  ""   ""                                   False "") (\_ _ _ -> pure ActQuit)
   , hdl (mkEntry CmdInfoTog   ""  "I"  "Toggle info overlay"                False "")
-        (\a ci _ -> pure $ case UIInfo.update (a ^. #info) (ci ^. #ciCmd) of
+        (\a ci _ -> pure $ case UI.infoUpdate (a ^. #info) (ci ^. #ciCmd) of
                              Just i' -> ActOk (a & #info .~ i')
                              Nothing -> ActUnhandled)
   , hdl (mkEntry CmdPrecDec   ""  ""   "Decrease decimal precision"         False "") (precAdj (-1))
@@ -267,7 +266,7 @@ renderBase a0 = do
   let a''' = a'' & #aggCache .~ agg'
   when (a''' ^. #info) $ do
     h <- Term.height; w <- Term.width
-    UIInfo.render (fromIntegral h) (fromIntegral w) (View.cur (a''' ^. #stk) ^. #vkind)
+    UI.infoRender (fromIntegral h) (fromIntegral w) (View.cur (a''' ^. #stk) ^. #vkind)
   pure a'''
 
 renderFrame :: Bool -> AppState -> IO AppState
@@ -280,7 +279,7 @@ renderFrame showPreview a0 = do
     cellText <- Ops.cellStr (nav_ ^. #tbl) (nav_ ^. #row % #cur) (Nav.colIdx nav_)
     let colW = min (fromMaybe 10 ((View.cur (a ^. #stk) ^. #widths) V.!? (nav_ ^. #col % #cur))) 50
     when (T.length cellText + 2 > colW) $
-      UIPreview.render (fromIntegral h) (fromIntegral w) cellText (a ^. #prevScroll)
+      UI.prevRender (fromIntegral h) (fromIntegral w) cellText (a ^. #prevScroll)
   Term.present
   pure a
 
