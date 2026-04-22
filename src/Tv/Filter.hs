@@ -10,6 +10,7 @@
 module Tv.Filter where
 
 import Tv.Prelude
+import Control.Applicative ((<|>))
 import Control.Monad (guard)
 import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT, hoistMaybe)
 import qualified Data.HashMap.Strict as HM
@@ -43,18 +44,18 @@ moveRowTo
 moveRowTo s rowIdx search_ =
   let v      = cur s
       n      = v ^. #nav
-      nRows_ = n ^. #tbl ^. #nRows
+      nRows_ = (n ^. #tbl % #nRows)
       delta  = rowIdx - n ^. #row % #cur
       nav'   = over rowCur (\f -> finClamp nRows_ f delta) n
   in setCur s (v & #nav .~ nav'
-                 & #search .~ maybe (v ^. #search) Just search_)
+                 & #search .~ (search_ <|> (v ^. #search)))
 
 -- | Move col cursor to target index (pure helper)
 moveTo :: ViewStack AdbcTable -> Int -> ViewStack AdbcTable
 moveTo s colIdx =
   let v      = cur s
       n      = v ^. #nav
-      nCols_ = V.length (n ^. #tbl ^. #colNames)
+      nCols_ = V.length (n ^. #tbl % #colNames)
       delta  = colIdx - n ^. #col % #cur
       nav'   = over colCur (\f -> finClamp nCols_ f delta) n
   in setCur s (v & #nav .~ nav')
@@ -153,8 +154,7 @@ applyRow
   :: ViewStack AdbcTable -> Int -> Text -> IO (Maybe Int)
   -> IO (ViewStack AdbcTable)
 applyRow s curCol result findM = do
-  mri <- findM
-  pure $ maybe s (\rowIdx -> moveRowTo s rowIdx (Just (curCol, result))) mri
+  maybe s (\rowIdx -> moveRowTo s rowIdx (Just (curCol, result))) <$> findM
 
 -- | Live-preview path: the in-process picker fires onFocus for every
 -- highlight change, which we wire straight into row movement — no socat,

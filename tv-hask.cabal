@@ -23,7 +23,7 @@ common shared
     TypeFamilies
     NoFieldSelectors
     DuplicateRecordFields
-  ghc-options: -Wall -O2
+  ghc-options: -Wall -O2 -fwrite-ide-info
 
 library
   import: shared

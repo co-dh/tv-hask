@@ -27,16 +27,16 @@ import qualified Tv.Util as Log
 -- Table operations (were typeclass methods, now plain functions)
 -- ----------------------------------------------------------------------------
 
-getCols :: AdbcTable -> Vector Int -> Int -> Int -> IO (Vector (Vector Text))
+getCols :: AdbcTable -> Vector Int -> Int -> Int -> Vector (Vector Text)
 getCols t idxs r0_ r1_ =
-  V.mapM (\i -> V.generateM (r1_ - r0_) $ \ri ->
+  V.map (\i -> V.generate (r1_ - r0_) $ \ri ->
     Conn.cellStr (t ^. #qr) (r0_ + ri) i
   ) idxs
 
 colType :: AdbcTable -> Int -> ColType
 colType t col = fromMaybe ColTypeOther ((t ^. #colTypes) V.!? col)
 
-cellStr :: AdbcTable -> Int -> Int -> IO Text
+cellStr :: AdbcTable -> Int -> Int -> Text
 cellStr t row col =
   Conn.cellStr (t ^. #qr) row col
 
@@ -64,9 +64,8 @@ modifyTableSort tbl_ cursor selIdxs grpIdxs asc =
 toText :: AdbcTable -> IO Text
 toText t = do
   let nc = V.length (t ^. #colNames)
-  cols <- V.generateM nc $ \i ->
-    V.generateM (t ^. #nRows) $ \r ->
-      Conn.cellStr (t ^. #qr) r i
+  let cols = V.generate nc $ \i ->
+        V.generate (t ^. #nRows) $ \r -> Conn.cellStr (t ^. #qr) r i
   pure $ colText (t ^. #colNames) cols (t ^. #nRows)
 
 -- ----------------------------------------------------------------------------
@@ -145,7 +144,7 @@ queryMetaImpl withStats selSet t = do
     then pure Nothing
     else do
       let parquetPath =
-            case extractPath ((t ^. #query) ^. #base) of
+            case extractPath (t ^. #query % #base) of
               Just p | T.isSuffixOf ".parquet" p -> Just p
               _ -> Nothing
       mMetaSql <- case parquetPath of
@@ -153,7 +152,7 @@ queryMetaImpl withStats selSet t = do
         -- requested, fall through to the aggregate path.
         Just p | not withStats -> Prql.compile (metaPrql p)
         _ -> do
-          mBase <- Prql.compile ((t ^. #query) ^. #base)
+          mBase <- Prql.compile (t ^. #query % #base)
           case mBase of
             Nothing -> pure Nothing
             Just baseSql ->
@@ -174,12 +173,12 @@ queryMetaImpl withStats selSet t = do
 queryCorrMatrix :: AdbcTable -> Vector Text -> IO (Maybe AdbcTable)
 queryCorrMatrix t rawSel = do
   let typeOf nm = fromMaybe ColTypeOther $ V.find (== nm) (t ^. #colNames)
-                    *> (fmap ((t ^. #colTypes) V.!) (V.findIndex (== nm) (t ^. #colNames)))
+                    *> fmap ((t ^. #colTypes) V.!) (V.findIndex (== nm) (t ^. #colNames))
       sel = V.filter (\nm -> isNumeric (typeOf nm)) rawSel
   if V.length sel < 2
     then pure Nothing
     else do
-      mBase <- Prql.compile ((t ^. #query) ^. #base)
+      mBase <- Prql.compile (t ^. #query % #base)
       case mBase of
         Nothing -> pure Nothing
         Just baseSql -> do
@@ -222,9 +221,8 @@ metaIdxs tblName flt = do
   case m of
     Nothing -> pure V.empty
     Just qr_ ->
-      V.generateM (Conn.nrows qr_) $ \r -> do
-        v <- Conn.cellInt qr_ r 0
-        pure (fromIntegral v :: Int)
+      pure $ V.generate (Conn.nrows qr_) $ \r ->
+        fromIntegral (Conn.cellInt qr_ r 0) :: Int
 
 -- | Query column names from meta table at given row indices
 metaNames :: Text -> Vector Int -> IO (Vector Text)
@@ -238,7 +236,7 @@ metaNames tblName rows = do
               <> " | rowidx | filter (idx | in [" <> idxs <> "]) | select {column, idx}")
       case m of
         Nothing -> pure V.empty
-        Just qr_ -> V.generateM (Conn.nrows qr_) $ \r -> Conn.cellStr qr_ r 0
+        Just qr_ -> pure $ V.generate (Conn.nrows qr_) $ \r -> Conn.cellStr qr_ r 0
 
 -- | Extract table name from path: last component after last "://" prefix strip.
 --   "osquery://groups" -> "groups", "duckdb://osq.groups" -> "groups"
@@ -272,9 +270,7 @@ columnComment path_ colName =
       case m of
         Nothing -> pure ""
         Just qr_ ->
-          if Conn.nrows qr_ == 0
-            then pure ""
-            else Conn.cellStr qr_ 0 0
+          pure $ if Conn.nrows qr_ == 0 then "" else Conn.cellStr qr_ 0 0
 
 -- ----------------------------------------------------------------------------
 -- SQL builders / runners
@@ -302,8 +298,7 @@ maxSplitParts baseSql col ep = do
         <> quoteId col <> ", '" <> ep <> "'))), 0) FROM (" <> baseSql <> ")"
   r <- try $ do
     qr_ <- Conn.query countSql
-    v <- Conn.cellInt qr_ 0 0
-    pure (min (fromIntegral v :: Int) 20)
+    pure (min (fromIntegral (Conn.cellInt qr_ 0 0) :: Int) 20)
   case r of
     Left (e :: SomeException) -> do
       Log.write "split" ("maxParts: " <> T.pack (show e))

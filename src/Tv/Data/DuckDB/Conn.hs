@@ -135,29 +135,14 @@ colType qr i = ctToString $ (qr ^. #colTypes) V.! i
     ctToString Tc.ColTypeBool      = "bool"
     ctToString Tc.ColTypeOther     = "other"
 
-cellStr :: QueryResult -> Int -> Int -> IO Text
-cellStr qr r c =
-  case findChunk qr r of
-    Nothing -> pure ""
-    Just (ch, local) ->
-      let cv = DB.chunkColumn ch c
-      in pure $ DB.cellAny cv local
+cellStr :: QueryResult -> Int -> Int -> Text
+cellStr qr r c = maybe "" (\(ch, local) -> DB.cellAny (DB.chunkColumn ch c) local) (findChunk qr r)
 
-cellInt :: QueryResult -> Int -> Int -> IO Int64
-cellInt qr r c =
-  case findChunk qr r of
-    Nothing -> pure 0
-    Just (ch, local) ->
-      let cv = DB.chunkColumn ch c
-      in pure $ fromMaybe 0 $ DB.cellInt cv local
+cellInt :: QueryResult -> Int -> Int -> Int64
+cellInt qr r c = maybe 0 (\(ch, local) -> fromMaybe 0 $ DB.cellInt (DB.chunkColumn ch c) local) (findChunk qr r)
 
-cellFloat :: QueryResult -> Int -> Int -> IO Double
-cellFloat qr r c =
-  case findChunk qr r of
-    Nothing -> pure 0
-    Just (ch, local) ->
-      let cv = DB.chunkColumn ch c
-      in pure $ fromMaybe 0 $ DB.cellDbl cv local
+cellFloat :: QueryResult -> Int -> Int -> Double
+cellFloat qr r c = maybe 0 (\(ch, local) -> fromMaybe 0 $ DB.cellDbl (DB.chunkColumn ch c) local) (findChunk qr r)
 
 -- | Locate (chunk, local row index) for a global row index. Binary search
 -- over the prescanned chunk offsets.

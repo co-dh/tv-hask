@@ -43,8 +43,7 @@ push s = do
           case mAdbc of
             Nothing -> pure Nothing
             Just adbc ->
-              pure $ fmap (\v -> View.push s (v & #disp .~ "xpose"))
-                         $ View.fromTbl adbc (View.cur s ^. #path) 0 V.empty 0
+              pure $ ((\v -> View.push s (v & #disp .~ "xpose")) <$> View.fromTbl adbc (View.cur s ^. #path) 0 V.empty 0)
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList

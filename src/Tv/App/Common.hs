@@ -69,7 +69,7 @@ runMenu a = do
                 case pureDispatch a0 ci of
                   Just a' -> do
                     (vs', v') <- View.doRender (View.cur (a' ^. #stk))
-                                   (a' ^. #vs) ((a' ^. #theme) ^. #styles)
+                                   (a' ^. #vs) (a' ^. #theme % #styles)
                                    (a' ^. #heatMode) (a' ^. #sparklines)
                     writeIORef ref (a' & #stk .~ View.setCur (a' ^. #stk) v' & #vs .~ vs')
                     Term.present
@@ -129,7 +129,7 @@ localCmds = V.fromList
               let preview :: ViewStack AdbcTable -> IO ()
                   preview stk' = do
                     a' <- readIORef ref
-                    renderSnap ref stk' ((a' ^. #theme) ^. #styles)
+                    renderSnap ref stk' (a' ^. #theme % #styles)
               stk' <- Filter.rowSearchLive (a ^. #testMode) (a ^. #stk) preview
               a' <- readIORef ref
               pure $ ActOk $ resetVS (a' & #stk .~ stk'))
@@ -152,7 +152,7 @@ localCmds = V.fromList
   , hdl (mkEntry CmdCellYank  "rc" "y"  "Copy current cell to clipboard (OSC 52)" False "")
         (\a _ _ -> do
           let nav_ = View.cur (a ^. #stk) ^. #nav
-          txt <- Ops.cellStr (nav_ ^. #tbl) (nav_ ^. #row % #cur) (Nav.colIdx nav_)
+              txt  = Ops.cellStr (nav_ ^. #tbl) (nav_ ^. #row % #cur) (Nav.colIdx nav_)
           Clip.copy txt
           Render.statusMsg ("copied: " <> clipMsg txt)
           pure (ActOk a))
@@ -176,7 +176,7 @@ localCmds = V.fromList
               a' <- readIORef ref
               pure $ ActOk $ resetVS (a' & #theme .~ t)
             Nothing -> do
-              writeIORef Theme.stylesRef ((a ^. #theme) ^. #styles)
+              writeIORef Theme.stylesRef (a ^. #theme % #styles)
               a' <- readIORef ref
               pure $ ActOk $ resetVS (a' & #theme .~ (a ^. #theme)))
   , hdl (mkEntry CmdThemePreview "" "" "" False "") (\a _ _ -> pure (ActOk a))
@@ -220,7 +220,7 @@ renderBase a0 = do
            sp <- Sparkline.compute (View.tbl (a0 ^. #stk)) 20
            pure (a0 & #sparklines .~ sp)
          else pure a0
-  (vs', v') <- View.doRender (View.cur (a ^. #stk)) (a ^. #vs) ((a ^. #theme) ^. #styles)
+  (vs', v') <- View.doRender (View.cur (a ^. #stk)) (a ^. #vs) (a ^. #theme % #styles)
                  (a ^. #heatMode) (a ^. #sparklines)
   let a' = a & #stk .~ View.setCur (a ^. #stk) v' & #vs .~ vs'
   tabLine (View.tabNames (a' ^. #stk)) 0 (View.opsStr (View.cur (a' ^. #stk)))
@@ -242,8 +242,8 @@ renderBase a0 = do
                    then T.take maxLen label0 <> "…"
                    else label0
     Term.print 0 (ht - 1)
-      (Theme.styleFg ((a'' ^. #theme) ^. #styles) Theme.sStatus)
-      (Theme.styleBg ((a'' ^. #theme) ^. #styles) Theme.sStatus)
+      (Theme.styleFg (a'' ^. #theme % #styles) Theme.sStatus)
+      (Theme.styleBg (a'' ^. #theme % #styles) Theme.sStatus)
       label
   agg' <- StatusAgg.update (a'' ^. #aggCache) (View.tbl (a'' ^. #stk))
             (View.cur (a'' ^. #stk) ^. #path)
@@ -260,9 +260,9 @@ renderFrame showPreview a0 = do
   when showPreview $ do
     h <- Term.height
     w <- Term.width
-    let nav_ = View.cur (a ^. #stk) ^. #nav
-    cellText <- Ops.cellStr (nav_ ^. #tbl) (nav_ ^. #row % #cur) (Nav.colIdx nav_)
-    let colW = min (fromMaybe 10 ((View.cur (a ^. #stk) ^. #widths) V.!? (nav_ ^. #col % #cur))) 50
+    let nav_     = View.cur (a ^. #stk) ^. #nav
+        cellText = Ops.cellStr (nav_ ^. #tbl) (nav_ ^. #row % #cur) (Nav.colIdx nav_)
+        colW     = min (fromMaybe 10 ((View.cur (a ^. #stk) ^. #widths) V.!? (nav_ ^. #col % #cur))) 50
     when (T.length cellText + 2 > colW) $
       UI.prevRender (fromIntegral h) (fromIntegral w) cellText (a ^. #prevScroll)
   Term.present
@@ -312,7 +312,7 @@ delayMs ms = Control.Concurrent.threadDelay (ms * 1000)
 prodInterp :: Interp AppState
 prodInterp = Interp
   { render  = renderFrame True
-  , nextKey = do e <- Term.pollEvent; pure $ Just $ Key.toKey e
+  , nextKey = do Just . Key.toKey <$> Term.pollEvent;
   , readArg = pure ""
   }
 

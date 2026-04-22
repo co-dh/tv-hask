@@ -61,7 +61,7 @@ hfRootOpen _ path_ = pure $ OpenAsDir $ "hf://datasets/" <> name <> "/"
 hfRoot :: Source
 hfRoot = Source
   { pfx    = pfx_
-  , parent = \_ -> Nothing
+  , parent = const Nothing
   , grpCol = Just "id"
   , list   = hfRootList
   , open   = hfRootOpen

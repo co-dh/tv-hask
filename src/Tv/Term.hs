@@ -38,7 +38,7 @@ import Prelude hiding (init, print)
 import Tv.Prelude
 import Data.Bits ((.&.), (.|.), testBit)
 import qualified Data.Bits
-import Data.Char (chr)
+import Data.Char (chr, isDigit)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.IntSet as IS
 import qualified Data.Text as T
@@ -554,7 +554,7 @@ toEvents s = case s of
   [c] -> toEvent c
   _   -> toEvent '\x1B'
   where
-    isDigit ch = ch >= '0' && ch <= '9'
+    isDigit ch = isDigit ch
     key k = Event { typ = eventKey, mods = 0, keyCode = k
                   , ch = 0, w = 0, h = 0 }
     csiLetter 'A' = key keyArrowUp
@@ -595,12 +595,12 @@ pollEvent = do
     -- or any run of digit parameters terminated by `~` (pgup, pgdn, …).
     readCsi inH = do
       c <- hGetChar inH
-      if c >= '0' && c <= '9'
+      if isDigit c
         then readCsiTilde inH [c]
         else pure (toEvents ['\x1B', '[', c])
     readCsiTilde inH acc = do
       c <- hGetChar inH
-      if c >= '0' && c <= '9'
+      if isDigit c
         then readCsiTilde inH (c : acc)
         else pure (toEvents ('\x1B' : '[' : reverse acc ++ [c]))
 
@@ -740,7 +740,7 @@ heatStrHash01 s =
 -- | Extract digits from date/time string -> monotonic double
 heatDateToNum :: Text -> Double
 heatDateToNum s = T.foldl' step 0 s
-  where step v c | c >= '0' && c <= '9' = v * 10 + fromIntegral (fromEnum c - fromEnum '0')
+  where step v c | isDigit c = v * 10 + fromIntegral (fromEnum c - fromEnum '0')
                  | otherwise             = v
 
 -- Viridis-inspired color ramp (xterm-256)

@@ -69,7 +69,7 @@ pgOpen _ path_ = do
 pg :: Source
 pg = Source
   { pfx    = pfx_
-  , parent = \_ -> Nothing                 -- always at root (minParts 99 in the old code)
+  , parent = const Nothing                 -- always at root (minParts 99 in the old code)
   , grpCol = Just "name"
   , list   = pgList
   , open   = pgOpen

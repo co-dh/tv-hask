@@ -1,4 +1,4 @@
-{-# LANGUAGE LambdaCase #-}
+
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 -- | Populate ~/.cache/tv/osquery.duckdb with osquery table metadata:
@@ -86,7 +86,7 @@ osq secs sql = do
 
 tableNames :: IO [Text]
 tableNames =
-  fromMaybe [] . fmap (jsonStrCol "name") <$>
+  maybe [] (jsonStrCol "name") <$>
     osq 5 "SELECT name FROM osquery_registry WHERE registry='table' ORDER BY name"
 
 -- | Count rows via osqueryi. Returns Nothing on timeout/error. Table name is

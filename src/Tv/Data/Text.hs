@@ -101,5 +101,4 @@ fromText content =
 -- | Load from stdin (reads all input, returns TSV)
 fromStdin :: IO (Either Text Text)
 fromStdin = do
-  content <- TIO.getContents
-  pure $ fromText content
+  fromText <$> TIO.getContents

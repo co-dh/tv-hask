@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+
 {-# LANGUAGE BangPatterns #-}
 -- | Fuzzy subsequence matcher, fzf-v2 inspired.
 --
@@ -62,7 +62,7 @@ match :: Text -> Text -> Maybe (Int, [Int])
 match query0 target
   | T.null query = Just (0, [])
   | otherwise    = do
-      r@(_, poses) <- go 0 (if startAnchor then -1 else -1) 0 []
+      r@(_, poses) <- go 0 (-1) 0 []
       if endAnchor
         then case reverse poses of
                (p : _) | p == T.length target - 1 -> Just r

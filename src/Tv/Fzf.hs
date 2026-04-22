@@ -51,9 +51,7 @@ parseOpts argv =
   where
     firstMatch :: Text -> Maybe Text
     firstMatch pfx = V.foldr
-      (\arg acc -> case T.stripPrefix pfx arg of
-                     Just v  -> Just v
-                     Nothing -> acc) Nothing argv
+      (\arg acc -> maybe acc Just (T.stripPrefix pfx arg)) Nothing argv
 
 -- | Core picker. Splits @input@ on newlines into items; returns the raw
 -- selected line (with tab-prefix preserved) or empty on cancel.

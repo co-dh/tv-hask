@@ -68,7 +68,7 @@ extractFlag _ other = (Nothing, other)
 -- parse args: path?, -c keys?, test mode, +n, -s session
 parseArgs :: [Text] -> CliArgs
 parseArgs args0 =
-  let noSign_    = any (== "+n") args0
+  let noSign_    = elem "+n" args0
       args1      = filter (/= "+n") args0
       (session_, args2) = extractFlag "-s" args1
       toK s      = Key.tokenizeKeys s
@@ -266,7 +266,7 @@ appMain args
   | otherwise = do
   let cli = parseArgs args
       CliArgs { path = path_, keys = keys_, noSign = noSign_ } = cli
-  envTest  <- maybe False (const True) <$> lookupEnv "TV_TEST_MODE"
+  envTest  <- isJust <$> lookupEnv "TV_TEST_MODE"
   let testMode = cli ^. #test || envTest
   pipeMode <- if testMode then pure False else not <$> Term.isattyStdin
   theme    <- Theme.stateInit
@@ -275,7 +275,7 @@ appMain args
   when (T.null err) $ case cli ^. #session of
     Just sessName -> finallyCleanup (runSession sessName theme testMode noSign_ keys_)
     Nothing
-      | pipeMode && path_ == Nothing -> do
+      | pipeMode && isNothing path_ -> do
           stdinRes <- TextParse.fromStdin
           m <- runTsv stdinRes "stdin" True testMode noSign_ theme keys_
           maybe (pure ()) outputTable m

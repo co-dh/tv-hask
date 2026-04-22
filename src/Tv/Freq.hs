@@ -23,15 +23,15 @@ import Tv.Data.DuckDB.Table (AdbcTable)
 
 -- | Build filter expression from freq view row
 filterIO :: AdbcTable -> Vector Text -> Int -> IO Text
-filterIO tbl cols row = do
+filterIO tbl cols row =
   let names = tbl ^. #colNames
       idxs  = V.mapMaybe (Nav.idxOf names) cols
-  fetchedCols <- Ops.getCols tbl idxs row (row + 1)
-  let vals = V.zipWith (\txtCol colIdx ->
+      fetchedCols = Ops.getCols tbl idxs row (row + 1)
+      vals = V.zipWith (\txtCol colIdx ->
         toPrql (Ops.colType tbl colIdx) (fromMaybe "" (txtCol V.!? 0))
         ) fetchedCols idxs
       exprs = V.zipWith (\c v -> c <> " == " <> v) cols vals
-  pure (T.intercalate " && " (V.toList exprs))
+  in pure (T.intercalate " && " (V.toList exprs))
 
 -- | Pure update by Cmd. Returns residual Effect for dispatch to execute.
 update :: ViewStack AdbcTable -> Cmd -> Maybe (ViewStack AdbcTable, Effect)

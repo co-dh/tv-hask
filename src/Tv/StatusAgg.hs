@@ -47,15 +47,13 @@ compute t colIdx = do
           case r of
             Left _   -> pure ""
             Right qr_ ->
-              if isNum then do
-                sm <- Conn.cellStr qr_ 0 0
-                av <- Conn.cellStr qr_ 0 1
-                ct <- Conn.cellStr qr_ 0 2
-                let fmt s = if T.length s > 8 then T.take 8 s else s
-                pure ("Σ" <> fmt sm <> " μ" <> fmt av <> " #" <> ct)
-              else do
-                ct <- Conn.cellStr qr_ 0 0
-                pure ("#" <> ct)
+              if isNum then
+                let sm = Conn.cellStr qr_ 0 0
+                    av = Conn.cellStr qr_ 0 1
+                    ct = Conn.cellStr qr_ 0 2
+                    fmt s = if T.length s > 8 then T.take 8 s else s
+                in pure ("Σ" <> fmt sm <> " μ" <> fmt av <> " #" <> ct)
+              else pure ("#" <> Conn.cellStr qr_ 0 0)
 
 -- | Render aggregation stats on the status bar at 1/3 width
 render :: Text -> IO ()

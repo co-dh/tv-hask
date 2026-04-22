@@ -93,7 +93,7 @@ opToJ op = case op of
     mkObj [("type", String "take"), ("n", Number (fromIntegral n))]
   where
     mkObj :: [(Text, Value)] -> Value
-    mkObj ps = Object (KM.fromList (map (\(k, v) -> (K.fromText k, v)) ps))
+    mkObj ps = Object (KM.fromList (map (\(k,v) -> (K.fromText k, v)) ps))
     textArrJson :: Vector Text -> Value
     textArrJson v = Array (V.map String v)
     sortColsJson :: Vector (Text, Bool) -> Value
@@ -115,14 +115,14 @@ vkToJ vk = case vk of
     mkObj [("kind", String "fld"), ("path", String path_), ("depth", Number (fromIntegral depth))]
   where
     mkObj :: [(Text, Value)] -> Value
-    mkObj ps = Object (KM.fromList (map (\(k, v) -> (K.fromText k, v)) ps))
+    mkObj ps = Object (KM.fromList (map (\(k,v) -> (K.fromText k, v)) ps))
 
 -- ## Serialization: View → JSON
 
 -- Encode a View as a JSON Encoding (ordered, matching Lean byte-for-byte).
 viewEncoding :: View AdbcTable -> E.Encoding
 viewEncoding v =
-  let q = v ^. #nav ^. #tbl ^. #query
+  let q = ((v ^. #nav) ^. #tbl % #query)
       searchEnc = maybe E.null_
         (\(i, s) -> E.pairs (E.pair "col" (E.int i) <> E.pair "val" (E.text s)))
         (v ^. #search)
@@ -193,7 +193,7 @@ openView :: Bool -> ViewKind -> Query -> IO (Maybe AdbcTable)
 openView noSign_ vkind_ query_ = tryIO $ case vkind_ of
   VkFld p depth -> do
     mv <- Folder.mkView noSign_ p depth
-    pure $ fmap (\v -> v ^. #nav ^. #tbl) mv
+    pure $ fmap (\v -> v ^. #nav % #tbl) mv
   _ -> do
     total <- AdbcTable.queryCount query_
     AdbcTable.requery query_ total
@@ -275,7 +275,7 @@ load noSign_ name = do
         Left _     -> pure Nothing
         Right json -> do
           let views = jd json "views" V.empty :: Vector Value
-          restored <- fmap (V.mapMaybe id) $ V.mapM (restoreView noSign_) views
+          restored <- V.mapMaybe id <$> V.mapM (restoreView noSign_) views
           if not (V.null restored)
             then pure $ Just $ ViewStack
                                { hd = restored V.! 0

@@ -242,7 +242,7 @@ tabNames s = V.fromList $ map tabName $ s ^. #hd : s ^. #tl
 -- Just 0
 -- >>> let twoStack = dup testStack in fmap snd (updateStack twoStack CmdStkPop)
 -- Just EffectNone
--- >>> Data.Maybe.isNothing (updateStack testStack CmdRowInc)
+-- >>> isNothing (updateStack testStack CmdRowInc)
 -- True
 updateStack :: ViewStack t -> Cmd -> Maybe (ViewStack t, Effect)
 updateStack s h = case h of
@@ -255,4 +255,4 @@ updateStack s h = case h of
 
 -- | PRQL pipeline ops string from view's query (for tab line display).
 opsStr :: View AdbcTable -> Text
-opsStr v = Prql.renderOps $ v ^. #nav ^. #tbl ^. #query
+opsStr v = Prql.renderOps $ ((v ^. #nav) ^. #tbl % #query)
