@@ -1,22 +1,28 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
 {-
   PRQL rendering and compilation
   Uses common Op types from Tv/Types.hs
 
   Pure PRQL query representation + renderer. This module also hosts
-  `compile`, which shells out to the `prqlc` CLI — matching Lean's layering
-  where `compile` lives in `Tc/Data/ADBC/Prql.lean`, not the FFI module.
+  `compile`, which calls into libprqlc_c via FFI (statically linked) —
+  matching Lean's layering where `compile` lives in `Tc/Data/ADBC/Prql.lean`.
+  The FFI shim lives at the top of this module.
 -}
 module Tv.Data.DuckDB.Prql where
 
 import Tv.Prelude
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, try, bracket)
 import Data.FileEmbed (embedFile)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Vector as V
-import qualified Tv.Data.DuckDB.PrqlC as PrqlC
+import Foreign.C.String (CString, newCString, peekCString)
+import Foreign.C.Types (CSize(..), CChar)
+import Foreign.Marshal.Alloc (allocaBytes, free)
+import Foreign.Ptr (Ptr, nullPtr)
+import Foreign.Storable (pokeByteOff, peekByteOff)
 import Tv.Types
   ( Agg (..)
   , Op (..)
@@ -24,6 +30,45 @@ import Tv.Types
   )
 import qualified Tv.Log as Log
 import Optics.TH (makeFieldLabelsNoPrefix)
+
+-- ==== FFI: libprqlc_c shim ===========================
+-- Static-linked Rust PRQL → SQL compiler. Replaces the subprocess `prqlc`
+-- call; no runtime dependency.
+
+-- C `Options { bool format; char *target; bool signature_comment; }`
+-- bool is 1 byte, ptr at offset 8 due to alignment, total 24 bytes.
+_pokeOptions :: Ptr a -> Bool -> Ptr CChar -> Bool -> IO ()
+_pokeOptions p fmt tgt sig = do
+  pokeByteOff p 0  (boolByte fmt)
+  pokeByteOff p 8  tgt
+  pokeByteOff p 16 (boolByte sig)
+  where boolByte b = if b then 1 else 0 :: Word8
+
+-- C `CompileResult { const char *output; const Message *messages; size_t messages_len; }`
+-- 24 bytes; we only read `output` and `messages_len`.
+foreign import ccall unsafe "prqlc_compile_ptr"
+  _c_compile :: CString -> Ptr () -> Ptr () -> IO ()
+
+foreign import ccall unsafe "prqlc_destroy_ptr"
+  _c_result_destroy :: Ptr () -> IO ()
+
+-- | Compile PRQL → SQL via static-linked Rust engine. Just sql on success,
+-- Nothing on compile error.
+compileFFI :: Text -> Text -> IO (Maybe Text)
+compileFFI prql target =
+  bracket (newCString (T.unpack prql))   free $ \cPrql   ->
+  bracket (newCString (T.unpack target)) free $ \cTarget ->
+    allocaBytes 24 $ \optPtr ->
+    allocaBytes 24 $ \resPtr -> do
+      _pokeOptions optPtr True cTarget False
+      _c_compile cPrql optPtr resPtr
+      msgLen <- peekByteOff resPtr 16 :: IO CSize
+      out    <- peekByteOff resPtr 0  :: IO (Ptr CChar)
+      result <- if msgLen == 0 && out /= nullPtr
+                  then Just . T.pack <$> peekCString out
+                  else pure Nothing
+      _c_result_destroy resPtr
+      pure result
 
 -- | PRQL query: base table + operations (PRQL-specific base format)
 data Query = Query
@@ -133,7 +178,7 @@ funcs = TE.decodeUtf8 funcsBytes
 compile :: Text -> IO (Maybe Text)
 compile prql = do
   let full = funcs <> "\n" <> prql
-  r <- try (PrqlC.compileFFI full "sql.duckdb")
+  r <- try (compileFFI full "sql.duckdb")
   case r of
     Left (e :: SomeException) -> do
       Log.errorLog (T.pack ("prqlc FFI failed: " <> show e))
