@@ -18,7 +18,6 @@ import qualified Tv.Util as Clip
 import qualified Tv.CmdConfig as CmdConfig
 import Tv.CmdConfig (Entry(..), CmdInfo(..), mkEntry, hdl)
 import qualified Tv.Filter as Filter
-import qualified Tv.Folder as Folder
 import qualified Tv.Freq as Freq
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Key as Key
@@ -26,7 +25,6 @@ import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
 import Tv.Render (tabLine)
 import qualified Tv.Sparkline as Sparkline
-import qualified Tv.Ops as Ops
 import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme

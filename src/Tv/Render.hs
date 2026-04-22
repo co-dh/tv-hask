@@ -20,9 +20,7 @@ import qualified Tv.Nav as Nav
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import qualified Tv.Data.DuckDB.Conn as Conn
-import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
-import Optics.Core ((%), (^.))
 import Tv.Types
   ( ColType
   , RenderCtx(..)

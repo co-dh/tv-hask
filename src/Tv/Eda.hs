@@ -11,14 +11,12 @@ import Tv.Prelude
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
-import Tv.App.Types (AppState (stk), HandlerFn, tryStk)
+import Tv.App.Types (HandlerFn, tryStk)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Prql as Prql
-import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable, stripSemi, tmpName, fromTmp)
-import qualified Tv.Nav as Nav
-import Tv.Types (Cmd (..), escSql, isNumeric)
+import Tv.Types (Cmd (..))
 import Tv.View (ViewStack)
 import qualified Tv.View as View
 

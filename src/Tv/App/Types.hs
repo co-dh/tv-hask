@@ -39,7 +39,6 @@ import Optics.TH (makeFieldLabelsNoPrefix)
 import Tv.CmdConfig (CmdInfo(..), CmdCache)
 import qualified Tv.Data.DuckDB.Table as AdbcTable
 import Tv.Data.DuckDB.Table (AdbcTable)
-import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
 import Tv.Render (ViewState, errorPopup)
 

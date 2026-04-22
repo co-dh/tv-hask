@@ -10,11 +10,10 @@ import Data.Char (isDigit)
 import Data.IORef (IORef, newIORef)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Data.Vector as V
-import System.Directory (copyFile, createDirectoryIfMissing, doesFileExist, removeFile, getCurrentDirectory)
+import System.Directory (copyFile, createDirectoryIfMissing, removeFile, getCurrentDirectory)
 import System.FilePath (takeBaseName, takeExtension)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
@@ -39,7 +38,6 @@ import TestUtil
 
 import qualified Tv.Plot as Plot
 import Tv.Plot (KeyAction(..))
-import Tv.Types (PlotKind(..), ColType(..))
 import qualified Tv.Data.DuckDB.Table as Tbl
 import qualified Tv.Util as Log
 import qualified Tv.Util as Tmp

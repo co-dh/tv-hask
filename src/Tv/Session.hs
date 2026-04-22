@@ -29,9 +29,8 @@ import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Table as AdbcTable
 import qualified Tv.Folder as Folder
 import qualified Tv.Fzf as Fzf
-import qualified Tv.Nav as Nav
 import qualified Tv.Render as Render
-import Tv.App.Types (AppState(..), HandlerFn, stackIO)
+import Tv.App.Types (HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Types
   ( Agg(..)

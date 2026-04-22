@@ -56,7 +56,6 @@ import qualified Tv.Util as Log
 import qualified Tv.Util as Tmp
 import Tv.View (ViewStack)
 import qualified Tv.View as View
-import Optics.Core ((^.))
 
 -- $setup
 -- >>> :set -XOverloadedStrings

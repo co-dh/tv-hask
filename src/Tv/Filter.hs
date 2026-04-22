@@ -18,7 +18,7 @@ import qualified Data.Vector as V
 import qualified Data.List as L
 import Text.Read (readMaybe)
 
-import Tv.App.Types (AppState(..), HandlerFn, onStk, stackIO)
+import Tv.App.Types (HandlerFn, onStk, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
@@ -26,7 +26,7 @@ import Tv.Types (Cmd(..), isNumeric, toString, filterPrql, filterPrompt, exprErr
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
-import Tv.View (View(..), ViewStack, cur, setCur, push, tbl)
+import Tv.View (ViewStack, cur, setCur, push, tbl)
 import qualified Tv.View as View
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Render as Render

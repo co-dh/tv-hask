@@ -17,7 +17,6 @@ import qualified Data.Vector as V
 
 import Optics.TH (makeFieldLabelsNoPrefix)
 import qualified Tv.Data.DuckDB.Prql as Prql
-import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.Nav (NavState)
 import qualified Tv.Nav as Nav

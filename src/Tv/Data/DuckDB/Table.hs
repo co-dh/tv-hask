@@ -38,7 +38,6 @@ import Tv.Types
   )
 import qualified Tv.Util as Log
 import qualified Tv.Util as Tmp
-import Optics.Core ((^.))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- ----------------------------------------------------------------------------
