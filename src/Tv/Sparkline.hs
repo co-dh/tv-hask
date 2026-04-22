@@ -46,10 +46,9 @@ foldRows qr_ numIdxs = do
   let nrI = fromIntegral nr :: Int
       empty = V.replicate (V.length numIdxs) (V.empty :: Vector (Int, Int))
       step cb r_ = do
-        let rW = fromIntegral r_ :: Word64
-        colIdx <- Conn.cellInt qr_ rW 0
-        bucket <- Conn.cellInt qr_ rW 1
-        cnt    <- Conn.cellInt qr_ rW 2
+        colIdx <- Conn.cellInt qr_ r_ 0
+        bucket <- Conn.cellInt qr_ r_ 1
+        cnt    <- Conn.cellInt qr_ r_ 2
         pure $ case V.findIndex (== fromIntegral colIdx) numIdxs of
           Just j ->
             let cur = fromMaybe V.empty $ cb V.!? j

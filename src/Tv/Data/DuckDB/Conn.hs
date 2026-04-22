@@ -145,31 +145,28 @@ colType qr i = pure $ ctToString $ (qr ^. #colTypes) V.! fromIntegral i
     ctToString Tc.ColTypeBool      = "bool"
     ctToString Tc.ColTypeOther     = "other"
 
-cellStr :: QueryResult -> Word64 -> Word64 -> IO Text
-cellStr qr r c = do
-  let r' = fromIntegral r; c' = fromIntegral c
-  case findChunk qr r' of
+cellStr :: QueryResult -> Int -> Int -> IO Text
+cellStr qr r c =
+  case findChunk qr r of
     Nothing -> pure ""
     Just (ch, local) ->
-      let cv = DB.chunkColumn ch c'
+      let cv = DB.chunkColumn ch c
       in pure $ DB.cellAny cv local
 
-cellInt :: QueryResult -> Word64 -> Word64 -> IO Int64
-cellInt qr r c = do
-  let r' = fromIntegral r; c' = fromIntegral c
-  case findChunk qr r' of
+cellInt :: QueryResult -> Int -> Int -> IO Int64
+cellInt qr r c =
+  case findChunk qr r of
     Nothing -> pure 0
     Just (ch, local) ->
-      let cv = DB.chunkColumn ch c'
+      let cv = DB.chunkColumn ch c
       in pure $ fromMaybe 0 $ DB.cellInt cv local
 
-cellFloat :: QueryResult -> Word64 -> Word64 -> IO Double
-cellFloat qr r c = do
-  let r' = fromIntegral r; c' = fromIntegral c
-  case findChunk qr r' of
+cellFloat :: QueryResult -> Int -> Int -> IO Double
+cellFloat qr r c =
+  case findChunk qr r of
     Nothing -> pure 0
     Just (ch, local) ->
-      let cv = DB.chunkColumn ch c'
+      let cv = DB.chunkColumn ch c
       in pure $ fromMaybe 0 $ DB.cellDbl cv local
 
 -- | Locate (chunk, local row index) for a global row index. Binary search

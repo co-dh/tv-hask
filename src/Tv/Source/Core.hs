@@ -361,8 +361,8 @@ applyStubTypes tbl stubName = do
   nr <- Conn.nrows qr
   let n = fromIntegral nr :: Int
   cols <- V.generateM n $ \i -> do
-    colName <- Conn.cellStr qr (fromIntegral i) 0
-    colType <- Conn.cellStr qr (fromIntegral i) 1
+    colName <- Conn.cellStr qr i 0
+    colType <- Conn.cellStr qr i 1
     pure (colName, colType)
   forM_ cols $ \(colName, colType) -> do
     let alter = "ALTER TABLE " <> tbl
