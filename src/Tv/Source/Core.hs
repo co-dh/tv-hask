@@ -358,9 +358,7 @@ applyStubTypes tbl stubName = do
   qr <- Conn.queryParam
     "SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = $1 AND data_type != 'VARCHAR'"
     stubName
-  nr <- Conn.nrows qr
-  let n = fromIntegral nr :: Int
-  cols <- V.generateM n $ \i -> do
+  cols <- V.generateM (Conn.nrows qr) $ \i -> do
     colName <- Conn.cellStr qr i 0
     colType <- Conn.cellStr qr i 1
     pure (colName, colType)
