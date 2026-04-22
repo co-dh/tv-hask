@@ -39,6 +39,7 @@ import Tv.Prelude
 import Data.Bits ((.&.), (.|.), testBit)
 import qualified Data.Bits
 import Data.Char (chr, isDigit)
+import Data.List (foldl')
 import qualified Data.HashMap.Strict as HM
 import qualified Data.IntSet as IS
 import qualified Data.Text as T
@@ -282,7 +283,7 @@ init = do
     when isTty $ do
       orig <- PT.getTerminalAttributes inFd
       writeIORef origTios (Just orig)
-      let ta = foldl PT.withoutMode orig
+      let ta = foldl' PT.withoutMode orig
                  [ PT.ProcessInput, PT.EnableEcho, PT.EchoLF
                  , PT.KeyboardInterrupts, PT.ExtendedFunctions
                  , PT.StartStopOutput, PT.StartStopInput
@@ -1031,9 +1032,8 @@ drawHeader
   -> IO ()
 drawHeader buf screenW screenH yFoot layoutV2 visKeys colIdxs nKeysI
            names fmts colTypes colBits curCol stFg stBg =
-  forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
-    let (dispIdx, xPos, cw) = layoutV2 V.! c
-        origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
+  V.iforM_ layoutV2 $ \c (dispIdx, xPos, cw) -> do
+    let origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
         name  = fromMaybe "" $ names V.!? origIdx
         isSel = IS.member origIdx colBits
         isCur = origIdx == fromIntegral curCol
@@ -1086,9 +1086,8 @@ drawSpark
 drawSpark buf screenW screenH layoutV2 visKeys colIdxs sparklines stFg stBg = do
   let spFg = stFg _STYLE_HEADER
       spBg = stBg _STYLE_DEFAULT
-  forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
-    let (dispIdx, xPos, cw) = layoutV2 V.! c
-        origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
+  V.iforM_ layoutV2 $ \c (dispIdx, xPos, cw) -> do
+    let origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
         sp = fromMaybe "" $ sparklines V.!? origIdx
     printPadBuf buf screenW screenH xPos 1 cw spFg spBg sp False
     drawSep buf screenW screenH 1 (xPos + cw) (c + 1 == visKeys) stFg stBg
@@ -1115,9 +1114,8 @@ drawData buf screenW screenH dataY0 nRows r0 curRow curCol rowBits colBits
         y        = ri + dataY0
         isSelRow = IS.member (fromIntegral row) rowBits
         isCurRow = fromIntegral row == curRow
-    forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
-      let (dispIdx, xPos, cw) = layoutV2 V.! c
-          origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
+    V.iforM_ layoutV2 $ \c (dispIdx, xPos, cw) -> do
+      let origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
           isSel   = IS.member origIdx colBits
           isCurCol = origIdx == fromIntegral curCol
           isGrp   = dispIdx < nKeysI
@@ -1192,9 +1190,8 @@ drawTip
   -> (Int -> Word32) -> (Int -> Word32)
   -> IO ()
 drawTip buf screenW screenH layoutV2 colIdxs curCol moveDir names stFg stBg =
-  forM_ [0 .. V.length layoutV2 - 1] $ \c -> do
-    let (dispIdx, xPos, cw) = layoutV2 V.! c
-        origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
+  V.iforM_ layoutV2 $ \c (dispIdx, xPos, cw) -> do
+    let origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
     when (origIdx == fromIntegral curCol) $ do
       let name    = fromMaybe "" $ names V.!? origIdx
           nameLen = T.length name
