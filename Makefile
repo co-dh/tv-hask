@@ -51,7 +51,28 @@ else
   DUCKDB_ASSET := UNSUPPORTED
 endif
 
-.PHONY: prqlc duckdb duckdb-source clean-prqlc clean-duckdb clean-duckdb-cache clean-duckdb-src
+.PHONY: prqlc duckdb duckdb-source clean-prqlc clean-duckdb clean-duckdb-cache clean-duckdb-src release install
+
+# Build the exe, strip, and UPX-compress if upx is on PATH.
+# Cabal already strips via `ld-options: -Wl,-s`; upx brings 88MB → ~30MB.
+release:
+	cabal build exe:tv
+	@bin=$$(cabal list-bin exe:tv); \
+	 if command -v upx >/dev/null 2>&1; then \
+	   cp -f "$$bin" "$$bin.upx" && upx --best --lzma "$$bin.upx" && \
+	   echo "release: $$bin.upx"; \
+	 else \
+	   echo "upx not found — install with 'sudo pacman -S upx' for ~66% size reduction"; \
+	   echo "release: $$bin"; \
+	 fi
+
+# Install to ~/.local/bin/tv. Uses the UPX-compressed binary if available.
+install: release
+	@mkdir -p $$HOME/.local/bin
+	@bin=$$(cabal list-bin exe:tv); \
+	 src="$$bin.upx"; [ -f "$$src" ] || src="$$bin"; \
+	 cp -f "$$src" $$HOME/.local/bin/tv && \
+	 echo "installed: $$HOME/.local/bin/tv ($$(stat -c%s $$HOME/.local/bin/tv) bytes)"
 
 prqlc: $(PRQL_LIB)
 duckdb: check-duckdb-platform $(DUCKDB_LIB)
