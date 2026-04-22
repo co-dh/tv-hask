@@ -291,6 +291,5 @@ main = do
   case r of
     Right _ -> pure ()
     -- Let ExitCode propagate cleanly (exitWith); only format other errors.
-    Left e  -> case fromException e :: Maybe ExitCode of
-      Just ec -> exitWith ec
-      Nothing -> TIO.hPutStrLn stderr ("Error: " <> T.pack (show e))
+    Left e  -> maybe (TIO.hPutStrLn stderr ("Error: " <> T.pack (show e))) exitWith
+                     (fromException e :: Maybe ExitCode)

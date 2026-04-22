@@ -82,9 +82,9 @@ fetchAll = do
                 total' = total + length es
             if total' >= maxDatasets
               then pure (take maxDatasets (concat (reverse pages')))
-              else case next of
-                Just u  -> go u pages' total' (n + 1)
-                Nothing -> pure (concat (reverse pages'))
+              else maybe (pure (concat (reverse pages')))
+                         (\u -> go u pages' total' (n + 1))
+                         next
   go apiBase [] 0 (0 :: Int)
 
 -- | Parse @Link@ header for @rel="next"@.

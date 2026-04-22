@@ -116,9 +116,8 @@ searchFocus tbl_ curCol vals sRef preview = do
   -- we pull i back out of the raw line for the cache key. A duplicate focus
   -- event (same i as last) is a no-op to avoid redundant re-renders.
   let onFocus _rawIdx line = case T.splitOn "\t" line of
-        (hTxt : _) -> case readMaybe (T.unpack hTxt) of
-          Just idx -> applyFocus idx lastIdx cache
-          Nothing  -> pure ()
+        (hTxt : _) -> maybe (pure ()) (\idx -> applyFocus idx lastIdx cache)
+                            (readMaybe (T.unpack hTxt))
         _ -> pure ()
       applyFocus idx lastR cacheR = do
         li <- readIORef lastR
@@ -155,9 +154,7 @@ applyRow
   -> IO (ViewStack AdbcTable)
 applyRow s curCol result findM = do
   mri <- findM
-  pure $ case mri of
-    Nothing     -> s
-    Just rowIdx -> moveRowTo s rowIdx (Just (curCol, result))
+  pure $ maybe s (\rowIdx -> moveRowTo s rowIdx (Just (curCol, result))) mri
 
 -- | Live-preview path: the in-process picker fires onFocus for every
 -- highlight change, which we wire straight into row movement — no socat,
@@ -178,11 +175,11 @@ runLive s preview curCol curName vals = do
            (pure ()) onFocus
   if T.null out
     then readIORef sRef
-    else case readMaybe (T.unpack (pickIdx out)) of
-      Just idx ->
-        let result = fromMaybe "" (vals V.!? idx)
-        in applyRow s curCol result (cachedFindRow cache (tbl s) curCol idx result)
-      Nothing -> pure s
+    else maybe (pure s)
+               (\idx ->
+                  let result = fromMaybe "" (vals V.!? idx)
+                  in applyRow s curCol result (cachedFindRow cache (tbl s) curCol idx result))
+               (readMaybe (T.unpack (pickIdx out)))
   where
     pickIdx out = case T.splitOn "\t" out of { (x:_) -> x; _ -> "" }
 

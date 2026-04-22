@@ -216,12 +216,10 @@ goParent :: Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 goParent noSign_ s = do
   let dir_ = View.curDir (View.cur s)
   case Source.findSource dir_ of
-    Just src -> case Source.configParent src dir_ of
-      Just par -> tryView noSign_ s par 1 False
-      Nothing  -> pure (Just s)
-    Nothing -> case View.pop s of
-      Just s' -> pure (Just s')
-      Nothing -> tryView noSign_ s (dir_ <> "/..") (curDepth s) False
+    Just src -> maybe (pure (Just s)) (\par -> tryView noSign_ s par 1 False)
+                      (Source.configParent src dir_)
+    Nothing -> maybe (tryView noSign_ s (dir_ <> "/..") (curDepth s) False)
+                     (\s' -> pure (Just s')) (View.pop s)
 
 -- | Open a local file: data → FileFormat reader, else hexdump/text viewer.
 -- `fullPath` is the path used for display; `viewPath` is what the reader/viewer
@@ -266,9 +264,7 @@ handleOpen :: Bool -> Bool -> ViewStack AdbcTable -> Text -> Text -> Source.Open
            -> IO (Maybe (ViewStack AdbcTable))
 handleOpen tm noSign_ s fullPath p res = case res of
   Source.OpenAsTable adbc ->
-    case View.fromTbl adbc fullPath 0 V.empty 0 of
-      Just v  -> pure (Just (View.push s v))
-      Nothing -> pure (Just s)
+    pure $ Just $ maybe s (View.push s) (View.fromTbl adbc fullPath 0 V.empty 0)
   Source.OpenAsFile localPath -> openLocal tm s fullPath p localPath
   Source.OpenAsDir  uri       -> do
     m <- mkView noSign_ uri 1
@@ -326,9 +322,7 @@ trashCmd = do
     Just _  -> pure (Just ("trash-put", []))
     Nothing -> do
       mGio <- findExecutable "gio"
-      case mGio of
-        Just _  -> pure (Just ("gio", ["trash"]))
-        Nothing -> pure Nothing
+      pure (maybe Nothing (\_ -> Just ("gio", ["trash"])) mGio)
 
 -- | Get full paths of selected rows, or current row if none selected
 selPaths :: View AdbcTable -> IO (Vector Text)

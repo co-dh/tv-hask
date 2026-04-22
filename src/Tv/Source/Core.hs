@@ -328,9 +328,7 @@ addParentRow parentOk tbl = case parentOk of
 prqlRun :: Text -> IO (Maybe Conn.QueryResult)
 prqlRun q = do
   m <- Prql.compile q
-  case m of
-    Nothing  -> pure Nothing
-    Just sql -> Just <$> Conn.query sql
+  maybe (pure Nothing) (\sql -> Just <$> Conn.query sql) m
 
 -- | If listing produced 1 row with a single struct[] column, expand it.
 -- Handles APIs that wrap rows in an envelope (e.g. S3 Contents).

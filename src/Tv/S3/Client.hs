@@ -167,9 +167,7 @@ buildSigned Creds{ckAccess, ckSecret, ckToken, ckRegion} now httpMethod host_ cP
       dateStamp = BS8.pack (formatTime defaultTimeLocale "%Y%m%d" now)
       payloadHash = hexSha256 (TE.encodeUtf8 payload)
       hostBs = TE.encodeUtf8 host_
-      tokenPair = case ckToken of
-        Nothing -> []
-        Just t  -> [("x-amz-security-token", t)]
+      tokenPair = maybe [] (\t -> [("x-amz-security-token", t)]) ckToken
       -- Headers participating in the signature, sorted by lowercased name.
       signedPairs :: [(BS.ByteString, BS.ByteString)]
       signedPairs = sortBy (comparing fst)

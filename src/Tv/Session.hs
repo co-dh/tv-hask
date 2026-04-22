@@ -124,12 +124,9 @@ vkToJ vk = case vk of
 viewEncoding :: View AdbcTable -> E.Encoding
 viewEncoding v =
   let q = v ^. #nav ^. #tbl ^. #query
-      searchEnc = case v ^. #search of
-        Just (i, s) ->
-          E.pairs
-            ( E.pair "col" (E.int i)
-           <> E.pair "val" (E.text s) )
-        Nothing -> E.null_
+      searchEnc = maybe E.null_
+        (\(i, s) -> E.pairs (E.pair "col" (E.int i) <> E.pair "val" (E.text s)))
+        (v ^. #search)
       opsEnc = E.list (E.value . opToJ) (V.toList (q ^. #ops))
       queryEnc =
         E.pairs

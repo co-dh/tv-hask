@@ -52,9 +52,7 @@ prqlQuery :: Text -> IO (Maybe Conn.QueryResult)
 prqlQuery prql = do
   Log.write "prql" prql
   m <- Prql.compile prql
-  case m of
-    Nothing  -> pure Nothing
-    Just sql -> Just <$> Conn.query sql
+  maybe (pure Nothing) (\sql -> Just <$> Conn.query sql) m
 
 -- ----------------------------------------------------------------------------
 -- namespace Tc
@@ -180,9 +178,7 @@ queryCount q = do
 requery :: Query -> Int -> IO (Maybe AdbcTable)
 requery q total = do
   m <- prqlQuery (Prql.queryRender q <> " | take " <> T.pack (show prqlLimit))
-  case m of
-    Nothing  -> pure Nothing
-    Just qr_ -> Just <$> ofResult qr_ q total
+  maybe (pure Nothing) (\qr_ -> Just <$> ofResult qr_ q total) m
 
 -- | Build AdbcTable from an existing temp table name
 fromTmp :: Text -> IO (Maybe AdbcTable)
@@ -264,26 +260,20 @@ sortBy t idxs asc = do
   let sortCols = V.map (\idx -> (fromMaybe "" ((t ^. #colNames) V.!? idx), asc)) idxs
       newQuery = Prql.pipe (t ^. #query) (OpSort sortCols)
   m <- requery newQuery (t ^. #totalRows)
-  case m of
-    Just t' -> pure t'
-    Nothing -> pure t
+  pure (fromMaybe t m)
 
 -- | Hide columns: append select op and re-query
 hideCols :: AdbcTable -> Vector Int -> IO AdbcTable
 hideCols t hideIdxs = do
   let kept = keepCols (V.length (t ^. #colNames)) hideIdxs (t ^. #colNames)
   m <- requery (Prql.pipe (t ^. #query) (OpSel kept)) (t ^. #totalRows)
-  case m of
-    Just t' -> pure t'
-    Nothing -> pure t
+  pure (fromMaybe t m)
 
 -- | Exclude columns: append EXCLUDE op and re-query (DuckDB SELECT * EXCLUDE)
 excludeCols :: AdbcTable -> Vector Text -> IO AdbcTable
 excludeCols t cols = do
   m <- requery (Prql.pipe (t ^. #query) (OpExclude cols)) (t ^. #totalRows)
-  case m of
-    Just t' -> pure t'
-    Nothing -> pure t
+  pure (fromMaybe t m)
 
 -- | Fetch more rows (increase limit by prqlLimit)
 fetchMore :: AdbcTable -> IO (Maybe AdbcTable)
@@ -292,9 +282,7 @@ fetchMore t
   | otherwise = do
       let limit_ = (t ^. #nRows) + prqlLimit
       m <- prqlQuery (Prql.queryRender (t ^. #query) <> " | take " <> T.pack (show limit_))
-      case m of
-        Nothing  -> pure Nothing
-        Just qr_ -> Just <$> ofResult qr_ (t ^. #query) (t ^. #totalRows)
+      maybe (pure Nothing) (\qr_ -> Just <$> ofResult qr_ (t ^. #query) (t ^. #totalRows)) m
 
 -- | Build the plot PRQL pipeline: ds_trunc for time x-axis (SUBSTRING bucketing),
 -- ds_nth for non-time (every-Nth-row sampling). The _cat suffix keeps a grouping

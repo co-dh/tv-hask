@@ -352,9 +352,7 @@ shutdown = do
     hSetEcho inH True
     hFlush stdout
     mOrig <- readIORef origTios
-    case mOrig of
-      Just orig -> PT.setTerminalAttributes inFd orig PT.WhenFlushed
-      Nothing   -> pure ()
+    maybe (pure ()) (\orig -> PT.setTerminalAttributes inFd orig PT.WhenFlushed) mOrig
     writeIORef origTios Nothing
     writeIORef initedRef False
 

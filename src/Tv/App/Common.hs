@@ -53,9 +53,8 @@ pureDispatch a ci
 
 dispatch :: AppState -> CmdInfo -> Text -> IO Action
 dispatch a ci arg =
-  case HashMap.lookup (ci ^. #ciCmd) (a ^. #handlers) of
-    Just f  -> f a ci arg
-    Nothing -> viewUp a ci
+  maybe (viewUp a ci) (\f -> f a ci arg)
+        (HashMap.lookup (ci ^. #ciCmd) (a ^. #handlers))
 
 runMenu :: AppState -> IO Action
 runMenu a = do
@@ -83,10 +82,9 @@ runMenu a = do
   a' <- readIORef ref
   _ <- Socket.pollCmd  -- drain stale command from fzf focus
   case handler of
-    Just h -> do
-      case CmdConfig.handlerLookup (a' ^. #cmdCache) h of
-        Just ci -> dispatch a' ci ""
-        Nothing -> pure (ActOk a')
+    Just h ->
+      maybe (pure (ActOk a')) (\ci -> dispatch a' ci "")
+            (CmdConfig.handlerLookup (a' ^. #cmdCache) h)
     Nothing -> pure (ActOk a')
 
 -- | Truncate clipboard status message to fit on the status line without
@@ -117,9 +115,10 @@ renderSnap ref stk' styles_ = do
   Term.present
 
 freqH :: HandlerFn
-freqH = \a ci _ -> case Freq.update (a ^. #stk) (ci ^. #ciCmd) of
-  Just (s', e) -> runViewEffect (withStk a ci s') ci (View.cur s') e
-  Nothing      -> viewUp a ci
+freqH = \a ci _ ->
+  maybe (viewUp a ci)
+        (\(s', e) -> runViewEffect (withStk a ci s') ci (View.cur s') e)
+        (Freq.update (a ^. #stk) (ci ^. #ciCmd))
 
 localCmds :: Vector (Entry, Maybe HandlerFn)
 localCmds = V.fromList
@@ -142,9 +141,8 @@ localCmds = V.fromList
   , hdl (mkEntry CmdStkDup    ""  ""   "Duplicate current view"             False "") stkH
   , hdl (mkEntry CmdTblQuit   ""  ""   ""                                   False "") (\_ _ _ -> pure ActQuit)
   , hdl (mkEntry CmdInfoTog   ""  "I"  "Toggle info overlay"                False "")
-        (\a ci _ -> pure $ case UI.infoUpdate (a ^. #info) (ci ^. #ciCmd) of
-                             Just i' -> ActOk (a & #info .~ i')
-                             Nothing -> ActUnhandled)
+        (\a ci _ -> pure $ maybe ActUnhandled (\i' -> ActOk (a & #info .~ i'))
+                                 (UI.infoUpdate (a ^. #info) (ci ^. #ciCmd)))
   , hdl (mkEntry CmdPrecDec   ""  ""   "Decrease decimal precision"         False "") (precAdj (-1))
   , hdl (mkEntry CmdPrecInc   ""  ""   "Increase decimal precision"         False "") (precAdj 1)
   , hdl (mkEntry CmdPrecZero  ""  ""   "Set precision to 0 decimals"        False "") (precSet 0)
@@ -189,9 +187,7 @@ localCmds = V.fromList
 initHandlers :: (CmdConfig.CmdCache, HashMap.HashMap Cmd HandlerFn)
 initHandlers =
   let cc = CmdConfig.buildCache (V.map fst commands)
-      m  = V.foldl' (\acc (e, mfn) -> case mfn of
-                Just f  -> HashMap.insert (e ^. #cmd) f acc
-                Nothing -> acc)
+      m  = V.foldl' (\acc (e, mfn) -> maybe acc (\f -> HashMap.insert (e ^. #cmd) f acc) mfn)
             HashMap.empty commands
   in (cc, m)
 
