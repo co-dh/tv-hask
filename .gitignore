@@ -1,6 +1,8 @@
 # Build artifacts
 dist-newstyle/
 dist/
+/tv
+/tv.prof
 cabal.project.local
 .ghc.environment.*
 *.hi
