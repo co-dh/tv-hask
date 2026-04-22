@@ -101,13 +101,3 @@ matchNoPos q t = fmap fst (match q t)
 -- | Score, returning 'minBound' on miss. Convenient as a sort key.
 score :: Text -> Text -> Int
 score q t = fromMaybe minBound (matchNoPos q t)
-
--- | Does the query match at all? Faster than 'match' when positions aren't needed.
---
--- >>> isMatch "ab" "a-b"
--- True
--- >>> isMatch "ba" "a-b"
--- False
-isMatch :: Text -> Text -> Bool
-isMatch q t = case matchNoPos q t of
-  Just _ -> True; Nothing -> False

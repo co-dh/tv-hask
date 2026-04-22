@@ -15,7 +15,7 @@ import Data.List (sort)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Graphics.Rendering.Chart.Backend.Cairo (renderableToFile, FileFormat(..), FileOptions(..))
-import Graphics.Rendering.Chart.Easy hiding (sort)
+import Graphics.Rendering.Chart.Easy hiding ()
 import qualified Graphics.Rendering.Chart.Grid as Grid
 
 -- Tv.Types.PlotHist collides with Chart's PlotHist; route ours through Plot
@@ -399,7 +399,7 @@ layoutXY title_ xn yn p = layout_title .~ T.unpack title_
                        $ layout_plots .~ [p]
                        $ def
 
-defLine, defStep, defArea :: Text -> [Double] -> [Double] -> PlotLines Double Double
+defLine, defStep :: Text -> [Double] -> [Double] -> PlotLines Double Double
 defLine nm xs ys =
   plot_lines_title .~ T.unpack nm
   $ plot_lines_values .~ [zip xs ys]
@@ -410,8 +410,6 @@ defLine nm xs ys =
 defStep nm xs ys =
   -- Step plot: build a stair-step polyline from xy.
   defLine nm (stairXs xs) (stairYs ys)
-
-defArea nm xs ys = defLine nm xs ys  -- shadow; areaPlot below is the real one
 
 -- Filled area between (x, 0) and (x, y). Returns a Plot (not PlotLines)
 -- because Chart's PlotFillBetween is its own type.

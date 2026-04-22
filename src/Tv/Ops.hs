@@ -165,12 +165,6 @@ joinCond :: Vector Text -> Text
 -- empty results.
 joinCond cols = T.intercalate " && " (V.toList (V.map (\c -> "==" <> Prql.quote c) cols))
 
-opLabel :: JoinOp -> Text
-opLabel JoinInner = "join inner"
-opLabel JoinLeft  = "join left"
-opLabel JoinRight = "join right"
-opLabel JoinUnion = "union"
-opLabel JoinDiff  = "set diff"
 
 joinSide :: JoinOp -> Text
 joinSide JoinInner = ""
@@ -235,20 +229,6 @@ resolveOps s = do
       joinOk  = not (V.null leftGrp) && leftGrp == (View.cur s ^. #nav % #grp)
   pure (if joinOk then allOps else V.fromList [JoinUnion, JoinDiff], leftGrp)
 
-joinRun :: Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
-joinRun tm s = case resolveOps s of
-  Nothing -> pure Nothing
-  Just (ops, leftGrp) -> case listToMaybe (s ^. #tl) of
-    Nothing -> pure Nothing
-    Just parent -> do
-      (lName, _) <- prepareView (parent ^. #nav % #tbl) "l"
-      (rName, _) <- prepareView (View.tbl s) "r"
-      let items = V.map (\op -> opLabel op <> "  |  " <> prqlStr lName rName leftGrp op) ops
-      mIdx <- fzfIdx tm (V.fromList ["--prompt=join> "]) items
-      maybe (pure Nothing)
-            (\idx -> let op = fromMaybe JoinInner $ ops V.!? idx
-                     in execJoin s op leftGrp)
-            mIdx
 
 joinRunWith :: ViewStack AdbcTable -> Text -> IO (Maybe (ViewStack AdbcTable))
 joinRunWith s idxStr = case resolveOps s of

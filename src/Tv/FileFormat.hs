@@ -12,7 +12,6 @@ module Tv.FileFormat
   , formats
   , find
   , isData
-  , isTxt
   , viewFile
   , readCsv
   , openFile
@@ -72,10 +71,6 @@ find path_ =
 -- | Is file a recognized data format?
 isData :: Text -> Bool
 isData = isJust . find
-
--- | Is file a .txt (or .txt.gz)?
-isTxt :: Text -> Bool
-isTxt p = T.isSuffixOf ".txt" (stripGz p)
 
 -- | Resolve absolute path; falls back to the input on error (missing file).
 absPath :: Text -> IO Text
