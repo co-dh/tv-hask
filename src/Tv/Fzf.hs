@@ -43,8 +43,8 @@ parseOpts argv =
   let get pfx = firstMatch pfx
       hasFlag f = V.any (== f) argv
   in Picker.defaultOpts
-       { Picker.prompt     = maybe "> " id (get "--prompt=")
-       , Picker.header     = maybe ""   id (get "--header=")
+       { Picker.prompt     = fromMaybe "> " (get "--prompt=")
+       , Picker.header     = fromMaybe ""   (get "--header=")
        , Picker.printQuery = hasFlag "--print-query"
        , Picker.withNth    = V.any (T.isPrefixOf "--with-nth=") argv
        }
