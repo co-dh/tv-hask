@@ -307,7 +307,7 @@ renderChart dataPath pngPath kind xName yName hasCat _catName xType title =
         Right txt ->
           let sep    = if T.elem '\t' txt then "\t" else ","
               rows   = drop 1 $ T.lines txt
-              parse line = case T.splitOn sep line of
+              parse ln = case T.splitOn sep ln of
                 (_:o:h:l:c:_) -> (,,,) <$> readD o <*> readD h <*> readD l <*> readD c
                 _             -> Nothing
               parsed = mapMaybe parse rows
@@ -338,7 +338,7 @@ readXY' xNumeric path_ = do
                 in if null xys
                      then Left "no usable rows"
                      else Right (map fst xys, map snd xys)
-           else let ys = mapMaybe (\line -> case T.splitOn "\t" line of
+           else let ys = mapMaybe (\ln -> case T.splitOn "\t" ln of
                                               (_:b:_) -> readD b
                                               _       -> Nothing) rows
                     xs = [0 .. fromIntegral (length ys - 1)]
@@ -357,7 +357,7 @@ readY path_ = do
       in if null ys then Left "no usable rows" else Right ys
 
 parse2 :: Text -> Maybe (Double, Double)
-parse2 line = case T.splitOn "\t" line of
+parse2 ln = case T.splitOn "\t" ln of
   (a:b:_) -> (,) <$> readD a <*> readD b
   _       -> Nothing
 
@@ -373,12 +373,12 @@ readXYC path_ = do
       in if null xyc then Left "no usable rows" else Right xyc
 
 parse3 :: Text -> Maybe (Double, Double, Text)
-parse3 line = case T.splitOn "\t" line of
+parse3 ln = case T.splitOn "\t" ln of
   (a:b:c:_) -> (,,) <$> readD a <*> readD b <*> Just (T.strip c)
   _         -> Nothing
 
 parse1 :: Text -> Maybe Double
-parse1 line = case T.splitOn "\t" line of
+parse1 ln = case T.splitOn "\t" ln of
   (b:_:_) -> readD b      -- 2-col TSV: take y (second col) for hist
   [a]     -> readD a
   _       -> Nothing
@@ -473,7 +473,7 @@ legendOnRight items = fillBackground (FillStyleSolid (opaque white)) $
     { minsize = pure ( 80
                      , fromIntegral (length items) * rowH + 2 * pad )
     , render  = \_ -> do
-        forM_ (zip [0..] items) $ \(i, (label_, col)) -> do
+        forM_ (zip [0 :: Int ..] items) $ \(i, (label_, col)) -> do
           let y = pad + fromIntegral i * rowH + rowH / 2
               swX = pad
               swY = y - swH / 2
@@ -500,15 +500,15 @@ groupByCat = foldr step []
 -- Bar plot. Chart's PlotBars needs a [(x, [y])] shape — one bar per category.
 layoutBar :: Text -> Text -> Text -> [Double] -> [Double] -> Layout Double Double
 layoutBar title_ xn yn xs ys =
-  let bars = plot_bars_titles .~ [T.unpack yn]
-           $ plot_bars_values .~ [(x, [y]) | (x, y) <- zip xs ys]
-           $ plot_bars_style  .~ BarsClustered
-           $ plot_bars_item_styles .~ [(solidFillStyle (opaque steelblue), Nothing)]
-           $ def
+  let bs = plot_bars_titles .~ [T.unpack yn]
+         $ plot_bars_values .~ [(x, [y]) | (x, y) <- zip xs ys]
+         $ plot_bars_style  .~ BarsClustered
+         $ plot_bars_item_styles .~ [(solidFillStyle (opaque steelblue), Nothing)]
+         $ def
   in layout_title .~ T.unpack title_
    $ layout_x_axis . laxis_title .~ T.unpack xn
    $ layout_y_axis . laxis_title .~ T.unpack yn
-   $ layout_plots .~ [plotBars bars]
+   $ layout_plots .~ [plotBars bs]
    $ def
 
 -- Histogram: bin into N buckets, then bar-plot.
@@ -520,11 +520,12 @@ layoutHist title_ yn ys =
       hi     = last xs
       step   = (hi - lo) / fromIntegral n
       bin v  = min (n - 1) $ max 0 $ floor ((v - lo) / step)
+      counts :: [Int]
       counts = foldr (\v acc -> let b = bin v in take b acc ++ [acc !! b + 1] ++ drop (b + 1) acc)
                      (replicate n 0) ys
       mid i  = lo + (fromIntegral i + 0.5) * step
-      pts    = [(mid i, [fromIntegral c]) | (i, c) <- zip [0..] counts]
-      bars   = plot_bars_titles .~ [T.unpack yn]
+      pts    = [(mid i, [fromIntegral c]) | (i, c) <- zip [0 :: Int ..] counts]
+      bs     = plot_bars_titles .~ [T.unpack yn]
              $ plot_bars_values .~ pts
              $ plot_bars_spacing .~ BarsFixGap 0 0
              $ plot_bars_item_styles .~ [(solidFillStyle (opaque steelblue), Just (solidLine 0.5 (opaque white)))]
@@ -532,13 +533,13 @@ layoutHist title_ yn ys =
   in layout_title .~ T.unpack title_
    $ layout_x_axis . laxis_title .~ T.unpack yn
    $ layout_y_axis . laxis_title .~ "count"
-   $ layout_plots .~ [plotBars bars]
+   $ layout_plots .~ [plotBars bs]
    $ def
 
 -- Density: trivial KDE via Gaussian kernel, then line.
 layoutDensity :: Text -> Text -> [Double] -> Layout Double Double
 layoutDensity title_ yn ys =
-  let n     = 200
+  let n     = 200 :: Int
       lo    = minimum ys
       hi    = maximum ys
       pad   = (hi - lo) * 0.05
@@ -701,9 +702,7 @@ layoutBoxOrViolin
   -> [(Text, [(Double, Double)])]           -- category groups: (cat, (_, y) pairs)
   -> Layout Double Double
 layoutBoxOrViolin isViolin title_ xn yn groups =
-  let n          = length groups
-      xs         = [ fromIntegral i | i <- [1 .. n] ]
-      yvals  c   = map snd c
+  let yvals  c   = map snd c
       mkBoxBars  = concat
         [ let (q1, q2, q3, lo, hi) = quantiles5 (yvals pts)
               x = fromIntegral i
@@ -730,7 +729,7 @@ layoutBoxOrViolin isViolin title_ xn yn groups =
       mkViolins = concat
         [ let ys      = yvals pts
               (lo, hi) = (minimum ys, maximum ys)
-              ngrid   = 60
+              ngrid   = 60 :: Int
               grid    = [lo + (hi - lo) * fromIntegral k / fromIntegral (ngrid - 1)
                         | k <- [0 .. ngrid - 1]]
               h       = silvermanBw ys
@@ -770,7 +769,6 @@ layoutBoxOrViolin isViolin title_ xn yn groups =
           $ layout_x_axis . laxis_override .~ catAxis
           $ layout_plots .~ (if isViolin then mkViolins else mkBoxBars)
           $ def
-      _ = xs
   in lay
 
 -- A miniature box overlay for the violin (matches ggplot's

@@ -20,7 +20,6 @@ import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Table (AdbcTable, tmpName, stripSemi)
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Ops (maxSplitParts, createTempView, createTempTable)
-import Tv.Fzf (fzfIdx)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
 import Tv.View (ViewStack)

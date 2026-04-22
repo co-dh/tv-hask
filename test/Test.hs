@@ -232,7 +232,8 @@ test_folder_sort_type = do
   let ls = dataLines output
       (_, status) = footer output
   assert (contains status "r0/") "sort on type column should not error"
-  let types = map (\l -> if contains l " dir " then "d"
+  let types :: [String]
+      types = map (\l -> if contains l " dir " then "d"
                          else if contains l " symlink " then "s" else "f") ls
       firstFile = fromMaybe 999 (findIdx (== "f") types)
       lastDir   = fromMaybe 0 (findIdx (== "d") (reverse types))

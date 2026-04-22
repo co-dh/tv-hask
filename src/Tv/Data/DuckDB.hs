@@ -96,10 +96,7 @@ import Tv.Types (ColType(..))
 -- | Live database + connection. The connection ForeignPtr carries a
 -- concurrent finalizer that also touches the database, ensuring we close the
 -- connection strictly before the database.
-data Conn = Conn
-  { connDb  :: !(ForeignPtr DuckDBDatabase)
-  , connHdl :: !(ForeignPtr DuckDBConnection)
-  }
+data Conn = Conn !(ForeignPtr DuckDBDatabase) !(ForeignPtr DuckDBConnection)
 
 connDb :: Conn -> ForeignPtr DuckDBDatabase
 connDb (Conn d _) = d
@@ -111,11 +108,10 @@ connHdl (Conn _ h) = h
 -- finalizer runs @duckdb_destroy_result@. 'Conn' is retained via a
 -- concurrent finalizer.
 data Result = Result
-  { resPtr      :: !(ForeignPtr DuckDBResult)
-  , resColNames :: !(Vector Text)
-  , resColTypes :: !(Vector ColType)
-  , resRawTypes :: !(Vector DuckDBType)
-  }
+  !(ForeignPtr DuckDBResult)
+  !(Vector Text)
+  !(Vector ColType)
+  !(Vector DuckDBType)
 
 resPtr      :: Result -> ForeignPtr DuckDBResult
 resPtr      (Result p _ _ _) = p
@@ -128,10 +124,7 @@ resRawTypes (Result _ _ _ r) = r
 
 -- | One DuckDB data chunk (≤ 2048 rows). The ForeignPtr finalizer runs
 -- @duckdb_destroy_data_chunk@ and retains the parent 'Result'.
-data DataChunk = DataChunk
-  { chunkFp    :: !(ForeignPtr ())
-  , chunkOwner :: !Result
-  }
+data DataChunk = DataChunk !(ForeignPtr ()) !Result
 
 chunkFp    :: DataChunk -> ForeignPtr ()
 chunkFp    (DataChunk p _) = p
@@ -230,7 +223,7 @@ query conn sql = mask_ $ do
     free resSlot
     throwIO (DuckDBError msg)
   ncol <- fromIntegral <$> C.c_duckdb_column_count resSlot :: IO Int
-  let ixs = V.enumFromN 0 ncol
+  let ixs = V.enumFromN (0 :: Int) ncol
   names <-
     V.mapM
       ( \i -> do
