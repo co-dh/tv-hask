@@ -391,9 +391,10 @@ fromTsv content = fromIngest content "tsv" "read_csv_auto"
 
 -- | Create from file path with optional setup SQL and reader function.
 --   reader: DuckDB reader function (e.g. "read_arrow"). Empty = auto-detect via backtick.
+--   readerArgs: extra args appended after the path (e.g. "sep='|'"). Empty = none.
 --   duckdbExt: extension to install+load first (may be empty).
-fileWith :: Text -> Text -> Text -> IO (Maybe AdbcTable)
-fileWith path_ reader duckdbExt = do
+fileWith :: Text -> Text -> Text -> Text -> IO (Maybe AdbcTable)
+fileWith path_ reader readerArgs duckdbExt = do
   loadExt duckdbExt
   if T.null reader
     then fromFile path_
@@ -401,10 +402,11 @@ fileWith path_ reader duckdbExt = do
       -- Materialize via reader function into temp table (PRQL can't parse
       -- function calls in `from`).
       let tbl = remoteName path_
+          argSuffix = if T.null readerArgs then "" else ", " <> readerArgs
       _ <- Conn.query
              ( "CREATE OR REPLACE TEMP TABLE \"" <> tbl
             <> "\" AS (SELECT * FROM " <> reader
-            <> "('" <> escSql path_ <> "'))" )
+            <> "('" <> escSql path_ <> "'" <> argSuffix <> "))" )
       let q = Prql.defaultQuery { Prql.base = "from " <> tbl }
       total <- queryCount q
       requery q total

@@ -491,6 +491,20 @@ test_avro_open = do
   assert (contains status "r0/3") "Avro has 3 rows"
 
 -- ============================================================================
+-- === BSV tests (bar-separated values — DuckDB can't auto-detect `|`) ===
+-- ============================================================================
+
+test_bsv_open :: Assertion
+test_bsv_open = do
+  out <- run "" "data/basic.bsv"
+  assert (contains out "a") "BSV header shows column 'a'"
+  assert (contains out "b") "BSV header shows column 'b'"
+  assert (contains out "x") "BSV shows 'x' value"
+  assert (contains out "z") "BSV shows 'z' value"
+  let (_, status) = footer out
+  assert (contains status "r0/5") "BSV has 5 rows"
+
+-- ============================================================================
 -- === Rendering tests ===
 -- ============================================================================
 
@@ -1231,6 +1245,7 @@ ciTests = testGroup "ci"
   , testCase "jsonl_sort" test_jsonl_sort
   , testCase "xlsx_open" test_xlsx_open
   , testCase "avro_open" test_avro_open
+  , testCase "bsv_open" test_bsv_open
   , testCase "folder_prefix" test_folder_prefix
   , testCase "sort_excludes_key" test_sort_excludes_key
   , testCase "sort_selected_not_key" test_sort_selected_not_key
