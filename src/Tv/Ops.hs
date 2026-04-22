@@ -12,7 +12,7 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 import Text.Read (readMaybe)
 
-import Tv.App.Types (AppState(..), HandlerFn, stackIO)
+import Tv.App.Types (HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Types (Cmd(..), ColType(..), Op(..), toString, escSql, exprError)
 import qualified Tv.Render as Render

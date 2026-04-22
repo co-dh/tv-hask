@@ -20,7 +20,6 @@ import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import Tv.Types (ColCache(..), ColType (..), isNumeric)
-import Optics.Core ((^.))
 
 -- | Cache: path + colIdx keyed → formatted agg string.
 type Cache = ColCache Int Text

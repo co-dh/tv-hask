@@ -37,7 +37,6 @@ import qualified Data.Vector as V
 
 import Tv.Fzf.Match (match)
 import qualified Tv.Term as Term
-import Optics.Core ((^.))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Options for one picker invocation.

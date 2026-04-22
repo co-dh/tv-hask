@@ -22,7 +22,7 @@ import System.Exit (ExitCode(..))
 import System.FilePath ((</>))
 import qualified System.Posix.Files as Posix
 
-import Tv.App.Types (AppState(..), HandlerFn, tryStk, viewUp)
+import Tv.App.Types (HandlerFn, tryStk, viewUp)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Table as Table
@@ -34,7 +34,6 @@ import qualified Tv.Theme as Theme
 import Tv.Types
   ( Cmd(..)
   , ViewKind(..)
-  , getD
   )
 import qualified Tv.Util as Log
 import qualified Tv.Remote as Remote

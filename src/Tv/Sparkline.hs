@@ -19,7 +19,6 @@ import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
 import Tv.Types (isNumeric, joinWith)
 import qualified Tv.Util as Log
-import Optics.Core ((^.))
 
 -- 9 levels: space + 8 Unicode block elements
 blocks :: Vector Char

@@ -12,11 +12,10 @@ import Tv.Prelude
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
-import Tv.App.Types (AppState(..), HandlerFn, stackIO)
+import Tv.App.Types (HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Prql as Prql
-import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable, stripSemi)
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Render as Render
@@ -24,7 +23,6 @@ import Tv.Types (Cmd(..), ExportFmt(..), StrEnum(toString, ofStringQ), escSql)
 import qualified Tv.Util as Log
 import Tv.View (ViewStack)
 import qualified Tv.View as View
-import Optics.Core ((^.))
 
 
 -- | DuckDB COPY option clause for an export format

@@ -11,7 +11,6 @@ module Tv.Plot.Chart where
 
 import Tv.Prelude hiding ((&), (^.), (.~), (%~), (%), view, set, over)
 import Control.Exception (SomeException, try)
-import Data.Default.Class (def)
 import Data.List (sort)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO

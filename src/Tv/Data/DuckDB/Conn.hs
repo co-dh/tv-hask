@@ -19,7 +19,6 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import qualified Tv.Data.DuckDB as DB
 import qualified Tv.Types as Tc
-import Optics.Core ((^.))
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Global Conn — singleton in-process DuckDB connection.
