@@ -31,7 +31,7 @@ import Optics.Core ((^.))
 getCols :: AdbcTable -> Vector Int -> Int -> Int -> IO (Vector (Vector Text))
 getCols t idxs r0_ r1_ =
   V.mapM (\i -> V.generateM (r1_ - r0_) $ \ri ->
-    Conn.cellStr (t ^. #qr) (fromIntegral (r0_ + ri) :: Word64) (fromIntegral i :: Word64)
+    Conn.cellStr (t ^. #qr) (r0_ + ri) i
   ) idxs
 
 colType :: AdbcTable -> Int -> ColType
@@ -39,7 +39,7 @@ colType t col = fromMaybe ColTypeOther ((t ^. #colTypes) V.!? col)
 
 cellStr :: AdbcTable -> Int -> Int -> IO Text
 cellStr t row col =
-  Conn.cellStr (t ^. #qr) (fromIntegral row :: Word64) (fromIntegral col :: Word64)
+  Conn.cellStr (t ^. #qr) row col
 
 -- | Hide columns at cursor + selections, return new table and filtered group
 modifyTableHide :: AdbcTable -> Int -> Vector Int -> Vector Text -> IO (AdbcTable, Vector Text)
@@ -67,7 +67,7 @@ toText t = do
   let nc = V.length (t ^. #colNames)
   cols <- V.generateM nc $ \i ->
     V.generateM (t ^. #nRows) $ \r ->
-      Conn.cellStr (t ^. #qr) (fromIntegral r :: Word64) (fromIntegral i :: Word64)
+      Conn.cellStr (t ^. #qr) r i
   pure $ colText (t ^. #colNames) cols (t ^. #nRows)
 
 -- ----------------------------------------------------------------------------
@@ -226,7 +226,7 @@ metaIdxs tblName flt = do
       nr <- Conn.nrows qr_
       let n = fromIntegral nr :: Int
       V.generateM n $ \r -> do
-        v <- Conn.cellInt qr_ (fromIntegral r :: Word64) 0
+        v <- Conn.cellInt qr_ r 0
         pure (fromIntegral v :: Int)
 
 -- | Query column names from meta table at given row indices
@@ -244,7 +244,7 @@ metaNames tblName rows = do
         Just qr_ -> do
           nr <- Conn.nrows qr_
           let n = fromIntegral nr :: Int
-          V.generateM n $ \r -> Conn.cellStr qr_ (fromIntegral r :: Word64) 0
+          V.generateM n $ \r -> Conn.cellStr qr_ r 0
 
 -- | Extract table name from path: last component after last "://" prefix strip.
 --   "osquery://groups" -> "groups", "duckdb://osq.groups" -> "groups"

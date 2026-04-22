@@ -246,7 +246,7 @@ primaryKeys table = do
         Just qr_ -> do
           nr <- Conn.nrows qr_
           let n = fromIntegral nr :: Int
-          V.generateM n $ \i -> Conn.cellStr qr_ (fromIntegral i) 0
+          V.generateM n $ \i -> Conn.cellStr qr_ i 0
 
 -- | Open a table/view from an attached .duckdb file or schema-qualified name
 fromTable :: Text -> IO (Maybe (AdbcTable, Vector Text))
@@ -351,7 +351,7 @@ uniqCats baseR cn = do
     Just catQr -> do
       nr <- Conn.nrows catQr
       let n = fromIntegral nr :: Int
-      V.generateM n $ \i -> Conn.cellStr catQr (fromIntegral i) 0
+      V.generateM n $ \i -> Conn.cellStr catQr i 0
 
 -- | Export plot data to the thread-local plot file via DuckDB COPY
 -- (downsample in SQL). truncLen: SUBSTRING length for time truncation;
@@ -513,7 +513,7 @@ distinct t col = do
     Just qr_ -> do
       nr <- Conn.nrows qr_
       let n = fromIntegral nr :: Int
-      V.generateM n $ \i -> Conn.cellStr qr_ (fromIntegral i) 0
+      V.generateM n $ \i -> Conn.cellStr qr_ i 0
 
 -- | Find row from starting position, forward or backward (with wrap).
 --   PRQL row_number is 1-based; we subtract 1 here for 0-based indexing.
@@ -530,7 +530,7 @@ findRow t col val start fwd = do
       nr <- Conn.nrows qr_
       let n = fromIntegral nr :: Int
       rows <- V.generateM n $ \i -> do
-        v <- Conn.cellInt qr_ (fromIntegral i) 0
+        v <- Conn.cellInt qr_ i 0
         pure (fromIntegral v - 1 :: Int)
       if V.null rows
         then pure Nothing
