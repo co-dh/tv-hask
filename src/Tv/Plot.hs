@@ -16,6 +16,7 @@ module Tv.Plot where
 
 import Tv.Prelude
 import Control.Exception (SomeException, try)
+import Data.List (foldl')
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Data.Vector as V
@@ -170,7 +171,7 @@ setRaw = do
   fd   <- openTty
   orig <- TermAttrs.getTerminalAttributes fd
   writeIORef savedTtyAttrs (Just orig)
-  let raw = foldl TermAttrs.withoutMode orig
+  let raw = foldl' TermAttrs.withoutMode orig
               [ TermAttrs.ProcessInput
               , TermAttrs.EnableEcho
               , TermAttrs.EchoLF
