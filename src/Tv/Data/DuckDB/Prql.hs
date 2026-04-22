@@ -22,7 +22,7 @@ import Tv.Types
   , Op (..)
   , joinWith
   )
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | PRQL query: base table + operations (PRQL-specific base format)

@@ -51,9 +51,9 @@ import Tv.Types
   , isTime
   , getD
   )
-import qualified Tv.Kitty as Kitty
-import qualified Tv.Log as Log
-import qualified Tv.Tmp as Tmp
+import qualified Tv.Util as Kitty
+import qualified Tv.Util as Log
+import qualified Tv.Util as Tmp
 import Tv.View (ViewStack)
 import qualified Tv.View as View
 import Optics.Core ((^.))
@@ -114,7 +114,7 @@ tryDisplay cmd args = do
 
 -- | Display PNG. Native kitty graphics protocol when supported (kitty,
 -- WezTerm, ghostty), then viu, then xdg-open. Drops the `kitten` external
--- dep — Tv.Kitty emits the APC sequence directly.
+-- dep — the Kitty section of Tv.Util emits the APC sequence directly.
 showPng :: String -> IO ()
 showPng png = do
   kitty <- Kitty.supportsKittyGraphics

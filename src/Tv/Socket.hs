@@ -30,8 +30,8 @@ import System.Environment (lookupEnv, setEnv)
 import System.IO.Unsafe (unsafePerformIO)
 import System.Posix.Process (getProcessID)
 
-import qualified Tv.Log as Log
-import Tv.Tmp (rmFile)
+import qualified Tv.Util as Log
+import Tv.Util (rmFile)
 
 bufRef :: IORef Text
 bufRef = unsafePerformIO (newIORef T.empty)

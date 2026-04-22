@@ -36,7 +36,7 @@ import Tv.Types
   , ViewKind(..)
   , getD
   )
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import qualified Tv.Remote as Remote
 import Tv.View (View, ViewStack)
 import qualified Tv.View as View

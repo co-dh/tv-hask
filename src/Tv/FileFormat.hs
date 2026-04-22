@@ -27,7 +27,7 @@ import qualified Data.Vector as V
 import System.Directory (canonicalizePath)
 import System.IO (stdout)
 
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import Tv.View (View)
 import qualified Tv.View as View
 import Tv.Types (escSql)

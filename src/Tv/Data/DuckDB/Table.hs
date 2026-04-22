@@ -36,8 +36,8 @@ import Tv.Types
   , escSql
   , keepCols
   )
-import qualified Tv.Log as Log
-import qualified Tv.Tmp as Tmp
+import qualified Tv.Util as Log
+import qualified Tv.Util as Tmp
 import Optics.Core ((^.))
 import Optics.TH (makeFieldLabelsNoPrefix)
 

@@ -22,7 +22,7 @@ import Network.HTTP.Types.Header (HeaderName)
 import System.Directory (createDirectoryIfMissing, removeFile)
 
 import qualified Tv.Data.DuckDB.Conn as Conn
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import qualified Tv.Source.Core as Core
 
 apiBase :: String

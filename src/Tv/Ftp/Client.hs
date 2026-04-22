@@ -19,7 +19,7 @@ import qualified Data.Text.Encoding as TE
 import qualified Network.FTP.Client as FTP
 import System.Exit (ExitCode (..))
 
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 
 -- | Parse an "ftp://host[:port]/path[/]" URL into (host, port, path).
 -- Defaults port to 21. An empty path becomes "/".

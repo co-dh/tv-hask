@@ -11,7 +11,7 @@ import qualified Data.Vector as V
 
 import qualified Tv.Data.DuckDB.Conn as Conn
 import Tv.Data.DuckDB.Table (AdbcTable, fromTmp, tmpName)
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
 import qualified Tv.Source.HfRootSetup as Setup

@@ -9,7 +9,7 @@ import qualified Data.Text as T
 import qualified Tv.Data.DuckDB.Conn as Conn
 import Tv.Data.DuckDB.Table (AdbcTable, fromTmp, tmpName)
 import qualified Tv.Remote as Remote
-import qualified Tv.Tmp as Tmp
+import qualified Tv.Util as Tmp
 import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
 

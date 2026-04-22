@@ -40,9 +40,9 @@ import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import Tv.View (View, ViewStack(..))
 import qualified Tv.View as View
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import qualified Tv.Socket as Socket
-import qualified Tv.Tmp as Tmp
+import qualified Tv.Util as Tmp
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- parsed CLI arguments

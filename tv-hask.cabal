@@ -54,9 +54,7 @@ library
     Tv.Fzf
     Tv.Fzf.Match
     Tv.Fzf.Picker
-    Tv.Clip
     Tv.Key
-    Tv.Kitty
     Tv.Meta
     Tv.Nav
     Tv.Freq
@@ -87,10 +85,9 @@ library
     Tv.Types.TH
     Tv.UI.Info
     Tv.UI.Preview
-    Tv.Log
     Tv.Remote
     Tv.Socket
-    Tv.Tmp
+    Tv.Util
     Tv.View
   other-modules:
     Tv.Data.DuckDB.PrqlC

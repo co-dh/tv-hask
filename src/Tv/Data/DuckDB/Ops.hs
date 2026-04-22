@@ -21,7 +21,7 @@ import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable(..))
 import Data.List (nub)
 import Tv.Types (ColType(..), colText, escSql, isNumeric)
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import Optics.Core ((^.))
 
 -- ----------------------------------------------------------------------------

@@ -30,9 +30,9 @@ import System.Process (readProcessWithExitCode)
 import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Prql as Prql
 import Tv.Data.DuckDB.Table (AdbcTable, tmpName)
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import qualified Tv.Render as Render
-import qualified Tv.Tmp as Tmp
+import qualified Tv.Util as Tmp
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | A remote directory backend: prefix match + two behavior closures.

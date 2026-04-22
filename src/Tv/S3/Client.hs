@@ -44,7 +44,7 @@ import qualified Network.HTTP.Types.URI as URI
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import qualified Tv.Source.Core as Core
 
 -- | List bucket prefix. Builds an XML→JSON conversion so the downstream
