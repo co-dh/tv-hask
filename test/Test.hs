@@ -41,8 +41,8 @@ import qualified Tv.Plot as Plot
 import Tv.Plot (KeyAction(..))
 import Tv.Types (PlotKind(..), ColType(..))
 import qualified Tv.Data.DuckDB.Table as Tbl
-import qualified Tv.Log as Log
-import qualified Tv.Tmp as Tmp
+import qualified Tv.Util as Log
+import qualified Tv.Util as Tmp
 
 run :: Text -> FilePath -> IO Text
 run keys file = runHask keys file []

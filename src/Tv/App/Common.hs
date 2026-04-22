@@ -14,7 +14,7 @@ import qualified Tv.AppF as AppM
 import Tv.AppF (AppM, Interp(..))
 import Tv.App.Types
 import Tv.App.FeatureCommands (featureCommands)
-import qualified Tv.Clip as Clip
+import qualified Tv.Util as Clip
 import qualified Tv.CmdConfig as CmdConfig
 import Tv.CmdConfig (Entry(..), CmdInfo(..), mkEntry, hdl)
 import qualified Tv.Filter as Filter
@@ -32,7 +32,7 @@ import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 import Tv.Types (Cmd(..), ColCache(..), ViewKind(..), toString, noEffect)
 import qualified Tv.UI as UI
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import qualified Tv.Socket as Socket
 import qualified Tv.Data.DuckDB.Ops as Ops
 import Tv.Data.DuckDB.Table (AdbcTable)

@@ -25,7 +25,7 @@ import qualified Tv.Fzf as Fzf
 import qualified Tv.Nav as Nav
 import Tv.View (ViewStack)
 import qualified Tv.View as View
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 
 -- ============================================================================
 -- Shared: pipe PRQL op → requery → rebuild → push

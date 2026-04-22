@@ -28,7 +28,7 @@ import Tv.Types
   , Op (..)
   , joinWith
   )
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- ==== FFI: libprqlc_c shim ===========================

@@ -54,7 +54,7 @@ import Tv.Types
   , ViewKind(..)
   , joinWith
   )
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import Tv.View (View(..), ViewStack(..))
 import qualified Tv.View as View
 

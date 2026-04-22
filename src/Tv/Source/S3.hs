@@ -16,7 +16,7 @@ import Tv.Data.DuckDB.Table (AdbcTable, fromTmp, tmpName)
 import qualified Tv.Remote as Remote
 import qualified Tv.Render as Render
 import qualified Tv.S3.Client as S3C
-import qualified Tv.Tmp as Tmp
+import qualified Tv.Util as Tmp
 import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
 

@@ -16,7 +16,7 @@ import qualified Tv.Ftp as Ftp
 import qualified Tv.Ftp.Client as FtpC
 import qualified Tv.Remote as Remote
 import qualified Tv.Render as Render
-import qualified Tv.Tmp as Tmp
+import qualified Tv.Util as Tmp
 import Tv.Source.Core (Source (..), OpenResult (..))
 import qualified Tv.Source.Core as Core
 

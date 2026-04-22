@@ -15,7 +15,7 @@ import Data.List (nub)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import Tv.App.Types (AppState(..), Action(..), HandlerFn, tryStk, resetVS)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import qualified Tv.Data.DuckDB.Conn as Conn

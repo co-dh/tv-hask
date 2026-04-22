@@ -27,7 +27,7 @@ import System.Exit (ExitCode (..))
 import System.Process (readProcessWithExitCode)
 
 import qualified Tv.Data.DuckDB as DB
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 import qualified Tv.Source.Core as Core
 
 dangerous :: [Text]

@@ -42,7 +42,7 @@ import Tv.Types
   )
 import Tv.View (View(..), ViewStack(..))
 import qualified Tv.View as View
-import qualified Tv.Log as Log
+import qualified Tv.Util as Log
 
 -- | Session directory under ~/.cache/tv/
 sessDir :: IO FilePath
