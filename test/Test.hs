@@ -491,7 +491,7 @@ test_avro_open = do
   assert (contains status "r0/3") "Avro has 3 rows"
 
 -- ============================================================================
--- === BSV tests (bar-separated values — DuckDB can't auto-detect `|`) ===
+-- === BSV / CSV-with-bars tests (read_csv auto-sniffs the delimiter) ===
 -- ============================================================================
 
 test_bsv_open :: Assertion
@@ -503,6 +503,16 @@ test_bsv_open = do
   assert (contains out "z") "BSV shows 'z' value"
   let (_, status) = footer out
   assert (contains status "r0/5") "BSV has 5 rows"
+
+-- A `.csv` file whose values contain `|` characters must still parse as
+-- comma-separated — DuckDB's sniffer should not be tricked into using `|`.
+test_csv_with_bars :: Assertion
+test_csv_with_bars = do
+  out <- run "" "data/bars_in_values.csv"
+  assert (contains out "foo|bar") "CSV value 'foo|bar' kept intact"
+  assert (contains out "baz|qux") "CSV value 'baz|qux' kept intact"
+  let (_, status) = footer out
+  assert (contains status "r0/3") "CSV has 3 rows (sniffer picked `,` not `|`)"
 
 -- ============================================================================
 -- === Rendering tests ===
@@ -1246,6 +1256,7 @@ ciTests = testGroup "ci"
   , testCase "xlsx_open" test_xlsx_open
   , testCase "avro_open" test_avro_open
   , testCase "bsv_open" test_bsv_open
+  , testCase "csv_with_bars" test_csv_with_bars
   , testCase "folder_prefix" test_folder_prefix
   , testCase "sort_excludes_key" test_sort_excludes_key
   , testCase "sort_selected_not_key" test_sort_selected_not_key
