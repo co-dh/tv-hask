@@ -209,9 +209,8 @@ setCur opts st i = do
 -- event.
 fireFocus :: PickerOpts -> PickerState -> IO ()
 fireFocus opts st = do
-  case (st ^. #psMatch) V.!? (st ^. #psCur) of
-    Just (i, _, _) -> (opts ^. #onFocus) i ((opts ^. #items) V.! i)
-    Nothing        -> pure ()
+  maybe (pure ()) (\(i, _, _) -> (opts ^. #onFocus) i ((opts ^. #items) V.! i))
+        ((st ^. #psMatch) V.!? (st ^. #psCur))
   drawFrame opts st
 
 selection :: PickerOpts -> PickerState -> Text

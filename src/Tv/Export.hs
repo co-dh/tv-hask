@@ -40,9 +40,7 @@ copyOpt ExportNdjson  = "(FORMAT JSON, ARRAY false)"
 pickFmt :: Bool -> IO (Maybe ExportFmt)
 pickFmt tm = do
   m <- Fzf.fzf tm (V.fromList ["--prompt=export: "]) "csv\nparquet\njson\nndjson"
-  case m of
-    Just raw -> pure $ ofStringQ $ T.strip raw
-    Nothing  -> pure Nothing
+  pure (maybe Nothing (\raw -> ofStringQ (T.strip raw)) m)
 
 -- | Export current view to file via DuckDB COPY
 exportView :: AdbcTable -> Text -> ExportFmt -> IO ()
@@ -73,19 +71,14 @@ run s fmt = do
 
 -- | Export by format string directly (no fzf). Called by socket/dispatch.
 runWith :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)
-runWith s fmtStr =
-  case ofStringQ fmtStr of
-    Nothing  -> pure s
-    Just fmt -> run s fmt
+runWith s fmtStr = maybe (pure s) (\fmt -> run s fmt) (ofStringQ fmtStr)
 
 exportH :: HandlerFn
 exportH = \a _ arg -> stackIO a
   (if T.null arg
      then do
        mf <- pickFmt (a ^. #testMode)
-       case mf of
-         Just f  -> run (a ^. #stk) f
-         Nothing -> pure (a ^. #stk)
+       maybe (pure (a ^. #stk)) (\f -> run (a ^. #stk) f) mf
      else runWith (a ^. #stk) arg)
 
 commands :: V.Vector (Entry, Maybe HandlerFn)

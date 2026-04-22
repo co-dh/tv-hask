@@ -29,9 +29,7 @@ connRef = unsafePerformIO (newIORef Nothing)
 getConn :: IO DB.Conn
 getConn = do
   m <- readIORef connRef
-  case m of
-    Just c  -> pure c
-    Nothing -> error "DuckDB: connection not initialized (call Conn.init first)"
+  maybe (error "DuckDB: connection not initialized (call Conn.init first)") pure m
 
 -- | Query result with eagerly fetched chunks plus cached metadata. Lean's
 -- opaque QueryResult wraps a C-side Arrow array cursor; we materialize the
@@ -195,20 +193,15 @@ fmtIntComma v
 -- and the local row offset. Dispatches on column type.
 formatCellFromCV :: DB.ColumnView -> Int -> Int -> Tc.ColType -> T.Text
 formatCellFromCV cv local prec_ typ = case typ of
-  Tc.ColTypeInt -> case DB.cellInt cv local of
-    Nothing -> ""
-    Just n  -> fmtIntComma n
-  Tc.ColTypeFloat -> case DB.cellDbl cv local of
-    Nothing -> ""
-    Just f  -> if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
-  Tc.ColTypeDecimal -> case DB.cellDbl cv local of
-    Nothing -> ""
-    Just f  -> if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
-  Tc.ColTypeBool -> case DB.cellInt cv local of
-    Just 0  -> "false"
-    Just _  -> "true"
-    Nothing -> ""
-  _ -> DB.cellAny cv local
+  Tc.ColTypeInt     -> maybe "" fmtIntComma (DB.cellInt cv local)
+  Tc.ColTypeBool    -> maybe "" boolStr (DB.cellInt cv local)
+  Tc.ColTypeFloat   -> maybe "" fmtFloat (DB.cellDbl cv local)
+  Tc.ColTypeDecimal -> maybe "" fmtFloat (DB.cellDbl cv local)
+  _                 -> DB.cellAny cv local
+  where
+    fmtFloat f = if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
+    boolStr 0  = "false"
+    boolStr _  = "true"
 
 -- | Materialize a rectangular cell region as display-formatted text.
 -- Column-major: outer Vector indexed by column, inner by local row.
@@ -252,12 +245,8 @@ fetchHeatDoubles qr r0 r1 = do
                let cv = DB.chunkColumn ch (fromIntegral c)
                in pure $ V.generate n $ \i ->
                     case typ of
-                      Tc.ColTypeInt -> case DB.cellInt cv (local + i) of
-                        Nothing -> nan
-                        Just v  -> fromIntegral v
-                      _ -> case DB.cellDbl cv (local + i) of
-                        Nothing -> nan
-                        Just v  -> v
+                      Tc.ColTypeInt -> maybe nan fromIntegral (DB.cellInt cv (local + i))
+                      _             -> fromMaybe nan (DB.cellDbl cv (local + i))
 
 -- | Walk the @[r0, r1)@ row range grouped by DuckDB chunk. Calls @f@
 -- once per contiguous run of rows that live in the same chunk;

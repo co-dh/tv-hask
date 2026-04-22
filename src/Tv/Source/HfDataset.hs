@@ -97,9 +97,7 @@ hfList _ path_ = do
 -- | hf://datasets/ path: 5-component root (hf:/datasets/<org>/<name>/…);
 -- above root falls back to hf:// to land in the dataset index.
 hfParent :: Text -> Maybe Text
-hfParent p = case Remote.parent p 5 of
-  Just par -> Just par
-  Nothing  -> Just parentFallback
+hfParent p = Just (fromMaybe parentFallback (Remote.parent p 5))
 
 -- | Data files: DuckDB httpfs reads hf:// URIs directly (pass-through).
 -- Non-data files (README, .gitattributes …): download so the text viewer works.

@@ -83,9 +83,7 @@ splitRun tm s = do
   mRaw <- Fzf.fzf tm
     (V.fromList ["--print-query", "--prompt=split: ", "--header=" <> header])
     splitSuggestions
-  case mRaw of
-    Nothing  -> pure s
-    Just raw -> splitRunWith s (T.strip raw)
+  maybe (pure s) (\raw -> splitRunWith s (T.strip raw)) mRaw
 
 -- ============================================================================
 -- Derive
@@ -150,9 +148,7 @@ deriveRun tm s = do
   mRaw <- Fzf.fzf tm
     (V.fromList ["--print-query", "--prompt=derive: ", "--header=" <> header])
     hint
-  case mRaw of
-    Nothing  -> pure s
-    Just raw -> deriveRunWith s (T.strip raw)
+  maybe (pure s) (\raw -> deriveRunWith s (T.strip raw)) mRaw
 
 -- ============================================================================
 -- Join
@@ -198,9 +194,9 @@ prepareView tbl suffix = do
   let prql = Prql.queryRender (tbl ^. #query)
   Log.write "prql" prql
   mSql <- Prql.compile prql
-  case mSql of
-    Nothing  -> ioError (userError "PRQL compile failed")
-    Just sql -> pure (name, stripSemi sql)
+  maybe (ioError (userError "PRQL compile failed"))
+        (\sql -> pure (name, stripSemi sql))
+        mSql
 
 execJoin :: ViewStack AdbcTable -> JoinOp -> Vector Text -> IO (Maybe (ViewStack AdbcTable))
 execJoin s op leftGrp = do
@@ -249,11 +245,10 @@ joinRun tm s = case resolveOps s of
       (rName, _) <- prepareView (View.tbl s) "r"
       let items = V.map (\op -> opLabel op <> "  |  " <> prqlStr lName rName leftGrp op) ops
       mIdx <- fzfIdx tm (V.fromList ["--prompt=join> "]) items
-      case mIdx of
-        Nothing  -> pure Nothing
-        Just idx ->
-          let op = fromMaybe JoinInner $ ops V.!? idx
-          in execJoin s op leftGrp
+      maybe (pure Nothing)
+            (\idx -> let op = fromMaybe JoinInner $ ops V.!? idx
+                     in execJoin s op leftGrp)
+            mIdx
 
 joinRunWith :: ViewStack AdbcTable -> Text -> IO (Maybe (ViewStack AdbcTable))
 joinRunWith s idxStr = case resolveOps s of
@@ -277,7 +272,5 @@ commands = V.fromList
   , hdl (mkEntry CmdTblJoin "Sa" "J" "Join tables" False "")
         (\a _ arg -> stackIO a (do
           ms <- joinRunWith (a ^. #stk) arg
-          case ms of
-            Just s' -> pure s'
-            Nothing -> pure (a ^. #stk)))
+          pure (fromMaybe (a ^. #stk) ms)))
   ]

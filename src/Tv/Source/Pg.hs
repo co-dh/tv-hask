@@ -30,9 +30,9 @@ attachSql connStr = do
   let ddl = "DETACH DATABASE IF EXISTS extdb;\nATTACH '"
           <> escSql connStr <> "' AS extdb (TYPE POSTGRES, READ_ONLY)"
   mSql <- Prql.compile Prql.ducktabsF
-  case mSql of
-    Nothing  -> ioError $ userError "Pg: failed to compile tbl_info_filtered PRQL"
-    Just sql -> pure (ddl <> ";\n" <> stripSemi sql)
+  maybe (ioError $ userError "Pg: failed to compile tbl_info_filtered PRQL")
+        (\sql -> pure (ddl <> ";\n" <> stripSemi sql))
+        mSql
 
 pgList :: Bool -> Text -> IO (Maybe AdbcTable)
 pgList _ path_ = do

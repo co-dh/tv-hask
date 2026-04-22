@@ -80,9 +80,7 @@ osqOpen _ path_ = do
   osqSetup
   let name = if T.isPrefixOf pfx_ path_ then T.drop (T.length pfx_) path_ else path_
   mAdbc <- osqEnter name
-  case mAdbc of
-    Just adbc -> pure (OpenAsTable adbc)
-    Nothing   -> pure OpenNothing
+  pure (maybe OpenNothing OpenAsTable mAdbc)
 
 osquery :: Source
 osquery = Source

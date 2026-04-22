@@ -220,9 +220,8 @@ run tm cur applyAndRender = do
     else do
       let items = V.imap (\i _ -> T.pack (show i) <> "\t" <> themeName i) themes
           onFocus _ line = case T.splitOn "\t" line of
-            (hTxt : _) -> case readMaybe (T.unpack hTxt) of
-              Just idx -> loadIdx idx >>= applyAndRender
-              Nothing  -> pure ()
+            (hTxt : _) -> maybe (pure ()) (\idx -> loadIdx idx >>= applyAndRender)
+                                (readMaybe (T.unpack hTxt))
             _ -> pure ()
           opts = V.fromList
             [ "--prompt=theme: ", "--with-nth=2..", "--delimiter=\t" ]
@@ -230,6 +229,5 @@ run tm cur applyAndRender = do
                (pure ()) onFocus
       if T.null out
         then pure Nothing
-        else case listToMaybe (T.splitOn "\t" out) >>= (readMaybe . T.unpack) of
-               Just idx -> Just <$> applyIdx cur idx
-               Nothing  -> pure Nothing
+        else maybe (pure Nothing) (\idx -> Just <$> applyIdx cur idx)
+                   (listToMaybe (T.splitOn "\t" out) >>= (readMaybe . T.unpack))
