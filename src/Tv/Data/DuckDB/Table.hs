@@ -35,7 +35,6 @@ import Tv.Types
   , Op (..)
   , ofString
   , escSql
-  , keepCols
   )
 import qualified Tv.Util as Log
 import qualified Tv.Util as Tmp
@@ -205,19 +204,6 @@ fromFile path_ = do
   total <- queryCount q
   requery q total
 
--- | Attach a .duckdb file and list its tables as TSV (for folder-like view)
-listTables :: Text -> IO (Maybe AdbcTable)
-listTables path_ = do
-  _ <- Conn.query ("ATTACH '" <> escSql path_ <> "' AS extdb (READ_ONLY)")
-  m <- prqlQuery Prql.ducktabs
-  case m of
-    Nothing -> pure Nothing
-    Just qr_ ->
-      let total = Conn.nrows qr_
-      in if total == 0
-           then pure Nothing
-           else Just <$> ofResult qr_ (Prql.defaultQuery { Prql.base = Prql.ducktabs }) total
-
 -- | Get primary key columns for a table in the attached extdb
 primaryKeys :: Text -> IO (Vector Text)
 primaryKeys table = do
@@ -250,13 +236,6 @@ sortBy t idxs asc = do
   let sortCols = V.map (\idx -> (fromMaybe "" ((t ^. #colNames) V.!? idx), asc)) idxs
       newQuery = Prql.pipe (t ^. #query) (OpSort sortCols)
   m <- requery newQuery (t ^. #totalRows)
-  pure (fromMaybe t m)
-
--- | Hide columns: append select op and re-query
-hideCols :: AdbcTable -> Vector Int -> IO AdbcTable
-hideCols t hideIdxs = do
-  let kept = keepCols (V.length (t ^. #colNames)) hideIdxs (t ^. #colNames)
-  m <- requery (Prql.pipe (t ^. #query) (OpSel kept)) (t ^. #totalRows)
   pure (fromMaybe t m)
 
 -- | Exclude columns: append EXCLUDE op and re-query (DuckDB SELECT * EXCLUDE)
@@ -410,9 +389,6 @@ fromIngest content label reader
 fromTsv :: Text -> IO (Maybe AdbcTable)
 fromTsv content = fromIngest content "tsv" "read_csv_auto"
 
-fromJson :: Text -> IO (Maybe AdbcTable)
-fromJson content = fromIngest content "json" "read_json_auto"
-
 -- | Create from file path with optional setup SQL and reader function.
 --   reader: DuckDB reader function (e.g. "read_arrow"). Empty = auto-detect via backtick.
 --   duckdbExt: extension to install+load first (may be empty).
@@ -513,4 +489,3 @@ findRow t col val start fwd = do
                  in case revHit of
                       Just r  -> pure (Just r)
                       Nothing -> pure $ Just $ V.last rows
-

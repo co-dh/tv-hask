@@ -18,8 +18,6 @@ module Tv.App.Types
   , viewUp
     -- * Handler combinators
   , onStk
-  , argH
-  , vuH
   , stkH
   , precSet
   , precAdj
@@ -168,15 +166,6 @@ viewUp a ci =
 onStk :: (ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))) -> HandlerFn
 onStk f = \a ci _ -> tryStk a ci (f (a ^. #stk))
 
-argH
-  :: (ViewStack AdbcTable -> IO (ViewStack AdbcTable))
-  -> (ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable))
-  -> HandlerFn
-argH fzf direct = \a _ arg ->
-  stackIO a (if T.null arg then fzf (a ^. #stk) else direct (a ^. #stk) arg)
-
-vuH :: HandlerFn
-vuH = \a ci _ -> viewUp a ci
 
 stkH :: HandlerFn
 stkH = \a ci _ ->

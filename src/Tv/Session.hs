@@ -283,47 +283,6 @@ load noSign_ name = do
                                }
             else pure Nothing
 
-list :: IO (Vector Text)
-list = do
-  d <- sessDir
-  r <- try (listDirectory d) :: IO (Either SomeException [FilePath])
-  let entries = case r of
-        Left _  -> []
-        Right xs -> xs
-      stems =
-        [ T.pack (take (length e - 5) e)
-        | e <- entries, ".json" `isSuffixOf` e ]
-  pure $ V.fromList stems
-  where
-    isSuffixOf s xs = length xs >= length s && drop (length xs - length s) xs == s
-
--- | Prompt for session name; returns none on cancel or empty input
-saveName :: Bool -> IO (Maybe Text)
-saveName tm = do
-  existing <- list
-  let input = T.intercalate "\n" (V.toList existing)
-  m <- Fzf.fzf tm (V.fromList ["--prompt=session name: ", "--print-query"]) input
-  case m of
-    Nothing -> pure Nothing
-    Just s  -> do
-      let lines_ = filter (not . T.null) (T.splitOn "\n" s)
-          pick = case reverse lines_ of
-            (x:_) -> x
-            []    -> case lines_ of
-                       (x:_) -> x
-                       []    -> ""
-          name = sanitize pick
-      pure $ if T.null name then Nothing else Just name
-
-loadName :: Bool -> IO (Maybe Text)
-loadName tm = do
-  existing <- list
-  if V.null existing
-    then Render.statusMsg "no saved sessions" >> pure Nothing
-    else do
-      m <- Fzf.fzf tm (V.fromList ["--prompt=load session: "]) (T.intercalate "\n" (V.toList existing))
-      pure $ fmap T.strip m
-
 -- | Save session with explicit name (no fzf). Called by socket/dispatch.
 saveWith :: ViewStack AdbcTable -> Text -> IO ()
 saveWith stk name =
@@ -347,4 +306,3 @@ commands = V.fromList
             Just stk' -> pure stk'
             Nothing   -> pure (a ^. #stk)))
   ]
-

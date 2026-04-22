@@ -80,15 +80,6 @@ withDistinct s f = do
   let sorted = V.fromList (L.sort (V.toList vals))
   f curCol curName sorted
 
--- | row search (/): find value in current column, jump to matching row (IO)
-rowSearch :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-rowSearch tm s = withDistinct s $ \curCol curName vals -> orKeep s $ do
-  result <- MaybeT $ Fzf.fzf tm (V.fromList ["--prompt=/" <> curName <> ": "])
-              (T.intercalate "\n" (V.toList vals))
-  let start = cur s ^. #nav % #row % #cur + 1
-  rowIdx <- MaybeT $ Table.findRow (tbl s) curCol result start True
-  pure $ moveRowTo s rowIdx (Just (curCol, result))
-
 -- | findRow with cache: the picker fires onFocus on every arrow key,
 -- so without caching each fires a SQL query causing visible lag.
 cachedFindRow

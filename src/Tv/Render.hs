@@ -45,10 +45,6 @@ reservedLines sparkOn = if sparkOn then 5 else 4
 visRows :: Int
 visRows = 200
 
--- Default row page size (fallback when terminal height unknown)
-rowPg :: Int
-rowPg = 20
-
 -- Styles: loaded from Theme, or use default
 -- 9 states: cursor, selRow, selColCurRow, selCol, curRow, curCol, default, header, group
 

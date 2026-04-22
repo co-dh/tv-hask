@@ -22,7 +22,6 @@ module Tv.Types
     -- * PRQL / SQL helpers
   , toPrql
   , escSql
-  , pctBar
     -- * Render context
   , RenderCtx(..)
     -- * Filter
@@ -32,7 +31,6 @@ module Tv.Types
   , filterPrompt
   , exprError
   , isPrqlKeyword
-  , keepCols
   , colText
     -- * Agg
   , Agg(..)
@@ -48,7 +46,6 @@ module Tv.Types
   , noEffect
     -- * Cmd
   , Cmd(..)
-  , plotKind
   ) where
 
 import Tv.Prelude
@@ -141,19 +138,6 @@ toPrql typ t
 escSql :: Text -> Text
 escSql s = T.replace "'" "''" s
 
--- | Compute pct and bar from count data (for freq → fromArrays).
-pctBar :: Vector Int64 -> (Vector Double, Vector Text)
-pctBar cntData =
-  let total = V.sum cntData
-      pct = V.map
-              (\c -> if total > 0
-                       then fromIntegral c * 100 / fromIntegral total
-                       else 0)
-              cntData
-      bar = V.map
-              (\p -> T.replicate (max 0 (truncate (p / 5.0) :: Int)) "#")
-              pct
-  in (pct, bar)
 
 {-! ## Core Typeclasses -}
 
@@ -270,12 +254,6 @@ exprError t =
       | c `elem` ("><!~" :: String) = go xs  -- >=, <=, !=, ~=
     go ('=':_)       = True                  -- standalone =
     go (_:xs)        = go xs
-
--- | Keep columns not in hide set (shared by hideCols impls)
-keepCols :: Int -> Vector Int -> Vector Text -> Vector Text
-keepCols nCols hideIdxs names =
-  V.map (\i -> fromMaybe "" $ names V.!? i)
-    (V.filter (not . (`V.elem` hideIdxs)) (V.enumFromN 0 nCols))
 
 -- | Convert columns to tab-separated text (shared by Table toText impls)
 colText :: Vector Text -> Vector (Vector Text) -> Int -> Text
@@ -634,23 +612,3 @@ instance StrEnum Cmd where
 -- avoid an orphan instance.
 instance Hashable Cmd where
   hashWithSalt s c = hashWithSalt s (toString c :: Text)
-
-plotKind :: Cmd -> Maybe PlotKind
-plotKind CmdPlotArea    = Just PlotArea
-plotKind CmdPlotLine    = Just PlotLine
-plotKind CmdPlotScatter = Just PlotScatter
-plotKind CmdPlotBar     = Just PlotBar
-plotKind CmdPlotBox     = Just PlotBox
-plotKind CmdPlotStep    = Just PlotStep
-plotKind CmdPlotHist    = Just PlotHist
-plotKind CmdPlotDensity = Just PlotDensity
-plotKind CmdPlotViolin  = Just PlotViolin
-plotKind CmdPlotReturns = Just PlotReturns
-plotKind CmdPlotCumRet  = Just PlotCumRet
-plotKind CmdPlotDrawdown = Just PlotDrawdown
-plotKind CmdPlotMA      = Just PlotMA
-plotKind CmdPlotVol     = Just PlotVol
-plotKind CmdPlotQQ      = Just PlotQQ
-plotKind CmdPlotBB      = Just PlotBB
-plotKind CmdPlotCandle  = Just PlotCandle
-plotKind _              = Nothing

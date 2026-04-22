@@ -150,25 +150,6 @@ runCmd label cmd = do
   (ec, out, err) <- readProcessWithExitCode "sh" ["-c", T.unpack cmd] ""
   pure (ec, T.pack out, T.pack err)
 
--- | Run a shell cmd, write its stdout to a fresh tmp file, return the path.
--- Returns Nothing if the cmd fails or produces empty output. Caller is
--- responsible for rm-ing the returned file after use.
-writeCmdOut :: Text -> Text -> IO (Maybe FilePath)
-writeCmdOut label cmd = do
-  (ec, out, err) <- runCmd label cmd
-  case ec of
-    ExitFailure code -> do
-      Log.write "src" ( label <> " failed (exit "
-                     <> T.pack (show code) <> "): " <> T.strip err )
-      pure Nothing
-    ExitSuccess ->
-      if T.null (T.strip out)
-        then pure Nothing
-        else do
-          tmpFile <- Tmp.tmpPath "src-list.json"
-          TIO.writeFile tmpFile out
-          pure (Just tmpFile)
-
 -- | CREATE TEMP TABLE ... AS SELECT * FROM read_json_auto(path).
 loadJsonToTbl :: Text -> FilePath -> IO ()
 loadJsonToTbl tbl path = do

@@ -162,8 +162,7 @@ cvData     :: ColumnView -> Ptr ()
 cvData     (ColumnView _ _ _ d _ _) = d
 cvValidity :: ColumnView -> Ptr Word64
 cvValidity (ColumnView _ _ _ _ v _) = v
-cvChunk    :: ColumnView -> DataChunk
-cvChunk    (ColumnView _ _ _ _ _ c) = c
+
 
 data DuckDBError = DuckDBError String deriving Show
 instance Exception DuckDBError

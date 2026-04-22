@@ -115,10 +115,6 @@ pollCmd = do
   s <- sockPoll
   pure $ if null s then Nothing else Just (T.pack s)
 
--- | Get socket path (empty if not started)
-getPath :: IO String
-getPath = readIORef sockPath
-
 -- | Shutdown socket listener, cleanup
 shutdown :: IO ()
 shutdown = do

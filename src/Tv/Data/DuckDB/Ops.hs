@@ -40,15 +40,6 @@ cellStr :: AdbcTable -> Int -> Int -> Text
 cellStr t row col =
   Conn.cellStr (t ^. #qr) row col
 
--- | Hide columns at cursor + selections, return new table and filtered group
-modifyTableHide :: AdbcTable -> Int -> Vector Int -> Vector Text -> IO (AdbcTable, Vector Text)
-modifyTableHide tbl_ cursor sels grp = do
-  let idxs = if V.elem cursor sels then sels else V.snoc sels cursor
-      names = tbl_ ^. #colNames
-      hideNames = V.map (\i -> fromMaybe "" (names V.!? i)) idxs
-  newTbl <- Table.hideCols tbl_ idxs
-  pure (newTbl, V.filter (not . (`V.elem` hideNames)) grp)
-
 -- | Sort table by selected columns + cursor column, excluding group (key) columns
 modifyTableSort :: AdbcTable -> Int -> Vector Int -> Vector Int -> Bool -> IO AdbcTable
 modifyTableSort tbl_ cursor selIdxs grpIdxs asc =
