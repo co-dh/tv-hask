@@ -33,6 +33,7 @@ library
   -- its deps (Tv.Types, Tv.Data.DuckDB.Prql) come online.
   exposed-modules:
     Tv.App.Common
+    Tv.App.FeatureCommands
     Tv.App.Main
     Tv.App.Types
     Tv.AppF
