@@ -134,20 +134,16 @@ shutdown = Conn.shutdown
 -- | Build AdbcTable from QueryResult
 ofResult :: Conn.QueryResult -> Query -> Int -> IO AdbcTable
 ofResult qr_ q total = do
-  nc <- Conn.ncols qr_
-  nr <- Conn.nrows qr_
-  let ncI = fromIntegral nc :: Int
-  namesMV <- MV.new ncI
-  fmtsMV  <- MV.new ncI
-  typesMV <- MV.new ncI
-  forM_ [0 .. ncI - 1] $ \i -> do
-    let iW = fromIntegral i :: Word64
-    n <- Conn.colName qr_ iW
-    MV.write namesMV i n
-    fmt <- Conn.colFmt qr_ iW
+  let nc = Conn.ncols qr_
+      nr = Conn.nrows qr_
+  namesMV <- MV.new nc
+  fmtsMV  <- MV.new nc
+  typesMV <- MV.new nc
+  forM_ [0 .. nc - 1] $ \i -> do
+    MV.write namesMV i (Conn.colName qr_ i)
+    let fmt = Conn.colFmt qr_ i
     MV.write fmtsMV i (if not (T.null fmt) then T.head fmt else '?')
-    typ <- Conn.colType qr_ iW
-    MV.write typesMV i (ofString typ)
+    MV.write typesMV i (ofString (Conn.colType qr_ i))
   names <- V.freeze namesMV
   fmts  <- V.freeze fmtsMV
   types <- V.freeze typesMV
@@ -156,7 +152,7 @@ ofResult qr_ q total = do
     , colNames  = names
     , colFmts   = fmts
     , colTypes  = types
-    , nRows     = fromIntegral nr
+    , nRows     = nr
     , query     = q
     , totalRows = total
     }
@@ -167,9 +163,8 @@ queryCount q = do
   m <- prqlQuery (Prql.queryRender q <> " | cnt")
   case m of
     Nothing -> pure 0
-    Just qr_ -> do
-      nr <- Conn.nrows qr_
-      if fromIntegral nr > (0 :: Int)
+    Just qr_ ->
+      if Conn.nrows qr_ > 0
         then do
           v <- Conn.cellInt qr_ 0 0
           pure $ fromIntegral v
@@ -222,11 +217,11 @@ listTables path_ = do
   m <- prqlQuery Prql.ducktabs
   case m of
     Nothing -> pure Nothing
-    Just qr_ -> do
-      total <- Conn.nrows qr_
-      if fromIntegral total == (0 :: Int)
-        then pure Nothing
-        else Just <$> ofResult qr_ (Prql.defaultQuery { Prql.base = Prql.ducktabs }) (fromIntegral total)
+    Just qr_ ->
+      let total = Conn.nrows qr_
+      in if total == 0
+           then pure Nothing
+           else Just <$> ofResult qr_ (Prql.defaultQuery { Prql.base = Prql.ducktabs }) total
 
 -- | Get primary key columns for a table in the attached extdb
 primaryKeys :: Text -> IO (Vector Text)
@@ -242,10 +237,7 @@ primaryKeys table = do
       m <- prqlQuery ("from dcons | prim_keys '" <> escSql table <> "'")
       case m of
         Nothing -> pure V.empty
-        Just qr_ -> do
-          nr <- Conn.nrows qr_
-          let n = fromIntegral nr :: Int
-          V.generateM n $ \i -> Conn.cellStr qr_ i 0
+        Just qr_ -> V.generateM (Conn.nrows qr_) $ \i -> Conn.cellStr qr_ i 0
 
 -- | Open a table/view from an attached .duckdb file or schema-qualified name
 fromTable :: Text -> IO (Maybe (AdbcTable, Vector Text))
@@ -347,10 +339,7 @@ uniqCats baseR cn = do
   m <- prqlQuery (baseR <> " | uniq " <> Prql.ref cn)
   case m of
     Nothing -> pure V.empty
-    Just catQr -> do
-      nr <- Conn.nrows catQr
-      let n = fromIntegral nr :: Int
-      V.generateM n $ \i -> Conn.cellStr catQr i 0
+    Just catQr -> V.generateM (Conn.nrows catQr) $ \i -> Conn.cellStr catQr i 0
 
 -- | Export plot data to the thread-local plot file via DuckDB COPY
 -- (downsample in SQL). truncLen: SUBSTRING length for time truncation;
@@ -509,10 +498,7 @@ distinct t col = do
   m <- prqlQuery (Prql.queryRender (t ^. #query) <> " | uniq " <> Prql.ref cName)
   case m of
     Nothing -> pure V.empty
-    Just qr_ -> do
-      nr <- Conn.nrows qr_
-      let n = fromIntegral nr :: Int
-      V.generateM n $ \i -> Conn.cellStr qr_ i 0
+    Just qr_ -> V.generateM (Conn.nrows qr_) $ \i -> Conn.cellStr qr_ i 0
 
 -- | Find row from starting position, forward or backward (with wrap).
 --   PRQL row_number is 1-based; we subtract 1 here for 0-based indexing.
@@ -526,9 +512,7 @@ findRow t col val start fwd = do
   case m of
     Nothing  -> pure Nothing
     Just qr_ -> do
-      nr <- Conn.nrows qr_
-      let n = fromIntegral nr :: Int
-      rows <- V.generateM n $ \i -> do
+      rows <- V.generateM (Conn.nrows qr_) $ \i -> do
         v <- Conn.cellInt qr_ i 0
         pure (fromIntegral v - 1 :: Int)
       if V.null rows

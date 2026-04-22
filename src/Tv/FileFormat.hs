@@ -126,19 +126,18 @@ attachFile ap Format{duckdbExt, attachType} = do
   mQr <- Table.prqlQuery Prql.ducktabs
   case mQr of
     Nothing -> pure Nothing
-    Just qr -> do
-      total <- Conn.nrows qr
-      let totalN = fromIntegral total :: Int
-      if totalN == 0
-        then pure Nothing
-        else do
-          adbc <- Table.ofResult qr (Prql.defaultQuery { Prql.base = Prql.ducktabs }) totalN
-          let disp_ = case reverse (T.splitOn "/" ap) of
-                        (x:_) -> x
-                        []    -> ap
-          pure $ fmap
-            (\v -> v & #vkind .~ Types.VkFld ap 1 & #disp .~ disp_)
-            $ View.fromTbl adbc ap 0 (V.singleton "name") 0
+    Just qr ->
+      let totalN = Conn.nrows qr
+      in if totalN == 0
+           then pure Nothing
+           else do
+             adbc <- Table.ofResult qr (Prql.defaultQuery { Prql.base = Prql.ducktabs }) totalN
+             let disp_ = case reverse (T.splitOn "/" ap) of
+                           (x:_) -> x
+                           []    -> ap
+             pure $ fmap
+               (\v -> v & #vkind .~ Types.VkFld ap 1 & #disp .~ disp_)
+               $ View.fromTbl adbc ap 0 (V.singleton "name") 0
 
 -- | Open any supported data file as a View (attach for DB, reader for data files)
 openFile :: Text -> IO (Maybe (View AdbcTable))

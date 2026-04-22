@@ -221,10 +221,8 @@ metaIdxs tblName flt = do
   m <- Table.prqlQuery ("from " <> tblName <> " | rowidx | filter " <> flt <> " | select {idx}")
   case m of
     Nothing -> pure V.empty
-    Just qr_ -> do
-      nr <- Conn.nrows qr_
-      let n = fromIntegral nr :: Int
-      V.generateM n $ \r -> do
+    Just qr_ ->
+      V.generateM (Conn.nrows qr_) $ \r -> do
         v <- Conn.cellInt qr_ r 0
         pure (fromIntegral v :: Int)
 
@@ -240,10 +238,7 @@ metaNames tblName rows = do
               <> " | rowidx | filter (idx | in [" <> idxs <> "]) | select {column, idx}")
       case m of
         Nothing -> pure V.empty
-        Just qr_ -> do
-          nr <- Conn.nrows qr_
-          let n = fromIntegral nr :: Int
-          V.generateM n $ \r -> Conn.cellStr qr_ r 0
+        Just qr_ -> V.generateM (Conn.nrows qr_) $ \r -> Conn.cellStr qr_ r 0
 
 -- | Extract table name from path: last component after last "://" prefix strip.
 --   "osquery://groups" -> "groups", "duckdb://osq.groups" -> "groups"
@@ -276,9 +271,8 @@ columnComment path_ colName =
               <> "' '" <> escSql colName <> "'")
       case m of
         Nothing -> pure ""
-        Just qr_ -> do
-          n <- Conn.nrows qr_
-          if fromIntegral n == (0 :: Int)
+        Just qr_ ->
+          if Conn.nrows qr_ == 0
             then pure ""
             else Conn.cellStr qr_ 0 0
 

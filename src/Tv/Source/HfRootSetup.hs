@@ -54,8 +54,7 @@ checkFresh = fmap (fromMaybe False) $ Core.try_ $ do
     (q_ "DETACH DATABASE IF EXISTS hfchk")
     $ do
       qr <- Conn.query "SELECT count(*), max(updated_at) FROM hfchk.listing"
-      nr <- Conn.nrows qr
-      if nr == 0 then pure False else do
+      if Conn.nrows qr == 0 then pure False else do
         n  <- Conn.cellInt   qr 0 0
         ts <- Conn.cellFloat qr 0 1
         t  <- now_

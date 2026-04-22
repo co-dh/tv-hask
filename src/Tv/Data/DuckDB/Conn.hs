@@ -92,14 +92,14 @@ query sql = do
 queryParam :: Text -> Text -> IO QueryResult
 queryParam sql _param = query sql
 
-ncols :: QueryResult -> IO Word64
-ncols qr = pure $ fromIntegral $ V.length $ qr ^. #colNames
+ncols :: QueryResult -> Int
+ncols qr = V.length $ qr ^. #colNames
 
-nrows :: QueryResult -> IO Word64
-nrows qr = pure $ fromIntegral $ qr ^. #nRows
+nrows :: QueryResult -> Int
+nrows qr = qr ^. #nRows
 
-colName :: QueryResult -> Word64 -> IO Text
-colName qr i = pure $ (qr ^. #colNames) V.! fromIntegral i
+colName :: QueryResult -> Int -> Text
+colName qr i = (qr ^. #colNames) V.! i
 
 -- | Column format char. Lean returns the Arrow ArrowSchema.format string. DuckDB
 -- doesn't surface that directly, so we synthesize the first character per
@@ -108,19 +108,17 @@ colName qr i = pure $ (qr ^. #colNames) V.! fromIntegral i
 -- cbits/tv_render.c reads only the first char, and all date/time types
 -- (Arrow tdD / ttu / tsu:*) must start with 't' so `type_char_fmt` maps
 -- them to the '@' header indicator.
-colFmt :: QueryResult -> Word64 -> IO Text
-colFmt qr i =
-  let ty = (qr ^. #colTypes) V.! fromIntegral i
-  in pure $ T.singleton $ case ty of
-       Tc.ColTypeInt       -> 'l'
-       Tc.ColTypeFloat     -> 'g'
-       Tc.ColTypeDecimal   -> 'd'
-       Tc.ColTypeStr       -> 'u'
-       Tc.ColTypeDate      -> 't'
-       Tc.ColTypeTime      -> 't'
-       Tc.ColTypeTimestamp -> 't'
-       Tc.ColTypeBool      -> 'b'
-       Tc.ColTypeOther     -> '?'
+colFmt :: QueryResult -> Int -> Text
+colFmt qr i = T.singleton $ case (qr ^. #colTypes) V.! i of
+  Tc.ColTypeInt       -> 'l'
+  Tc.ColTypeFloat     -> 'g'
+  Tc.ColTypeDecimal   -> 'd'
+  Tc.ColTypeStr       -> 'u'
+  Tc.ColTypeDate      -> 't'
+  Tc.ColTypeTime      -> 't'
+  Tc.ColTypeTimestamp -> 't'
+  Tc.ColTypeBool      -> 'b'
+  Tc.ColTypeOther     -> '?'
 
 -- | Column type string. Lean
 -- returns snake-case names like "int"/"float"/"utf8"; we use our ColType
@@ -130,8 +128,8 @@ colFmt qr i =
 -- "utf8". When we port that, we'll either normalize there or patch this to
 -- emit Arrow names — leaving this as-is for now so the ColType round-trip
 -- stays symmetric with Tv.Types.
-colType :: QueryResult -> Word64 -> IO Text
-colType qr i = pure $ ctToString $ (qr ^. #colTypes) V.! fromIntegral i
+colType :: QueryResult -> Int -> Text
+colType qr i = ctToString $ (qr ^. #colTypes) V.! i
   where
     ctToString :: Tc.ColType -> Text
     ctToString Tc.ColTypeInt       = "int"

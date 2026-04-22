@@ -40,10 +40,8 @@ bucketSql nBars i name =
 
 -- | Parse UNION ALL result rows (col_idx, bucket, cnt) into per-column bucket lists.
 foldRows :: Conn.QueryResult -> Vector Int -> IO (Vector (Vector (Int, Int)))
-foldRows qr_ numIdxs = do
-  nr <- Conn.nrows qr_
-  let nrI = fromIntegral nr :: Int
-      empty = V.replicate (V.length numIdxs) (V.empty :: Vector (Int, Int))
+foldRows qr_ numIdxs =
+  let empty = V.replicate (V.length numIdxs) (V.empty :: Vector (Int, Int))
       step cb r_ = do
         colIdx <- Conn.cellInt qr_ r_ 0
         bucket <- Conn.cellInt qr_ r_ 1
@@ -53,7 +51,7 @@ foldRows qr_ numIdxs = do
             let cur = fromMaybe V.empty $ cb V.!? j
             in cb V.// [(j, V.snoc cur (fromIntegral bucket, fromIntegral cnt))]
           Nothing -> cb
-  V.foldM' step empty (V.enumFromN (0 :: Int) nrI)
+  in V.foldM' step empty (V.enumFromN (0 :: Int) (Conn.nrows qr_))
 
 -- | Render one column's bucket list as a sparkline string (Nothing = skip column).
 sparkFor :: Int -> Vector (Int, Int) -> Maybe Text
