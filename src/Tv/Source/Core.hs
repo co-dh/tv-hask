@@ -355,9 +355,10 @@ unnestStruct tbl = ignoreErrs go
 -- bad rows become NULL rather than erroring.
 applyStubTypes :: Text -> Text -> IO ()
 applyStubTypes tbl stubName = do
-  qr <- Conn.queryParam
-    "SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = $1 AND data_type != 'VARCHAR'"
-    stubName
+  qr <- Conn.query $
+    "SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = '"
+    <> T.replace "'" "''" stubName
+    <> "' AND data_type != 'VARCHAR'"
   cols <- V.generateM (Conn.nrows qr) $ \i -> do
     colName <- Conn.cellStr qr i 0
     colType <- Conn.cellStr qr i 1

@@ -87,11 +87,6 @@ query sql = do
     , colTypes = DB.columnTypes r
     }
 
--- | Parameterized query — Lean uses this for INSERT ... VALUES. For now it
--- ignores the param and runs sql directly. Rewire when a caller needs it.
-queryParam :: Text -> Text -> IO QueryResult
-queryParam sql _param = query sql
-
 ncols :: QueryResult -> Int
 ncols qr = V.length $ qr ^. #colNames
 

@@ -1,15 +1,13 @@
 # tv-hask
 
-Haskell port of the Lean `Tc` project at `/home/dh/repo/Tc/`. The Lean code
-is a read-only reference — consult it when behavior is ambiguous, but the
-Haskell tree is free to diverge in structure, abstraction, and idiom.
+Terminal table viewer (originally a Haskell port of the Lean `Tc` project,
+now developed independently). The Lean tree at `/home/dh/repo/Tc/` is no
+longer a parity target — it can be consulted as historical reference but
+the Haskell version is free to merge modules, restructure, and refactor
+without preserving any 1:1 mapping.
 
 ## Project rules
 
-- **Output parity with the Lean reference.** `gen_demo.py` cast files from
-  the Haskell binary must match the Lean reference casts. Render output,
-  status text, tab lines, overlays — all identical. This is the acceptance
-  criterion regardless of how the internals are organized.
 - **No raw SQL in feature modules.** All queries go via PRQL. Exactly one
   place compiles PRQL → SQL (`Tv.Data.DuckDB`). Feature modules call
   `Prql.pipe` / `requery`.
@@ -34,9 +32,8 @@ Haskell tree is free to diverge in structure, abstraction, and idiom.
 
 ## Field access: OverloadedLabels + optics-core
 
-Where Lean uses `gen_lenses` to generate `fieldL` bindings, the Haskell
-port uses `optics-th`'s `makeFieldLabelsNoPrefix ''Record` splice and
-accesses fields via `OverloadedLabels`:
+Records use `optics-th`'s `makeFieldLabelsNoPrefix ''Record` splice and
+field access goes through `OverloadedLabels`:
 
 ```haskell
 nav ^. #row % #cur         -- read cursor row (optics-core)
@@ -44,11 +41,9 @@ nav & #row % #cur .~ 5     -- set cursor row
 over #hidden (`toggle` name) nav
 ```
 
-This is a deliberate surface-syntax divergence from Lean — `set View.precL v s`
-and `s & #prec .~ v` are the same lens applied, so parity stays intact at
-the semantic level. The few places where a composed lens is used as an atom
-across multiple call sites (e.g. `rowCurL`, `curViewL`, `curPrecL`) are
-kept as top-level `Lens'` bindings defined via `(%)`.
+The few places where a composed lens is used as an atom across multiple
+call sites (e.g. `rowCurL`, `curViewL`, `curPrecL`) are kept as top-level
+`Lens'` bindings defined via `(%)`.
 
 Only external library in the optics layer: **`optics-core`** + **`optics-th`**.
 No hand-rolled `Tv.Lens` module — it was deleted after the refactor.
@@ -86,18 +81,14 @@ ledger). Adding a backend means dropping a new module under
 
 ## Project layout
 
-- `src/Tv/` — library modules, one per Lean source file under `Tc/Tc/`
+- `src/Tv/` — library modules
 - `src/Tv/Data/DuckDB.hs` — the only module that may contain raw SQL / FFI
 - `app/Main.hs` — entry point
 - `test/` — tasty test suite; `MainSpec`, `ScreenSpec`, `RenderSpec`,
   `PureSpec`, `DuckDBSpec`
-- `/home/dh/repo/Tc/` — Lean reference (read-only; this is the source of
-  truth for every port decision)
 
 ## Build and test
 
 - Build: `cabal build all`
 - Test: `cabal test` (or the binary at
   `dist-newstyle/.../tv-hask-test --color=never +RTS -M2G -RTS`)
-- Cast comparison: `python3 doc/gen_demo.py <name>` generates a `.cast`
-  under `doc/`; compare against `/home/dh/repo/Tc/doc/<name>.cast`
