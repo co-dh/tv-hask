@@ -25,7 +25,7 @@ mode :: Vector Int -> Int
 mode xs
   | V.null xs = 0
   | otherwise =
-      let m = V.foldl' (\acc x -> HM.insertWith (+) x 1 acc) HM.empty xs
+      let m = V.foldl' (\acc x -> HM.insertWith (+) x (1 :: Int) acc) HM.empty xs
       in fst (maximumBy (comparing snd) (HM.toList m))
 
 -- | Count word starts (non-space after space, plus position 0 if non-space)

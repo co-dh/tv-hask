@@ -58,6 +58,7 @@ viewHints VkTbl =
     , ("S-\x2190\x2192", "reorder cols")
     , ("SPC", "command menu")
     ]
+viewHints VkCorr = V.fromList [("q", "back")]
 
 -- | Pad string s on the left with spaces to width w
 padLeft :: Int -> Text -> Text

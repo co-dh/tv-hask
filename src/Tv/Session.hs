@@ -23,12 +23,11 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.Text.IO as TIO
 import qualified Data.Vector as V
-import System.Directory (createDirectoryIfMissing, listDirectory)
+import System.Directory (createDirectoryIfMissing)
 import Tv.Data.DuckDB.Prql (Query(..))
 import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Table as AdbcTable
 import qualified Tv.Folder as Folder
-import qualified Tv.Fzf as Fzf
 import qualified Tv.Render as Render
 import Tv.App.Types (HandlerFn, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
@@ -209,21 +208,21 @@ applyFields tbl j path_ vkind_ =
   in if nRows_ == 0 || nCols_ == 0
     then Nothing
     else do
-      view <- View.fromTbl tbl path_ (min col_ (nCols_ - 1)) grp_ (min row_ (nRows_ - 1))
+      v <- View.fromTbl tbl path_ (min col_ (nCols_ - 1)) grp_ (min row_ (nRows_ - 1))
       let search_ = do
             s <- objVal j "search"
             case s of
               Null -> Nothing
               _    -> Just (jd s "col" 0 :: Int, jd s "val" "" :: Text)
-          nav' = (view ^. #nav)
+          nav' = (v ^. #nav)
                & #hidden      .~ (jd j "hidden" V.empty :: Vector Text)
                & #col % #sels .~ (jd j "colSels" V.empty :: Vector Text)
-      pure $ view & #vkind    .~ vkind_
-                  & #disp     .~ (jd j "disp" "" :: Text)
-                  & #prec     .~ fromMaybe 3 (jdMaybe j "prec")
-                  & #widthAdj .~ (jd j "widthAdj" 0 :: Int)
-                  & #search   .~ search_
-                  & #nav      .~ nav'
+      pure $ v & #vkind    .~ vkind_
+               & #disp     .~ (jd j "disp" "" :: Text)
+               & #prec     .~ fromMaybe 3 (jdMaybe j "prec")
+               & #widthAdj .~ (jd j "widthAdj" 0 :: Int)
+               & #search   .~ search_
+               & #nav      .~ nav'
 
 -- | Restore a single view from JSON, re-executing the query pipeline.
 --   Errors are caught per-view so partial restoration works.

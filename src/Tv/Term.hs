@@ -472,7 +472,7 @@ stepCell
   -> PresentAcc
   -> Int -> Int -> Int
   -> IO PresentAcc
-stepCell buf front acc@(PresentAcc lastStyle lastCursor b) y x idx = do
+stepCell buf front (PresentAcc lastStyle lastCursor b) y x idx = do
   cell     <- VSM.read buf idx
   -- Previously we diffed against `front` and skipped unchanged cells,
   -- but that left scroll/width-shrink residue: a terminal cell that
@@ -555,7 +555,6 @@ toEvents s = case s of
   [c] -> toEvent c
   _   -> toEvent '\x1B'
   where
-    isDigit ch = isDigit ch
     key k = Event { typ = eventKey, mods = 0, keyCode = k
                   , ch = 0, w = 0, h = 0 }
     csiLetter 'A' = key keyArrowUp
@@ -733,7 +732,7 @@ getStyleIdx isCursor isSelRow isSel isCurRow isCurCol
 heatStrHash01 :: Text -> Double
 heatStrHash01 s =
   let h0 = 2166136261 :: Word32
-      step h c = (h `xor` fromIntegral (fromEnum c)) * 16777619
+      step acc c = (acc `xor` fromIntegral (fromEnum c)) * 16777619
       h = T.foldl' step h0 s
   in fromIntegral (h .&. 0xFFFF) / 65535.0
   where xor = Data.Bits.xor
@@ -1195,7 +1194,7 @@ drawTip
   -> (Int -> Word32) -> (Int -> Word32)
   -> IO ()
 drawTip buf screenW screenH layoutV2 colIdxs curCol moveDir names stFg stBg =
-  V.iforM_ layoutV2 $ \c (dispIdx, xPos, cw) -> do
+  V.forM_ layoutV2 $ \(dispIdx, xPos, cw) -> do
     let origIdx = fromIntegral (colIdxs V.! dispIdx) :: Int
     when (origIdx == fromIntegral curCol) $ do
       let name    = fromMaybe "" $ names V.!? origIdx
