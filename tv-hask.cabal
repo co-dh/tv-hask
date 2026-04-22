@@ -93,7 +93,6 @@ library
     Tv.Tmp
     Tv.View
   other-modules:
-    Tv.Data.DuckDB.PrqlC
     Tv.S3.Client
   build-depends:
     aeson >= 2.0,
