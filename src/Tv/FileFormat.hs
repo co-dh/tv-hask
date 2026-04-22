@@ -41,7 +41,6 @@ import Optics.TH (makeFieldLabelsNoPrefix)
 data Format = Format
   { exts       :: Vector Text  -- file extensions (e.g. [".csv", ".parquet"])
   , reader     :: Text         -- DuckDB reader function. Empty = auto-detect.
-  , readerArgs :: Text         -- Extra args appended after the path, e.g. "sep='|'". Empty = none.
   , duckdbExt  :: Text         -- DuckDB extension to INSTALL/LOAD. Empty = none.
   , attach     :: Bool         -- true = ATTACH as database, list tables
   , attachType :: Text         -- ATTACH TYPE clause (e.g. "SQLITE"). Empty = native.
@@ -51,13 +50,17 @@ makeFieldLabelsNoPrefix ''Format
 -- | All file formats supported by DuckDB
 formats :: Vector Format
 formats = V.fromList
-  [ Format (V.fromList [".csv", ".parquet", ".json", ".jsonl", ".ndjson"]) "" "" "" False ""
-  , Format (V.fromList [".bsv", ".psv"]) "read_csv" "sep='|'" "" False ""
-  , Format (V.fromList [".arrow", ".feather"]) "read_arrow" "" "arrow" False ""
-  , Format (V.fromList [".xlsx", ".xls"]) "read_xlsx" "" "excel" False ""
-  , Format (V.fromList [".avro"]) "read_avro" "" "avro" False ""
-  , Format (V.fromList [".duckdb", ".db"]) "" "" "" True ""
-  , Format (V.fromList [".sqlite", ".sqlite3"]) "" "" "sqlite" True "SQLITE"
+  [ Format (V.fromList [".csv", ".parquet", ".json", ".jsonl", ".ndjson"]) "" "" False ""
+  -- DuckDB's `from \`foo.bsv\`` doesn't recognize the extension and won't
+  -- dispatch to read_csv. Calling read_csv explicitly lets it auto-sniff
+  -- the delimiter (`,` `\t` `|` `;`), so a CSV that happens to have `|`
+  -- inside values still parses correctly.
+  , Format (V.fromList [".bsv", ".psv"]) "read_csv" "" False ""
+  , Format (V.fromList [".arrow", ".feather"]) "read_arrow" "arrow" False ""
+  , Format (V.fromList [".xlsx", ".xls"]) "read_xlsx" "excel" False ""
+  , Format (V.fromList [".avro"]) "read_avro" "avro" False ""
+  , Format (V.fromList [".duckdb", ".db"]) "" "" True ""
+  , Format (V.fromList [".sqlite", ".sqlite3"]) "" "sqlite" True "SQLITE"
   ]
 
 -- | Strip .gz suffix for extension matching
@@ -110,7 +113,7 @@ readCsv path_ = do
   where
     action = do
       ap <- absPath path_
-      mt <- Table.fileWith ap "read_csv" "" ""
+      mt <- Table.fileWith ap "read_csv" ""
       pure $ mt >>= \t -> View.fromTbl t path_ 0 V.empty 0
 
 -- | ATTACH database file and list its tables as a folder view
@@ -139,11 +142,11 @@ openFile :: Text -> IO (Maybe (View AdbcTable))
 openFile path_ = do
   ap <- absPath path_
   case find path_ of
-    Just fmt@Format{attach, reader, readerArgs, duckdbExt} ->
+    Just fmt@Format{attach, reader, duckdbExt} ->
       if attach
         then attachFile ap fmt
         else do
-          mt <- Table.fileWith ap reader readerArgs duckdbExt
+          mt <- Table.fileWith ap reader duckdbExt
           pure $ mt >>= \t -> View.fromTbl t path_ 0 V.empty 0
     Nothing -> do
       mt <- Table.fromFile ap
