@@ -1,0 +1,2 @@
+roots = [ "^Main\\.main$", "^Spec\\.main$", "^Main\\.spec$" ]
+type-class-roots = true

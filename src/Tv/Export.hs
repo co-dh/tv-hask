@@ -40,7 +40,7 @@ copyOpt ExportNdjson  = "(FORMAT JSON, ARRAY false)"
 pickFmt :: Bool -> IO (Maybe ExportFmt)
 pickFmt tm = do
   m <- Fzf.fzf tm (V.fromList ["--prompt=export: "]) "csv\nparquet\njson\nndjson"
-  pure (maybe Nothing (\raw -> ofStringQ (T.strip raw)) m)
+  pure ((\raw -> ofStringQ (T.strip raw)) =<< m)
 
 -- | Export current view to file via DuckDB COPY
 exportView :: AdbcTable -> Text -> ExportFmt -> IO ()

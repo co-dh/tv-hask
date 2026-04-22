@@ -117,7 +117,7 @@ render nav ViewState{rowOff, lastCol} inWidths_ styles_ prec_ widthAdj_ vkind he
         if curColIdx_ > lastCol then 1
         else if curColIdx_ < lastCol then -1
         else 0
-  let nRows_ = nav ^. #tbl ^. #nRows
+  let nRows_ = nav ^. #tbl % #nRows
   let ctx = RenderCtx
         { inWidths   = inWidths_
         , dispIdxs   = nav ^. #dispIdxs
@@ -149,7 +149,7 @@ statusLine
 statusLine nav vkind styles_ prec_ widthAdj_ curColIdx_ w h = do
   let total = case vkind of
         VkFreqV _ t -> t
-        _           -> nav ^. #tbl ^. #totalRows
+        _           -> nav ^. #tbl % #totalRows
       colName = Nav.colName nav
       nCols_ = V.length (Nav.colNames nav)
       adj =
@@ -200,10 +200,8 @@ tabLine tabs curIdx replay = do
 waitForQ :: IO ()
 waitForQ = do
   Term.Event{Term.typ, Term.ch} <- Term.pollEvent
-  if typ == Term.eventKey
-       && ch == fromIntegral (fromEnum 'q')
-    then pure ()
-    else waitForQ
+  unless (typ == Term.eventKey
+       && ch == fromIntegral (fromEnum 'q')) $ waitForQ
 
 -- | Render error popup centered on screen, returns on 'q' press.
 -- Callers like Tv.Source.runList may invoke this before Term.init —

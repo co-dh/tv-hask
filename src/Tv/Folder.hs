@@ -126,7 +126,7 @@ pathIdx names =
 cellStr :: View AdbcTable -> Int -> IO Text
 cellStr v colIdx = do
   let rowCur = v ^. #nav % #row % #cur
-  cols <- Ops.getCols (v ^. #nav ^. #tbl) (V.singleton colIdx) rowCur (rowCur + 1)
+  let cols = Ops.getCols (v ^. #nav % #tbl) (V.singleton colIdx) rowCur (rowCur + 1)
   pure $ fromMaybe "" $ cols V.!? 0 >>= (V.!? 0)
 
 -- | Get path column value from current row
@@ -155,8 +155,7 @@ curType v = case v ^. #vkind of
 -- | Build folder view from AdbcTable
 fldView :: AdbcTable -> Text -> Int -> Text -> Vector Text -> Maybe (View AdbcTable)
 fldView adbc path_ depth disp grp =
-  fmap (\v -> v & #vkind .~ VkFld path_ depth & #disp .~ disp)
-       $ View.fromTbl adbc path_ 0 grp 0
+  (\v -> v & #vkind .~ VkFld path_ depth & #disp .~ disp) <$> View.fromTbl adbc path_ 0 grp 0
 
 -- | Create folder view — config-driven listing, local fallback
 mkView :: Bool -> Text -> Int -> IO (Maybe (View AdbcTable))
@@ -321,7 +320,7 @@ trashCmd = do
     Just _  -> pure (Just ("trash-put", []))
     Nothing -> do
       mGio <- findExecutable "gio"
-      pure (maybe Nothing (\_ -> Just ("gio", ["trash"])) mGio)
+      pure ((\_ -> Just ("gio", ["trash"])) =<< mGio)
 
 -- | Get full paths of selected rows, or current row if none selected
 selPaths :: View AdbcTable -> IO (Vector Text)
@@ -330,7 +329,7 @@ selPaths v = case v ^. #vkind of
     case pathIdx (Nav.colNames (v ^. #nav)) of
       Nothing -> pure V.empty
       Just pathCol -> do
-        cols <- Ops.getCols (v ^. #nav ^. #tbl) (V.singleton pathCol)
+        let cols = Ops.getCols (v ^. #nav % #tbl) (V.singleton pathCol)
                   0 (v ^. #nRows)
         let c = fromMaybe V.empty (cols V.!? 0)
             rows =
@@ -433,7 +432,7 @@ refreshView noSign_ s path_ depth = do
     Just v ->
       let oldRow = View.cur s ^. #nav % #row % #cur
           row_ = min oldRow (if v ^. #nRows > 0 then v ^. #nRows - 1 else 0)
-          mv' = View.fromTbl (v ^. #nav ^. #tbl) path_ 0 V.empty row_
+          mv' = View.fromTbl (v ^. #nav % #tbl) path_ 0 V.empty row_
       in pure $ fmap
         (\x -> View.setCur s
                  $ x & #vkind .~ VkFld path_ depth

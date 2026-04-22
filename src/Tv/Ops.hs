@@ -41,7 +41,7 @@ pipeAndPush s op label colIdxFn = do
   case mTbl of
     Nothing -> pure s
     Just tbl' ->
-      case View.rebuild (View.cur s) tbl' (colIdxFn tbl') (View.cur s ^. #nav ^. #grp) 0 of
+      case View.rebuild (View.cur s) tbl' (colIdxFn tbl') (View.cur s ^. #nav % #grp) 0 of
         Nothing -> pure s
         Just v  -> pure (View.push s (v & #disp .~ label))
 
@@ -203,7 +203,7 @@ execJoin s op leftGrp = do
   case listToMaybe (s ^. #tl) of
     Nothing -> pure Nothing
     Just parent -> do
-      (lName, lSql) <- prepareView (parent ^. #nav ^. #tbl) "l"
+      (lName, lSql) <- prepareView (parent ^. #nav % #tbl) "l"
       (rName, rSql) <- prepareView (View.tbl s) "r"
       createTempView lName lSql
       createTempView rName rSql
@@ -231,8 +231,8 @@ execJoin s op leftGrp = do
 resolveOps :: ViewStack AdbcTable -> Maybe (Vector JoinOp, Vector Text)
 resolveOps s = do
   parent <- listToMaybe (s ^. #tl)
-  let leftGrp = parent ^. #nav ^. #grp
-      joinOk  = not (V.null leftGrp) && leftGrp == (View.cur s ^. #nav ^. #grp)
+  let leftGrp = parent ^. #nav % #grp
+      joinOk  = not (V.null leftGrp) && leftGrp == (View.cur s ^. #nav % #grp)
   pure (if joinOk then allOps else V.fromList [JoinUnion, JoinDiff], leftGrp)
 
 joinRun :: Bool -> ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
@@ -241,7 +241,7 @@ joinRun tm s = case resolveOps s of
   Just (ops, leftGrp) -> case listToMaybe (s ^. #tl) of
     Nothing -> pure Nothing
     Just parent -> do
-      (lName, _) <- prepareView (parent ^. #nav ^. #tbl) "l"
+      (lName, _) <- prepareView (parent ^. #nav % #tbl) "l"
       (rName, _) <- prepareView (View.tbl s) "r"
       let items = V.map (\op -> opLabel op <> "  |  " <> prqlStr lName rName leftGrp op) ops
       mIdx <- fzfIdx tm (V.fromList ["--prompt=join> "]) items

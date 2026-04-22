@@ -1,5 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE BangPatterns #-}
+
 {-# LANGUAGE PatternSynonyms #-}
 -- | Zero-copy DuckDB FFI primitives.
 --

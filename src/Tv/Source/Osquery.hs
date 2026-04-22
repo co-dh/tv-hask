@@ -85,7 +85,7 @@ osqOpen _ path_ = do
 osquery :: Source
 osquery = Source
   { pfx    = pfx_
-  , parent = \_ -> Nothing
+  , parent = const Nothing
   , grpCol = Just "name"
   , list   = osqList
   , open   = osqOpen

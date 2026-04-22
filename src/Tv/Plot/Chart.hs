@@ -183,7 +183,7 @@ renderChart dataPath pngPath kind xName yName hasCat _catName xType title =
               vol = rollingSd 20 (returnsOf ys)
               volPts = [(x, v) | (x, v) <- zip xs vol, not (isNaN v)]
           in Right $ toRenderable $ layoutXY (title <> " vol") "i" "vol"
-               (toPlot $ (plot_lines_values .~ [volPts]
+               (toPlot (plot_lines_values .~ [volPts]
                         $ plot_lines_style . line_color .~ opaque orange
                         $ plot_lines_style . line_width .~ 1.5
                         $ def :: PlotLines Double Double))
@@ -664,13 +664,13 @@ qnorm p
           poly cs r = foldr (\co acc -> acc * r + co) 0 (reverse cs)
       in if p < plow then
            let r = sqrt (-2 * log p)
-           in (poly c r) / (poly d r * r + 1)
+           in poly c r / (poly d r * r + 1)
          else if p <= phigh then
            let r = q * q
-           in q * (poly a r) / (poly b r * r + 1)
+           in q * poly a r / (poly b r * r + 1)
          else
            let r = sqrt (-2 * log (1 - p))
-           in negate $ (poly c r) / (poly d r * r + 1)
+           in negate $ poly c r / (poly d r * r + 1)
 
 -- ============================================================
 -- Box / violin layouts (categorical x, numeric y)

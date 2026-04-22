@@ -128,7 +128,7 @@ renameCols tblName valCols = do
              ("SELECT COUNT(*) FROM " <> tblName
               <> " WHERE NOT (" <> q leftCol
               <> " IS NOT DISTINCT FROM " <> q rightCol <> ")")
-    cnt <- Conn.cellInt qr_ 0 0
+    let cnt = Conn.cellInt qr_ 0 0
     pure $ if cnt == 0
       then Left [leftCol, rightCol]
       else Right [(leftCol, "Δ" <> v <> "_L"), (rightCol, "Δ" <> v <> "_R")]
@@ -136,9 +136,9 @@ renameCols tblName valCols = do
       sameHide = V.fromList (concat hides)
       renames  = concat rens
   forM_ renames $ \(oldN, renamed) ->
-    () <$ Conn.query
+    void (Conn.query
             ("ALTER TABLE " <> tblName
-             <> " RENAME COLUMN " <> q oldN <> " TO " <> q renamed)
+             <> " RENAME COLUMN " <> q oldN <> " TO " <> q renamed))
   pure sameHide
 
 -- | FULL OUTER JOIN top 2 stack views on shared categorical columns.
@@ -146,14 +146,14 @@ run :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 run s = case s ^. #tl of
   [] -> pure Nothing
   (parent : _) -> do
-    let left  = parent ^. #nav ^. #tbl
+    let left  = parent ^. #nav % #tbl
         right = View.tbl s
         common = commonCols left right
     if V.null common
       then do
         Render.statusMsg "diff: no common columns"
         pure Nothing
-      else case resolveKeys (parent ^. #nav ^. #grp) (View.cur s ^. #nav ^. #grp) common of
+      else case resolveKeys (parent ^. #nav % #grp) (View.cur s ^. #nav % #grp) common of
         Nothing -> do
           Render.statusMsg "diff: no key columns (need categorical columns with same name+type)"
           pure Nothing
@@ -168,9 +168,7 @@ run s = case s ^. #tl of
             Just adbc -> case View.pop s of
               Nothing -> pure Nothing
               Just s' ->
-                pure $ fmap
-                  (\v -> View.setCur s' (v & #disp .~ "diff" & #sameHide .~ sameHide_))
-                  $ View.fromTbl adbc (View.cur s' ^. #path) 0 allKeys 0
+                pure $ ((\v -> View.setCur s' (v & #disp .~ "diff" & #sameHide .~ sameHide_)) <$> View.fromTbl adbc (View.cur s' ^. #path) 0 allKeys 0)
 
 -- | Clear sameHide to reveal identical-value columns (toggle)
 showSame :: View AdbcTable -> View AdbcTable

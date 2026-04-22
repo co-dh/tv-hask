@@ -18,6 +18,7 @@ module Tv.Data.DuckDB.Table where
 import Prelude hiding (init, filter)
 import Tv.Prelude
 import Control.Exception (SomeException, try)
+import Data.Char (isDigit, isAsciiLower, isAsciiUpper)
 import Data.IORef (atomicModifyIORef')
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -51,7 +52,7 @@ prqlQuery :: Text -> IO (Maybe Conn.QueryResult)
 prqlQuery prql = do
   Log.write "prql" prql
   m <- Prql.compile prql
-  maybe (pure Nothing) (\sql -> Just <$> Conn.query sql) m
+  maybe (pure Nothing) (fmap Just . Conn.query) m
 
 -- ----------------------------------------------------------------------------
 -- namespace Tc
@@ -163,9 +164,7 @@ queryCount q = do
     Nothing -> pure 0
     Just qr_ ->
       if Conn.nrows qr_ > 0
-        then do
-          v <- Conn.cellInt qr_ 0 0
-          pure $ fromIntegral v
+        then pure $ fromIntegral $ Conn.cellInt qr_ 0 0
         else pure 0
 
 -- | Execute PRQL query and return new AdbcTable (preserves totalRows if provided)
@@ -188,7 +187,7 @@ remoteName path_ =
   in "tc_" <> s
   where
     isAlphaNum c =
-      (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+      (isDigit c) || (isAsciiLower c) || (isAsciiUpper c)
 
 -- | Create from file path (queries total count).
 --   Remote URLs (hf://) are materialized into a DuckDB temp table first.
@@ -233,7 +232,7 @@ primaryKeys table = do
       m <- prqlQuery ("from dcons | prim_keys '" <> escSql table <> "'")
       case m of
         Nothing -> pure V.empty
-        Just qr_ -> V.generateM (Conn.nrows qr_) $ \i -> Conn.cellStr qr_ i 0
+        Just qr_ -> pure $ V.generate (Conn.nrows qr_) $ \i -> Conn.cellStr qr_ i 0
 
 -- | Open a table/view from an attached .duckdb file or schema-qualified name
 fromTable :: Text -> IO (Maybe (AdbcTable, Vector Text))
@@ -327,7 +326,7 @@ uniqCats baseR cn = do
   m <- prqlQuery (baseR <> " | uniq " <> Prql.ref cn)
   case m of
     Nothing -> pure V.empty
-    Just catQr -> V.generateM (Conn.nrows catQr) $ \i -> Conn.cellStr catQr i 0
+    Just catQr -> pure $ V.generate (Conn.nrows catQr) $ \i -> Conn.cellStr catQr i 0
 
 -- | Export plot data to the thread-local plot file via DuckDB COPY
 -- (downsample in SQL). truncLen: SUBSTRING length for time truncation;
@@ -450,9 +449,7 @@ freqTable t cNames
         m <- prqlQuery (baseR <> " | cntdist {" <> cols <> "}")
         case m of
           Nothing -> pure 0
-          Just qr_ -> do
-            v <- Conn.cellStr qr_ 0 0
-            pure $ parseIntOr0 v
+          Just qr_ -> pure $ parseIntOr0 $ Conn.cellStr qr_ 0 0
       -- freq table: uses freq PRQL function which computes Cnt, Pct, Bar in SQL
       tblName <- tmpName "freq"
       let prql = baseR <> " | freq {" <> cols <> "} | take 1000"
@@ -486,7 +483,7 @@ distinct t col = do
   m <- prqlQuery (Prql.queryRender (t ^. #query) <> " | uniq " <> Prql.ref cName)
   case m of
     Nothing -> pure V.empty
-    Just qr_ -> V.generateM (Conn.nrows qr_) $ \i -> Conn.cellStr qr_ i 0
+    Just qr_ -> pure $ V.generate (Conn.nrows qr_) $ \i -> Conn.cellStr qr_ i 0
 
 -- | Find row from starting position, forward or backward (with wrap).
 --   PRQL row_number is 1-based; we subtract 1 here for 0-based indexing.
@@ -500,9 +497,8 @@ findRow t col val start fwd = do
   case m of
     Nothing  -> pure Nothing
     Just qr_ -> do
-      rows <- V.generateM (Conn.nrows qr_) $ \i -> do
-        v <- Conn.cellInt qr_ i 0
-        pure (fromIntegral v - 1 :: Int)
+      let rows = V.generate (Conn.nrows qr_) $ \i ->
+            fromIntegral (Conn.cellInt qr_ i 0) - 1 :: Int
       if V.null rows
         then pure Nothing
         else if fwd

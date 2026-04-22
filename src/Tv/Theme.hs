@@ -220,7 +220,7 @@ run tm cur applyAndRender = do
     else do
       let items = V.imap (\i _ -> T.pack (show i) <> "\t" <> themeName i) themes
           onFocus _ line = case T.splitOn "\t" line of
-            (hTxt : _) -> maybe (pure ()) (\idx -> loadIdx idx >>= applyAndRender)
+            (hTxt : _) -> maybe (pure ()) (\i -> loadIdx i >>= applyAndRender)
                                 (readMaybe (T.unpack hTxt))
             _ -> pure ()
           opts = V.fromList
@@ -229,5 +229,5 @@ run tm cur applyAndRender = do
                (pure ()) onFocus
       if T.null out
         then pure Nothing
-        else maybe (pure Nothing) (\idx -> Just <$> applyIdx cur idx)
+        else maybe (pure Nothing) (fmap Just . applyIdx cur)
                    (listToMaybe (T.splitOn "\t" out) >>= (readMaybe . T.unpack))

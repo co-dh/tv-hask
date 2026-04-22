@@ -125,7 +125,7 @@ dqQuote s = "\\\"" <> s <> "\\\""
 opRender :: Op -> Text
 opRender (OpFilter e) = "filter " <> e
 opRender (OpSort cols) =
-  "sort {" <> joinWith (V.map (\(c, asc) -> renderSort c asc) cols) ", " <> "}"
+  "sort {" <> joinWith (V.map (uncurry renderSort) cols) ", " <> "}"
 opRender (OpSel cols) =
   "select {" <> joinWith (V.map ref cols) ", " <> "}"
 opRender (OpExclude cols) =

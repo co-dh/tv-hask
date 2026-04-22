@@ -55,8 +55,8 @@ checkFresh = fmap (fromMaybe False) $ Core.try_ $ do
     $ do
       qr <- Conn.query "SELECT count(*), max(updated_at) FROM hfchk.listing"
       if Conn.nrows qr == 0 then pure False else do
-        n  <- Conn.cellInt   qr 0 0
-        ts <- Conn.cellFloat qr 0 1
+        let n  = Conn.cellInt   qr 0 0
+            ts = Conn.cellFloat qr 0 1
         t  <- now_
         pure $ n > 0 && t - ts < maxAge
 
@@ -190,7 +190,7 @@ toRow t e = A.object
 
 -- | Conn.query returns QueryResult; discard so bracket_ can type at IO ().
 q_ :: Text -> IO ()
-q_ sql = Conn.query sql >> pure ()
+q_ sql = void (Conn.query sql)
 
 writeListing :: FilePath -> IO ()
 writeListing tmp = do

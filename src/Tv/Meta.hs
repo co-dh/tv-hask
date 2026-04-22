@@ -27,7 +27,7 @@ import Tv.Data.DuckDB.Table (AdbcTable)
 -- | Extract meta table name from the current view's AdbcTable query base.
 --   e.g. "from tc_meta_3" -> "tc_meta_3"
 tblName :: ViewStack AdbcTable -> Text
-tblName s = T.strip (T.drop 5 ((View.tbl s ^. #query) ^. #base))  -- drop "from "
+tblName s = T.strip (T.drop 5 (View.tbl s ^. #query % #base))  -- drop "from "
 
 -- | Push column metadata view onto stack
 push :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
@@ -37,7 +37,7 @@ push s = do
     Nothing -> pure Nothing
     Just adbc0 -> do
       -- Enrich meta with DuckDB column comments (e.g. osquery views with COMMENT ON COLUMN)
-      let metaBase = T.strip $ T.drop 5 ((adbc0 ^. #query) ^. #base)
+      let metaBase = T.strip $ T.drop 5 (adbc0 ^. #query % #base)
       enriched <- Ops.enrichComments metaBase (View.cur s ^. #path)
       adbc <-
         if enriched
@@ -113,9 +113,7 @@ corr s
 -- | Set key cols from meta view selections, pop to parent, select cols
 setKey :: ViewStack AdbcTable -> IO (Maybe (ViewStack AdbcTable))
 setKey s =
-  if View.cur s ^. #vkind /= VkColMeta then pure (Just s)
-  else if not (View.hasParent s) then pure (Just s)
-  else do
+  if (View.cur s ^. #vkind /= VkColMeta) || not (View.hasParent s) then pure (Just s) else (do
     colNames <- Ops.metaNames (tblName s) (View.cur s ^. #nav % #row % #sels)
     case View.pop s of
       Just s' -> do
@@ -125,7 +123,7 @@ setKey s =
                  & #nav % #dispIdxs .~ di
                  & #nav % #col % #sels .~ colNames
         pure (Just (View.setCur s' v))
-      Nothing -> pure (Just s)
+      Nothing -> pure (Just s))
 
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList $

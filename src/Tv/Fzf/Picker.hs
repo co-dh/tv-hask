@@ -232,7 +232,7 @@ computeMatches q its
 -- Rendering --------------------------------------------------------------
 
 listRows :: PickerState -> Int
-listRows st = (st ^. #psBox ^. #bh) - 3  -- minus top border, prompt, bottom border
+listRows st = (st ^. #psBox % #bh) - 3  -- minus top border, prompt, bottom border
 
 -- | Strip the index field for display when 'withNth' is True.
 display :: Bool -> Text -> Text

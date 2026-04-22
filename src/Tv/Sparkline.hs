@@ -42,16 +42,16 @@ bucketSql nBars i name =
 foldRows :: Conn.QueryResult -> Vector Int -> IO (Vector (Vector (Int, Int)))
 foldRows qr_ numIdxs =
   let empty = V.replicate (V.length numIdxs) (V.empty :: Vector (Int, Int))
-      step cb r_ = do
-        colIdx <- Conn.cellInt qr_ r_ 0
-        bucket <- Conn.cellInt qr_ r_ 1
-        cnt    <- Conn.cellInt qr_ r_ 2
-        pure $ case V.findIndex (== fromIntegral colIdx) numIdxs of
+      step cb r_ =
+        let colIdx = Conn.cellInt qr_ r_ 0
+            bucket = Conn.cellInt qr_ r_ 1
+            cnt    = Conn.cellInt qr_ r_ 2
+        in case V.findIndex (== fromIntegral colIdx) numIdxs of
           Just j ->
             let cur = fromMaybe V.empty $ cb V.!? j
             in cb V.// [(j, V.snoc cur (fromIntegral bucket, fromIntegral cnt))]
           Nothing -> cb
-  in V.foldM' step empty (V.enumFromN (0 :: Int) (Conn.nrows qr_))
+  in pure $ V.foldl' step empty (V.enumFromN (0 :: Int) (Conn.nrows qr_))
 
 -- | Render one column's bucket list as a sparkline string (Nothing = skip column).
 sparkFor :: Int -> Vector (Int, Int) -> Maybe Text

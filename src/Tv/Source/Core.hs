@@ -265,7 +265,7 @@ listCache = unsafePerformIO (newIORef V.empty)
 cacheLookup :: Text -> IO (Maybe AdbcTable)
 cacheLookup path_ = do
   arr <- readIORef listCache
-  pure $ fmap snd $ V.find (\(k, _) -> k == path_) arr
+  pure $ (snd <$> V.find (\(k, _) -> k == path_) arr)
 
 cacheStore :: Text -> AdbcTable -> IO ()
 cacheStore path_ tbl =
@@ -328,7 +328,7 @@ addParentRow parentOk tbl = case parentOk of
 prqlRun :: Text -> IO (Maybe Conn.QueryResult)
 prqlRun q = do
   m <- Prql.compile q
-  maybe (pure Nothing) (\sql -> Just <$> Conn.query sql) m
+  maybe (pure Nothing) (fmap Just . Conn.query) m
 
 -- | If listing produced 1 row with a single struct[] column, expand it.
 -- Handles APIs that wrap rows in an envelope (e.g. S3 Contents).
@@ -340,8 +340,8 @@ unnestStruct tbl = ignoreErrs go
       qr   <- maybe (ioError (userError "struct_col PRQL failed")) pure qrM
       cntM <- prqlRun ("from " <> tbl <> " | cnt")
       cntR <- maybe (ioError (userError "count PRQL failed")) pure cntM
-      col  <- Conn.cellStr qr 0 0
-      n    <- Conn.cellInt cntR 0 0
+      let col = Conn.cellStr qr 0 0
+          n   = Conn.cellInt cntR 0 0
       when (n == 1 && not (T.null col)) $ do
         _ <- Conn.query ( "CREATE OR REPLACE TEMP TABLE " <> tbl
                        <> " AS SELECT unnest(\"" <> col
@@ -357,10 +357,7 @@ applyStubTypes tbl stubName = do
     "SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = '"
     <> T.replace "'" "''" stubName
     <> "' AND data_type != 'VARCHAR'"
-  cols <- V.generateM (Conn.nrows qr) $ \i -> do
-    colName <- Conn.cellStr qr i 0
-    colType <- Conn.cellStr qr i 1
-    pure (colName, colType)
+  let cols = V.generate (Conn.nrows qr) $ \i -> (Conn.cellStr qr i 0, Conn.cellStr qr i 1)
   forM_ cols $ \(colName, colType) -> do
     let alter = "ALTER TABLE " <> tbl
               <> " ALTER COLUMN \"" <> colName <> "\" TYPE "

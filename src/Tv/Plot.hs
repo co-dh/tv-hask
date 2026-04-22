@@ -309,7 +309,7 @@ runCandle s = do
       case Nav.idxOf names xName of
         Nothing -> err s ("candle: x column '" <> xName <> "' not found")
         Just xIdx -> do
-          xType0 <- pure (Ops.colType tbl xIdx)
+          let xType0 = (Ops.colType tbl xIdx)
           xType  <- sniffXType tbl xIdx xType0
           Term.shutdown
           altEnter
@@ -326,7 +326,7 @@ runCandle s = do
               renderFrame pngPath (V.singleton (Interval "all" 1)) 0 renderErr
               -- wait for q to exit
               let waitQ = do c <- readKey
-                             if c == 'q' then pure () else waitQ
+                             unless (c == 'q') $ waitQ
               waitQ
               exitPlot
               pure (Just s)
@@ -358,7 +358,7 @@ renderFrame pngPath intervals idx err_ = do
 sniffXType :: AdbcTable -> Int -> ColType -> IO ColType
 sniffXType _ _ xType0 | xType0 /= ColTypeStr = pure xType0
 sniffXType tbl xIdx xType0 = do
-  cols <- Ops.getCols tbl (V.singleton xIdx) 0 1
+  let cols = Ops.getCols tbl (V.singleton xIdx) 0 1
   let v = T.strip $ fromMaybe "" $ cols V.!? 0 >>= (V.!? 0)
       cs = T.unpack v
       at_ i = getD cs i ' '
@@ -383,8 +383,8 @@ runSingle s kind = do
       altEnter
       datPath <- Table.plotDatPath
       pngPath <- Tmp.tmpPath "plot.png"
-      let nr = min ((n ^. #tbl) ^. #nRows) maxPoints
-      cols <- Ops.getCols (n ^. #tbl) (V.singleton yIdx) 0 nr
+      let nr = min (n ^. #tbl % #nRows) maxPoints
+      let cols = Ops.getCols (n ^. #tbl) (V.singleton yIdx) 0 nr
       let vals = fromMaybe V.empty $ cols V.!? 0
       TIO.writeFile datPath $
         yName <> "\n"
@@ -399,7 +399,7 @@ runSingle s kind = do
       setRaw
       let loop = do
             key <- readKey
-            if handleKey key == KeyQuit then pure () else loop
+            unless (handleKey key == KeyQuit) $ loop
       loop
       exitPlot
       pure (Just s)
