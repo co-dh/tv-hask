@@ -150,26 +150,26 @@ executable tv
   -- ============================================================
   -- DO NOT REORDER the ld-options block below. It is delicate.
   -- ============================================================
-  -- Static-link libduckdb (engine + 8 extensions + 13 sub-libs).
-  -- vendor/duckdb is searched BEFORE system paths so -lduckdb
-  -- resolves to libduckdb.a (a symlink to libduckdb_static.a from
-  -- duckdb/duckdb's static-libs release zip), shadowing /usr/lib/libduckdb.so.
+  -- Static-link libduckdb (engine + 4 extensions + 13 sub-libs).
+  -- vendor/duckdb is searched BEFORE system paths so -lduckdb resolves
+  -- to libduckdb.a (a symlink to libduckdb_static.a built by
+  -- `make duckdb-source`), shadowing /usr/lib/libduckdb.so. The
+  -- source-build is required: the generated_extension_loader.a in
+  -- the prebuilt release zip (from `make duckdb`) references 8
+  -- extensions' vtables — the 4 listed here plus autocomplete, tpch,
+  -- tpcds, jemalloc — so this link line would fail to resolve against
+  -- it. `make duckdb-source` regenerates the loader with only these 4.
   --
   -- Why the toggles:
   --  -Bstatic forces static even when a co-located .so exists;
-  --  --start-group iterates until all symbols resolve (the 23 archives
+  --  --start-group iterates until all symbols resolve (the 19 archives
   --    have circular C++ refs between extensions and the engine);
   --  -Bdynamic is restored at the end so subsequent libs (pthread,
   --    libstdc++) are still linked dynamically.
-  --
-  -- jemalloc_extension MUST be included: generated_extension_loader.a
-  -- references JemallocExtension's vtable. Excluding it leaves
-  -- undefined symbols at link time.
   ld-options: -Wl,-Bstatic,--start-group
               -lduckdb
               -lcore_functions_extension -lparquet_extension -licu_extension
-              -lautocomplete_extension -ljson_extension
-              -ltpch_extension -ltpcds_extension -ljemalloc_extension
+              -ljson_extension
               -lduckdb_re2 -lduckdb_fmt -lduckdb_pg_query -lduckdb_zstd
               -lduckdb_utf8proc -lduckdb_yyjson -lduckdb_mbedtls
               -lduckdb_miniz -lduckdb_hyperloglog -lduckdb_fastpforlib
@@ -215,8 +215,7 @@ test-suite tv-hask-test
   ld-options: -Wl,-Bstatic,--start-group
               -lduckdb
               -lcore_functions_extension -lparquet_extension -licu_extension
-              -lautocomplete_extension -ljson_extension
-              -ltpch_extension -ltpcds_extension -ljemalloc_extension
+              -ljson_extension
               -lduckdb_re2 -lduckdb_fmt -lduckdb_pg_query -lduckdb_zstd
               -lduckdb_utf8proc -lduckdb_yyjson -lduckdb_mbedtls
               -lduckdb_miniz -lduckdb_hyperloglog -lduckdb_fastpforlib
