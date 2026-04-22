@@ -837,7 +837,7 @@ renderTable
       nKeysI  = fromIntegral nKeys :: Int
       nCols   = V.length names
       (layoutV2, visKeys, baseWidthsV) =
-        layoutCols screenW nCols texts inWidths colIdxs nKeysI hidBits
+        layoutCols screenW nCols texts names inWidths colIdxs nKeysI hidBits
                    curCol colOff0 widthAdj
       heatCols = scanHeat heatMode layoutV2 colIdxs fmts colTypes texts heatDoubles
       yFoot    = screenH - 3
@@ -855,15 +855,17 @@ renderTable
   pure $ V.map fromIntegral baseWidthsV
 
 -- | Compute per-column layout: pin key columns at the left, lay out the
--- remaining display columns starting at `colOff0`, and expand the cursor
--- column to absorb trailing slack. Returns `(layout, visKeys, baseWidths)`
--- where `layout` is `(displayIdx, xPos, width)` per visible column and
--- `baseWidths` is the pre-widthAdj width for every original column
--- (returned so `renderTable` can hand it back as the widths cache).
+-- remaining display columns starting at `colOff0`. Prefers widths that
+-- fit both data and header; if the sum overruns the screen, shrinks
+-- rightmost non-key columns back to data-only width until it fits.
+-- Returns `(layout, visKeys, baseWidths)` where `layout` is
+-- `(displayIdx, xPos, width)` per visible column and `baseWidths` is the
+-- cached (pre-widthAdj) width for every original column.
 layoutCols
   :: Int                    -- screenW
   -> Int                    -- nCols (= V.length names, for widths cache size)
   -> Vector (Vector Text)   -- texts
+  -> Vector Text            -- names (header strings)
   -> Vector Word64          -- inWidths
   -> Vector Word64          -- colIdxs
   -> Int                    -- nKeysI
@@ -872,40 +874,72 @@ layoutCols
   -> Word64                 -- colOff0
   -> Int64                  -- widthAdj
   -> (Vector (Int, Int, Int), Int, Vector Int)
-layoutCols screenW nCols texts inWidths colIdxs nKeysI hidBits curCol colOff0 widthAdj =
-  (layoutV2, visKeys, baseWidthsV)
+layoutCols screenW nCols texts names inWidths colIdxs nKeysI hidBits curCol colOff0 widthAdj =
+  (layoutV, visKeys, baseWidthsV)
   where
-    (baseWidthsV, allWidthsV) = colWidths nCols texts inWidths hidBits widthAdj
-    adjColOff = scrollOff screenW allWidthsV colIdxs nKeysI curCol colOff0
-    layoutV   = placeCols screenW allWidthsV colIdxs nKeysI adjColOff
-    layoutV2  = expandCur screenW layoutV baseWidthsV colIdxs curCol widthAdj
+    (baseWidthsV, dataWidthsV, headerWidthsV) =
+      colWidths nCols texts names inWidths hidBits widthAdj
+    effWidthsV = shrinkToFit screenW headerWidthsV dataWidthsV colIdxs
+    adjColOff = scrollOff screenW effWidthsV colIdxs nKeysI curCol colOff0
+    layoutV   = placeCols screenW effWidthsV colIdxs nKeysI adjColOff
     visKeys   = V.length $ V.takeWhile (\(d, _, _) -> d < nKeysI) layoutV
 
--- | Phase 1 of layout: compute base (data-driven) and display (clamped +
--- `widthAdj`) widths for every original column. Hidden columns collapse
--- to 0 base / 3 display. `baseWidthsV` is returned so renderTable can
--- cache it; `allWidthsV` feeds scroll/placement.
+-- | Phase 1 of layout: compute widths per original column. Returns a
+-- triple: `baseWidthsV` is the cached monotonically-growing width
+-- (data+header, fed back as `inWidths` on the next render);
+-- `dataWidthsV` is the screen-ready width ignoring the header
+-- (minimum needed to fit the data); `headerWidthsV` is the screen-ready
+-- width covering both data and header. Both display widths are clamped
+-- to `_MAX_DISP_WIDTH` and shifted by `widthAdj`. Hidden columns collapse
+-- to 0 base / 3 display.
 colWidths
-  :: Int -> Vector (Vector Text) -> Vector Word64 -> IS.IntSet -> Int64
-  -> (Vector Int, Vector Int)
-colWidths nCols texts inWidths hidBits widthAdj = (baseWidthsV, allWidthsV)
+  :: Int -> Vector (Vector Text) -> Vector Text -> Vector Word64 -> IS.IntSet -> Int64
+  -> (Vector Int, Vector Int, Vector Int)
+colWidths nCols texts names inWidths hidBits widthAdj =
+  (baseWidthsV, dataWidthsV, headerWidthsV)
   where
-    dataWidth c =
+    dataWV = V.generate nCols $ \c ->
       let col = if c < V.length texts then texts V.! c else V.empty
       in V.foldl' (\acc t -> max acc (T.length t)) 1 col
+    headerW c = if c < V.length names then T.length (names V.! c) else 0
+    adjust w = max 3 $ min _MAX_DISP_WIDTH w + fromIntegral widthAdj
     baseWidthsV = V.generate nCols $ \c ->
       if IS.member c hidBits then 0
       else let cached = if c < V.length inWidths
                         then fromIntegral $ inWidths V.! c else 0 :: Int
-               dw   = dataWidth c
-               base = max dw _MIN_HDR_WIDTH + 2
-           in max base cached
-    allWidthsV = V.generate nCols $ \c ->
+               full = max (max (dataWV V.! c) (headerW c)) _MIN_HDR_WIDTH + 2
+           in max full cached
+    dataWidthsV = V.generate nCols $ \c ->
       if IS.member c hidBits then 3
-      else let base = baseWidthsV V.! c
-               disp = min base _MAX_DISP_WIDTH
-               w    = disp + fromIntegral widthAdj
-           in max w 3
+      else adjust $ max (dataWV V.! c) _MIN_HDR_WIDTH + 2
+    headerWidthsV = V.generate nCols $ \c ->
+      if IS.member c hidBits then 3
+      else adjust $ baseWidthsV V.! c
+
+-- | If the sum of `headerWidthsV` (plus separators) overruns `screenW`,
+-- walk display columns right-to-left and replace each header width with
+-- the (smaller) data width until the excess is gone or every column has
+-- been narrowed. Keys live at the left of `colIdxs`, so non-key columns
+-- shrink first.
+shrinkToFit
+  :: Int -> Vector Int -> Vector Int -> Vector Word64 -> Vector Int
+shrinkToFit screenW headerWidthsV dataWidthsV colIdxs
+  | excess0 <= 0 = headerWidthsV
+  | otherwise    = V.update headerWidthsV (V.fromList $ go (nDisp - 1) excess0 [])
+  where
+    nDisp  = V.length colIdxs
+    totalW = sum [ headerWidthsV V.! fromIntegral (colIdxs V.! c) + 1
+                 | c <- [0 .. nDisp - 1] ]
+    excess0 = totalW - screenW
+    go idx excess acc
+      | idx < 0 || excess <= 0 = acc
+      | otherwise =
+          let origIdx = fromIntegral (colIdxs V.! idx)
+              h = headerWidthsV V.! origIdx
+              d = dataWidthsV   V.! origIdx
+          in if h > d
+             then go (idx - 1) (excess - (h - d)) ((origIdx, d) : acc)
+             else go (idx - 1) excess acc
 
 -- | Phase 2: scroll the non-key window right until the cursor column fits
 -- on screen. Key columns are pinned at the left and never scrolled.
@@ -947,35 +981,6 @@ placeCols screenW allWidthsV colIdxs nKeysI adjColOff =
           in place limit (c + 1) (x + cw + 1) ((c, x, cw) : acc)
     (keyList, x1)   = place nKeysI 0 0 []
     (nonKeyList, _) = place nDispCols (nKeysI + adjColOff) x1 []
-
--- | Phase 4: if there's trailing horizontal slack, grow the cursor column
--- toward its base width and shift everything to its right by that delta.
-expandCur
-  :: Int -> Vector (Int, Int, Int) -> Vector Int -> Vector Word64
-  -> Word64 -> Int64 -> Vector (Int, Int, Int)
-expandCur screenW layoutV baseWidthsV colIdxs curCol widthAdj
-  | nVisCols == 0 = layoutV
-  | slack <= 0    = layoutV
-  | otherwise = case curVisIdx of
-      Nothing  -> layoutV
-      Just cvi ->
-        let (_, _, cw) = layoutV V.! cvi
-            origIdx    = fromIntegral $ colIdxs V.! (fst3 $ layoutV V.! cvi)
-            base       = max 3 $ baseWidthsV V.! origIdx + fromIntegral widthAdj
-            expand     = min slack $ max 0 $ base - cw
-        in if expand <= 0 then layoutV
-           else V.imap (\i (d, xx, ww) ->
-                  if      i == cvi then (d, xx, ww + expand)
-                  else if i >  cvi then (d, xx + expand, ww)
-                  else                  (d, xx, ww)
-                ) layoutV
-  where
-    nVisCols = V.length layoutV
-    (_, lastX, lastW) = layoutV V.! (nVisCols - 1)
-    slack = screenW - (lastX + lastW + 1)
-    curVisIdx = V.findIndex
-      (\(di, _, _) -> fromIntegral (colIdxs V.! di) == curCol) layoutV
-    fst3 (a, _, _) = a
 
 -- | Heat scan: for each visible column, determine whether it's numeric,
 -- date-like, or categorical string, and compute the min/max needed for
