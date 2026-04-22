@@ -1,17 +1,98 @@
 {-
-  Preview box: shows full cell content when text is truncated.
-  Word-wraps long text, supports {/} for page up/down.
+  UI overlays: Info (context-specific key hints) and Preview (full cell
+  content with word-wrap). Merged from Tv.UI.Info + Tv.UI.Preview — both
+  were short single-renderer modules under the same UI/ subdir.
 
-  Literal port of Tc/Tc/UI/Preview.lean.
+  Literal port of Tc/Tc/UI/Info.lean and Tc/Tc/UI/Preview.lean. The Lean
+  Info `State` struct was a single `vis : Bool`; here we use the Bool
+  directly. `render`/`update` were renamed to `infoRender`/`infoUpdate` /
+  `prevRender` to disambiguate the merged exports.
 -}
 {-# LANGUAGE OverloadedStrings #-}
-module Tv.UI.Preview where
+module Tv.UI where
 
+import Prelude hiding (print)
 import Tv.Prelude
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
+import Tv.Types (Cmd(..), ViewKind(..))
 import qualified Tv.Term as Term
+import qualified Tv.Theme as Theme
+
+-- ---------------------------------------------------------------------------
+-- Info overlay
+-- ---------------------------------------------------------------------------
+
+-- | Pure update by Cmd
+infoUpdate :: Bool -> Cmd -> Maybe Bool
+infoUpdate vis CmdInfoTog = Just (not vis)
+infoUpdate _   _          = Nothing
+
+-- | Context-specific key hints per view (no common navigation)
+viewHints :: ViewKind -> Vector (Text, Text)
+viewHints VkColMeta =
+  V.fromList
+    [ ("M0", "select nulls")
+    , ("M1", "select unique")
+    , ("\x23ce", "set as key")
+    , ("q", "back")
+    ]
+viewHints (VkFreqV _ _) =
+  V.fromList
+    [ ("\x23ce", "filter by val")
+    , ("q", "back")
+    ]
+viewHints (VkFld _ _) =
+  V.fromList
+    [ ("\x23ce", "open")
+    , ("D-", "trash")
+    , ("D<", "less depth")
+    , ("D>", "more depth")
+    ]
+viewHints VkTbl =
+  V.fromList
+    [ ("T", "toggle row sel")
+    , ("!", "group by")
+    , ("c\\", "hide column")
+    , ("S-\x2190\x2192", "reorder cols")
+    , ("SPC", "command menu")
+    ]
+
+-- | Pad string s on the left with spaces to width w
+padLeft :: Int -> Text -> Text
+padLeft w s = T.replicate (max 0 $ w - T.length s) " " <> s
+
+-- | Pad string s on the right with spaces to width w (after truncating to w)
+padRight :: Int -> Text -> Text
+padRight w s =
+  let t = T.take w s
+  in t <> T.replicate (max 0 $ w - min (T.length s) w) " "
+
+-- | Render info overlay at bottom-right
+infoRender :: Int -> Int -> ViewKind -> IO ()
+infoRender screenH screenW vk = do
+  let hints = viewHints vk
+  let nRows = V.length hints
+  let keyW = 5 :: Int
+  let hintW = 14 :: Int
+  let boxW = keyW + 1 + hintW
+  let x0 = screenW - boxW - 2
+  let y0 = screenH - nRows - 3
+  V.iforM_ hints $ \i (k, d) -> do
+    let kpad = padLeft keyW k
+    let dpad = padRight hintW d
+    s <- Theme.getStyles
+    Term.print
+      (fromIntegral x0 :: Word32)
+      (fromIntegral (y0 + i) :: Word32)
+      (Theme.styleFg s Theme.sHint)
+      (Theme.styleBg s Theme.sHint)
+      (kpad <> " " <> dpad)
+
+-- ---------------------------------------------------------------------------
+-- Preview box
+-- ---------------------------------------------------------------------------
 
 -- | Word-wrap a string to fit within maxW characters
 wrapText :: Text -> Int -> Vector Text
@@ -29,8 +110,8 @@ wrapText s maxW
 -- | Render preview box at bottom-left. Width scales with the screen
 -- (70% up to screenW-4 safety margin) so long cell strings wrap less
 -- and the box no longer looks cramped on wide terminals.
-render :: Int -> Int -> Text -> Int -> IO ()
-render screenH screenW text scroll0 = do
+prevRender :: Int -> Int -> Text -> Int -> IO ()
+prevRender screenH screenW text scroll0 = do
   let maxW = min (screenW - 4) (screenW * 7 `div` 10)
   if maxW < 4 then pure ()
   else do

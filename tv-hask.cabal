@@ -85,8 +85,7 @@ library
     Tv.Transpose
     Tv.Types
     Tv.Types.TH
-    Tv.UI.Info
-    Tv.UI.Preview
+    Tv.UI
     Tv.Log
     Tv.Remote
     Tv.Socket
