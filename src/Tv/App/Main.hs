@@ -53,7 +53,7 @@ data CliArgs = CliArgs
   , test    :: Bool
   , noSign  :: Bool
   , session :: Maybe Text   -- -s "name" session restore
-  , prql    :: Maybe Text   -- -q "PRQL ops" applied as initial pipeline
+  , prql    :: Maybe Text   -- -p "PRQL ops" applied as initial pipeline
   }
 makeFieldLabelsNoPrefix ''CliArgs
 
@@ -67,13 +67,13 @@ extractFlag flag (f : v : rest)
   | otherwise = let (r, rest') = extractFlag flag (v : rest) in (r, f : rest')
 extractFlag _ other = (Nothing, other)
 
--- parse args: path?, -c keys?, test mode, +n, -s session, -q PRQL
+-- parse args: path?, -c keys?, test mode, +n, -s session, -p PRQL
 parseArgs :: [Text] -> CliArgs
 parseArgs args0 =
   let noSign_    = elem "+n" args0
       args1      = filter (/= "+n") args0
       (session_, args2) = extractFlag "-s" args1
-      (prql_,    args3) = extractFlag "-q" args2
+      (prql_,    args3) = extractFlag "-p" args2
       toK s      = Key.tokenizeKeys s
       base       = defArgs & #noSign .~ noSign_ & #session .~ session_ & #prql .~ prql_
   in case args3 of
@@ -131,7 +131,7 @@ runApp v0 pipe test_ ns th ks initialPrql = do
       case mv' of
         Just v' -> pure v'
         Nothing -> do
-          TIO.hPutStrLn stderr ("Error: -q PRQL failed to apply: " <> q)
+          TIO.hPutStrLn stderr ("Error: -p PRQL failed to apply: " <> q)
           exitWith (ExitFailure 1)
     _ -> pure v0
   _ <- Term.init
@@ -152,7 +152,7 @@ applyInitialPrql prqlOps v = do
     Just tbl' -> pure (View.rebuild v tbl' 0 V.empty 0)
 
 -- | After the session, print a CLI command that recreates the top view.
--- Format: `tv <path> [-q '<prql>']`. The PRQL is the initial -q (if
+-- Format: `tv <path> [-p '<prql>']`. The PRQL is the initial -p (if
 -- any) concatenated with the ops added interactively during the
 -- session. Skipped for derived views (Freq, Meta, etc.) whose query
 -- base is a temp table — not portable across CLI invocations.
@@ -170,7 +170,7 @@ printScriptCmd initialPrql a =
   in case v ^. #vkind of
        VkTbl | not (T.null p) -> do
          let cmd = "tv " <> shellQuote p
-                <> if T.null prql_ then "" else " -q " <> shellQuote prql_
+                <> if T.null prql_ then "" else " -p " <> shellQuote prql_
          -- Stderr so the recreate hint stays out of any pipe consuming
          -- tv's table dump on stdout (test harness, `tv x | grep …`,
          -- etc). Terminals merge stderr to the screen, so users still
@@ -314,12 +314,12 @@ helpText = T.unlines
   , "Options:"
   , "  -c KEYS             Test mode: replay KEYS, render once, exit."
   , "  -s NAME             Restore session NAME (~/.cache/tv/sessions/NAME.json)."
-  , "  -q PRQL             Apply PRQL pipeline to the input as initial ops"
-  , "                      (e.g. -q 'filter score > 80 | sort name')."
+  , "  -p PRQL             Apply PRQL pipeline to the input as initial ops"
+  , "                      (e.g. -p 'filter score > 80 | sort name')."
   , "  +n                  no-sign mode for S3 and similar anonymous sources."
   , "  -h, --help          Show this help and exit."
   , ""
-  , "On exit, tv prints a recreate command (path + -q PRQL) so you can"
+  , "On exit, tv prints a recreate command (path + -p PRQL) so you can"
   , "rerun the same view from the shell."
   , ""
   , "In-app: press `I` for the quick reference, or Space for the command menu."

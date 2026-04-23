@@ -137,7 +137,7 @@ and `AWS_SECRET_ACCESS_KEY` (and optionally `AWS_REGION`,
 - Status bar shows sum/avg/count for the current column
 - Pipe mode: `cat data.csv | tv`
 - Session save (`W`) and load (`L`)
-- Tab line shows the PRQL pipeline; replay with `tv file -p "ops"`
+- Tab line shows the PRQL pipeline; see [Scripting](#scripting)
 - Socket control channel (`$TV_SOCK`) for scripting
 
 ## Install
@@ -243,7 +243,41 @@ tv osquery://processes             # Query osquery table directly
 tv 'pg://host=/run/postgresql'     # Postgres DSN
 cat data.csv | tv                  # Pipe mode (stdin)
 tv -s mysession                    # Restore saved session
+tv data.csv -p 'filter score > 80 | sort name'   # Apply PRQL pipeline up front
 ```
+
+## Scripting
+
+Two pieces let you replay or share a tv session as a single shell command:
+
+- **`-p PRQL`**: applies a PRQL pipeline to the input as initial ops, e.g.
+  `tv data/full.csv -p 'filter score > 80 | sort name'`. The pipeline is
+  appended to the loaded table's `from <path>` and re-executed before the
+  TUI starts.
+
+- **`# recreate: …` line**: when tv exits, it prints to **stderr** a
+  one-line CLI command that recreates the top view. The PRQL combines the
+  initial `-p` (if any) with every interactive op (filter, sort, derive,
+  hide, …) added during the session. Stderr keeps the line out of any
+  stdout pipe consuming the table dump.
+
+Example session:
+
+```bash
+$ tv data/full.csv -p 'filter score > 80 | sort name'
+... interactive table view ...
+# recreate: tv data/full.csv -p 'filter score > 80 | sort name'
+```
+
+Sort interactively, exit with `q`:
+
+```bash
+$ tv data/full.csv         # press [ to sort ascending, then q
+# recreate: tv data/full.csv -p 'sort {this.`name`}'
+```
+
+Skipped for derived views (Freq, Meta, …) whose query base is a temp
+table and isn't portable across CLI invocations.
 
 ## Keybindings
 
