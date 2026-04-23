@@ -203,18 +203,17 @@ loop opts st = do
       KEsc       -> pure ""
       KEnter     -> pure (selection opts st)
       -- query edits
-      KChar c    -> editQ opts st (insertAt c   (qq st) (cc st)) (cc st + 1)
-      KBackspace -> editQ opts st (deleteBefore (qq st) (cc st)) (max 0 (cc st - 1))
-      KDel       -> editQ opts st (deleteAt     (qq st) (cc st)) (cc st)
-      KCtrlU     -> editQ opts st ""                             0
-      KCtrlW     -> let (q', c') = deleteWordBack (qq st) (cc st)
-                    in editQ opts st q' c'
-      KTab       -> let t = currentDisplay opts st in editQ opts st t (T.length t)
+      KChar c    -> editQ opts st (insertAt c   q i) (i + 1)
+      KBackspace -> editQ opts st (deleteBefore q i) (max 0 (i - 1))
+      KDel       -> editQ opts st (deleteAt     q i) i
+      KCtrlU     -> editQ opts st ""                 0
+      KCtrlW     -> let (q', c') = deleteWordBack q i in editQ opts st q' c'
+      KTab       -> let t = currentDisplay opts st   in editQ opts st t (T.length t)
       -- cursor moves within query
-      KLeft      -> moveCaret opts st (max 0 (cc st - 1))
-      KRight     -> moveCaret opts st (min (T.length (qq st)) (cc st + 1))
+      KLeft      -> moveCaret opts st (max 0 (i - 1))
+      KRight     -> moveCaret opts st (min (T.length q) (i + 1))
       KCtrlA     -> moveCaret opts st 0
-      KCtrlE     -> moveCaret opts st (T.length (qq st))
+      KCtrlE     -> moveCaret opts st (T.length q)
       -- list navigation
       KUp        -> moveCur opts st (-1)                            >>= loop opts
       KCtrlK     -> moveCur opts st (-1)                            >>= loop opts
@@ -226,13 +225,13 @@ loop opts st = do
       KEnd       -> setCur opts st (V.length (st ^. #psMatch) - 1)  >>= loop opts
       KIgnore    -> loop opts st
   where
-    qq s = s ^. #psQuery
-    cc s = s ^. #psCaret
+    q = st ^. #psQuery
+    i = st ^. #psCaret
     editQ o s q' c' = typed o s q' c' >>= loop o
     moveCaret o s c' = do
-      let c'' = max 0 (min (T.length (qq s)) c')
+      let c'' = max 0 (min (T.length (s ^. #psQuery)) c')
           s' = s { psCaret = c'' }
-      when (cc s /= c'') (drawFrame o s')
+      when (s ^. #psCaret /= c'') (drawFrame o s')
       loop o s'
 
 -- | Text editing primitives parameterised by caret index.
@@ -373,7 +372,7 @@ drawFrame opts st = do
   -- index is into psQuery, so the screen column is prompt-length + caret.
   drawCaret bx promptY innerW
             (T.length (opts ^. #prompt) + (st ^. #psCaret))
-            (caretCh st opts)
+            (caretCh st)
             (pal ^. #bgPanel) (pal ^. #fgPrompt)
   when hasHdr $
     drawLine bx hdrY innerW (opts ^. #header) (pal ^. #fgHdr) (pal ^. #bgPanel)
@@ -431,12 +430,14 @@ bottomBorder innerW countTxt =
 -- | Pick the character that sits under the caret — the char to the
 -- right of the caret if any, else a space. @drawLine@ has already
 -- painted a leading space inside the border, so caret-at-end lands
--- on that space.
-caretCh :: PickerState -> PickerOpts -> Text
-caretCh st _ =
+-- on that space. Uses 'T.compareLength' to avoid an extra full scan.
+caretCh :: PickerState -> Text
+caretCh st =
   let q = st ^. #psQuery
       i = st ^. #psCaret
-  in if i < T.length q then T.singleton (T.index q i) else " "
+  in case T.compareLength q i of
+       GT -> T.singleton (T.index q i)
+       _  -> " "
 
 -- | Paint a single inverted cell over an already-drawn line, used as
 -- the caret. @col@ is the screen column *offset* inside the inner
