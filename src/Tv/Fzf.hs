@@ -20,11 +20,11 @@ module Tv.Fzf
   , fzfIdx
   , parseSel
   , cmdMode
-  , gatePoll
   , flatItems
   ) where
 
 import Tv.Prelude
+import Control.Applicative ((<|>))
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import qualified System.Environment as Env
@@ -51,7 +51,7 @@ parseOpts argv =
   where
     firstMatch :: Text -> Maybe Text
     firstMatch pfx = V.foldr
-      (\arg acc -> maybe acc Just (T.stripPrefix pfx arg)) Nothing argv
+      (\arg acc -> T.stripPrefix pfx arg <|> acc) Nothing argv
 
 -- | Core picker. Splits @input@ on newlines into items; returns the raw
 -- selected line (with tab-prefix preserved) or empty on cancel.
@@ -102,12 +102,6 @@ fzfIdx tm opts items_ =
         else case T.splitOn "\t" out of
           []    -> pure Nothing
           (h:_) -> pure (readMaybe (T.unpack h))
-
--- | Preserve old API name: the picker is always safe to poll during, so
--- the "mute when not in tmux" gating is no longer necessary. Keep the
--- function for callers and the regression test.
-gatePoll :: Bool -> IO () -> IO ()
-gatePoll _ pollCB = pollCB
 
 -- | Build aligned menu items: @"handler | ctx | key | label"@ with padding.
 flatItems :: CmdCache -> ViewKind -> Vector Text

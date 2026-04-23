@@ -9,6 +9,7 @@
 module Tv.Theme where
 
 import Tv.Prelude
+import Control.Monad ((>=>))
 import Control.Exception (SomeException, try)
 import Data.List (find)
 import qualified Data.Text as T
@@ -228,7 +229,7 @@ run tm cur applyAndRender = do
     else do
       let items = V.imap (\i _ -> T.pack (show i) <> "\t" <> themeName i) themes
           onFocus _ line = case T.splitOn "\t" line of
-            (hTxt : _) -> maybe (pure ()) (\i -> loadIdx i >>= applyAndRender)
+            (hTxt : _) -> maybe (pure ()) (loadIdx >=> applyAndRender)
                                 (readMaybe (T.unpack hTxt))
             _ -> pure ()
           opts = V.fromList

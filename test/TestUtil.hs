@@ -9,7 +9,6 @@ module TestUtil
   , footer
   , header
   , dataLines
-  , assert
   , hasFile
   , hasCmd
   , cachedCheck
@@ -42,7 +41,7 @@ resolveBin = do
 
 runHask :: Text -> FilePath -> [String] -> IO Text
 runHask keys file extraArgs = do
-  let args = (if null file then [] else [file]) ++ extraArgs ++ ["-c", T.unpack keys]
+  let args = [file | not (null file)] ++ extraArgs ++ ["-c", T.unpack keys]
   (_, out, _) <- readProcessWithExitCode tvHaskBin args ""
   pure (T.pack out)
 
@@ -51,7 +50,7 @@ runHask keys file extraArgs = do
 -- pipes consuming the table dump.
 runHaskErr :: Text -> FilePath -> [String] -> IO Text
 runHaskErr keys file extraArgs = do
-  let args = (if null file then [] else [file]) ++ extraArgs ++ ["-c", T.unpack keys]
+  let args = [file | not (null file)] ++ extraArgs ++ ["-c", T.unpack keys]
   (_, _, err) <- readProcessWithExitCode tvHaskBin args ""
   pure (T.pack err)
 
@@ -91,9 +90,6 @@ dataLines output =
   let ls = filter isContent (T.splitOn (T.pack "\n") output)
       n  = length ls
   in take (n - 3) (drop 1 ls)
-
-assert :: Bool -> String -> IO ()
-assert cond msg = if cond then pure () else ioError (userError msg)
 
 hasFile :: FilePath -> IO Bool
 hasFile path =

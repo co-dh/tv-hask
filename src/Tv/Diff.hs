@@ -168,7 +168,7 @@ run s = case s ^. #tl of
             Just adbc -> case View.pop s of
               Nothing -> pure Nothing
               Just s' ->
-                pure $ ((\v -> View.setCur s' (v & #disp .~ "diff" & #sameHide .~ sameHide_)) <$> View.fromTbl adbc (View.cur s' ^. #path) 0 allKeys 0)
+                pure ((\v -> View.setCur s' (v & #disp .~ "diff" & #sameHide .~ sameHide_)) <$> View.fromTbl adbc (View.cur s' ^. #path) 0 allKeys 0)
 
 -- | Clear sameHide to reveal identical-value columns (toggle)
 showSame :: View AdbcTable -> View AdbcTable

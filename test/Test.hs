@@ -327,7 +327,7 @@ test_folder_sort_type = do
       firstFile = fromMaybe 999 (findIdx (== "f") types)
       lastDir   = fromMaybe 0 (findIdx (== "d") (reverse types))
                     `rIdx` length types
-      rIdx n total = if n == 0 && not (elem "d" types) then 0 else total - 1 - n
+      rIdx n total = if n == 0 && notElem "d" types then 0 else total - 1 - n
   assert (lastDir < firstFile)
     ("ascending sort: dirs (" ++ show lastDir ++ ") before files (" ++ show firstFile ++ ")")
 
@@ -829,18 +829,10 @@ test_flat_menu = do
   assert (contains out2 "a") "flat menu: double space still renders"
 
 test_socket :: Assertion
-test_socket = do
-  socat <- hasCmd "socat"
-  if not socat
-    then pure ()
-    else pure ()
+test_socket = pure ()
 
 test_socket_dispatch :: Assertion
-test_socket_dispatch = do
-  socat <- hasCmd "socat"
-  if not socat
-    then pure ()
-    else pure ()
+test_socket_dispatch = pure ()
 
 -- ============================================================================
 -- === Arrow navigation ===
@@ -936,7 +928,7 @@ test_plot_key_dispatch = do
   assert (Plot.handleKey 'q' == KeyQuit) "q should quit"
   assert (Plot.handleKey '.' == KeyInterval 1) ". should increase interval"
   assert (Plot.handleKey ',' == KeyInterval (-1)) ", should decrease interval"
-  mapM_ (\k -> assert (Plot.handleKey k == KeyNoop) ([k] ++ " should be noop"))
+  mapM_ (\k -> assert (Plot.handleKey k == KeyNoop) (k : " should be noop"))
     ['h', 'l', 'x', 'a', ' ', '+', '-', '\x1b', '[', 'A', 'j', 'k']
 
 test_plot_export_string_col :: Assertion
@@ -963,7 +955,7 @@ test_plot_export_data = do
       datPath <- Tbl.plotDatPath
       content <- TIO.readFile datPath
       let ls = filter (not . T.null) (T.splitOn "\n" content)
-      assert (length ls > 0) "plot.dat should have data rows"
+      assert (not (null ls)) "plot.dat should have data rows"
       assert (all (\l -> length (T.splitOn "\t" l) >= 2) ls)
         "plot.dat rows should be tab-separated x\\ty"
 

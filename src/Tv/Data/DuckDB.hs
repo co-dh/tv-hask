@@ -157,7 +157,7 @@ cvValidity :: ColumnView -> Ptr Word64
 cvValidity (ColumnView _ _ _ _ v _) = v
 
 
-data DuckDBError = DuckDBError String deriving Show
+newtype DuckDBError = DuckDBError String deriving Show
 instance Exception DuckDBError
 
 -- ============================================================================

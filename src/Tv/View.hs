@@ -35,7 +35,7 @@ import Tv.Types (Cmd(..), Effect(..), ViewKind(..))
 -- >>> let mockNames53 = V.fromList ["c0","c1","c2"]
 -- >>> let mockTypes53 = V.fromList [ColTypeStr, ColTypeStr, ColTypeStr]
 -- >>> let mock53 = MockTable { mockRows = 5, mockNames = mockNames53 }
--- >>> let testNav = Nav.new 5 5 mockNames53 mockTypes53 mock53
+-- >>> let testNav = Nav.newAt 5 5 mockNames53 mockTypes53 mock53 0 V.empty 0
 -- >>> let testView = new testNav "data/test.csv"
 -- >>> let testStack = ViewStack { hd = testView, tl = [] }
 
@@ -255,4 +255,4 @@ updateStack s h = case h of
 
 -- | PRQL pipeline ops string from view's query (for tab line display).
 opsStr :: View AdbcTable -> Text
-opsStr v = Prql.renderOps $ ((v ^. #nav) ^. #tbl % #query)
+opsStr v = Prql.renderOps (v ^. #nav % #tbl % #query)

@@ -106,41 +106,6 @@ match query0 target
       | eq (T.index query qi) (T.index target fromIdx) = Just fromIdx
       | otherwise                                    = findFrom qi (fromIdx + 1)
 
--- | Score-only variant. Used when the caller only ranks candidates.
-matchNoPos :: Text -> Text -> Maybe Int
-matchNoPos q t = fmap fst (match q t)
-
--- | Score, returning 'minBound' on miss. Convenient as a sort key.
-score :: Text -> Text -> Int
-score q t = fromMaybe minBound (matchNoPos q t)
-
--- | Multi-term match: the query is split on whitespace into terms that
--- must all match (AND). A term prefixed with @!@ is a negation — the
--- item matches only if that term does NOT appear. Each positive term
--- keeps all of 'match's features (smartcase, @^prefix@, @suffix$@).
--- Score is the sum of positive-term scores; positions are the union
--- (sorted, deduped) so every matched character is highlighted.
---
--- A bare @!@ or all-negation query with no matching negation returns
--- @Just (0, [])@ — matches everything.
---
--- >>> snd <$> matchMulti "foo bar" "foo and bar"
--- Just [0,1,2,8,9,10]
--- >>> matchMulti "foo !bar" "foo and bar"
--- Nothing
--- >>> snd <$> matchMulti "foo !bar" "foo and baz"
--- Just [0,1,2]
--- >>> matchMulti "!bar" "no match"
--- Just (0,[])
--- >>> matchMulti "!bar" "bar here"
--- Nothing
--- >>> matchMulti "" "anything"
--- Just (0,[])
-matchMulti :: Text -> Text -> Maybe (Int, [Int])
-matchMulti q target
-  | T.null q  = Just (0, [])
-  | otherwise = matchParsed (parseQuery q) target
-
 -- | Parse a multi-term query into @(negated, stripped)@ pairs.
 -- Empty-after-strip terms (bare @!@, double spaces) are dropped.
 parseQuery :: Text -> [(Bool, Text)]

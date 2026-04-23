@@ -200,7 +200,7 @@ waitForQ :: IO ()
 waitForQ = do
   Term.Event{Term.typ, Term.ch} <- Term.pollEvent
   unless (typ == Term.eventKey
-       && ch == fromIntegral (fromEnum 'q')) $ waitForQ
+       && ch == fromIntegral (fromEnum 'q')) waitForQ
 
 -- | Render error popup centered on screen, returns on 'q' press.
 -- Callers like Tv.Source.runList may invoke this before Term.init —

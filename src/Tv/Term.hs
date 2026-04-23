@@ -16,19 +16,18 @@ module Tv.Term
     -- modifiers
   , modAlt, modCtrl, modShift
     -- ctrl codes
-  , ctrlD, ctrlI, ctrlU
+  , ctrlI, ctrlU
     -- colors / attributes
-  , parseColor, underline
+  , parseColor
     -- event record
   , Event(..)
     -- tty / lifecycle
   , isattyStdin, reopenTty, init, inited, shutdown
     -- screen
   , width, height, clear, present, pollEvent, waitEventTimeout
-  , invalidate, checkViewChange
+  , invalidate
   , toEvent, toEvents, bufferStr
   , padC, renderTable, print
-  , _setScreenBufSize
   ) where
 
 -- $setup
@@ -93,8 +92,7 @@ modCtrl  = 2
 modShift = 4
 
 -- | Ctrl+letter codes (Ctrl+A=1, Ctrl+B=2, ...)
-ctrlD, ctrlI, ctrlU :: Word32
-ctrlD = 4   -- Ctrl+D (page down)
+ctrlI, ctrlU :: Word32
 ctrlI = 9   -- Ctrl+I = Tab
 ctrlU = 21  -- Ctrl+U (page up)
 
@@ -152,10 +150,6 @@ colorMap =
 -- 0
 parseColor :: Text -> Word32
 parseColor s = HM.lookupDefault 0 s colorMap
-
--- | Attributes (OR with color)
-underline :: Word32
-underline = 0x02000000
 
 -- | Terminal event from poll
 data Event = Event
@@ -375,9 +369,6 @@ allocBufs w h = do
   writeIORef screenBuf (w, h, buf)
   writeIORef frontBuf front
 
-_setScreenBufSize :: Int -> Int -> IO ()
-_setScreenBufSize = allocBufs
-
 -- | Front buffer also resets on dim change — the diff in `present` indexes
 -- by (w, h) that'd be invalid otherwise, forcing a full repaint.
 syncSize :: IO ()
@@ -408,24 +399,6 @@ invalidate = do
 -- | Cell value that can't collide with anything a renderer emits.
 dirtyCell :: Cell
 dirtyCell = Cell 0xFFFF 0 0
-
--- | Track the last-rendered view key (path + vkind string) and fire
--- 'invalidate' when it changes. Lets callers cheaply guard against
--- cross-view residue without threading a "previous state" around.
-lastViewKey :: IORef Text
-lastViewKey = unsafePerformIO (newIORef "")
-{-# NOINLINE lastViewKey #-}
-
--- | Call from the render path with a stable identity for the current
--- view ('path|vkind' works). Triggers 'invalidate' on change, so the
--- next present emits every cell (including blanks) and cleans up any
--- residue left by the prior view's paint footprint.
-checkViewChange :: Text -> IO ()
-checkViewChange k = do
-  prev <- readIORef lastViewKey
-  when (prev /= k) $ do
-    invalidate
-    writeIORef lastViewKey k
 
 -- | Fold state for `present`: last emitted style, last cursor position,
 -- and the accumulated output Builder. Strict fields keep the builder

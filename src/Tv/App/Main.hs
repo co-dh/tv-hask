@@ -13,7 +13,9 @@ module Tv.App.Main
   ) where
 
 import Tv.Prelude
+import Optics.Core ((?~))
 import Control.Exception (SomeException, fromException, try)
+import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -90,11 +92,11 @@ parseArgs args0 =
                            & #prql .~ prql_ & #script .~ script_
       cli = case args4 of
         ("-c" : k : _)        -> base & #keys .~ toK k & #test .~ True
-        (p : "-c" : k : _)    -> base & #path .~ Just p & #keys .~ toK k & #test .~ True
-        (p : _)               -> base & #path .~ Just p
+        (p : "-c" : k : _)    -> base & #path ?~ p & #keys .~ toK k & #test .~ True
+        (p : _)               -> base & #path ?~ p
         []                    -> base
   in case (cli ^. #path, prql_ >>= pathFromPrql) of
-       (Nothing, Just p) -> cli & #path .~ Just p
+       (Nothing, Just p) -> cli & #path ?~ p
        _                 -> cli
 
 -- | Extract `<path>` from a PRQL string that begins with `from \`<path>\``.
@@ -240,7 +242,7 @@ shellQuote s
   where
     safe c   = isAlphaNum c || c `elem` ("/._-:" :: String)
     dqSafe c = c `notElem` ("\"$`\\" :: String)
-    isAlphaNum c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+    isAlphaNum c = isAsciiLower c || isAsciiUpper c || isDigit c
 
 -- run from TSV string result
 runTsv
@@ -432,7 +434,7 @@ runEmit fmt rest = case emitOpt fmt of
     let cli0 = parseArgs rest
     prqlText <- case (cli0 ^. #prql, cli0 ^. #script) of
       (Just q, _)        -> pure (Just q)
-      (Nothing, Just f)  -> (Just . T.stripEnd) <$> TIO.readFile (T.unpack f)
+      (Nothing, Just f)  -> Just . T.stripEnd <$> TIO.readFile (T.unpack f)
       (Nothing, Nothing) -> pure Nothing
     let path_ = fromMaybe "" (cli0 ^. #path)
     when (T.null path_ && isNothing prqlText) $ do
@@ -565,12 +567,12 @@ appMainInteractive args = do
     (Just q, _)       -> pure (Just q)
     -- Strip trailing whitespace; PRQL's parser is intolerant of a
     -- terminating newline / blank line at EOF.
-    (Nothing, Just f) -> (Just . T.stripEnd) <$> TIO.readFile (T.unpack f)
+    (Nothing, Just f) -> Just . T.stripEnd <$> TIO.readFile (T.unpack f)
     (Nothing, Nothing) -> pure Nothing
   let cli = cli0 & #prql .~ prql_
         -- re-extract path from the file's from-clause if -f provided one
         & (\c -> case (c ^. #path, prql_ >>= pathFromPrql) of
-                   (Nothing, Just p) -> c & #path .~ Just p
+                   (Nothing, Just p) -> c & #path ?~ p
                    _                 -> c)
       CliArgs { path = path_, keys = keys_, noSign = noSign_ } = cli
   envTest  <- isJust <$> lookupEnv "TV_TEST_MODE"

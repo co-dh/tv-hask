@@ -11,6 +11,7 @@ module Tv.Session where
 
 import Tv.Prelude
 import Control.Exception (SomeException, try)
+import Data.Bifunctor (first)
 import Data.Aeson (Value(..))
 import qualified Data.Aeson as A
 import qualified Data.Aeson.Encoding as E
@@ -92,7 +93,7 @@ opToJ op = case op of
     mkObj [("type", String "take"), ("n", Number (fromIntegral n))]
   where
     mkObj :: [(Text, Value)] -> Value
-    mkObj ps = Object (KM.fromList (map (\(k,v) -> (K.fromText k, v)) ps))
+    mkObj ps = Object (KM.fromList (map (first K.fromText) ps))
     textArrJson :: Vector Text -> Value
     textArrJson v = Array (V.map String v)
     sortColsJson :: Vector (Text, Bool) -> Value
@@ -114,14 +115,14 @@ vkToJ vk = case vk of
     mkObj [("kind", String "fld"), ("path", String path_), ("depth", Number (fromIntegral depth))]
   where
     mkObj :: [(Text, Value)] -> Value
-    mkObj ps = Object (KM.fromList (map (\(k,v) -> (K.fromText k, v)) ps))
+    mkObj ps = Object (KM.fromList (map (first K.fromText) ps))
 
 -- ## Serialization: View → JSON
 
 -- Encode a View as a JSON Encoding (ordered, matching Lean byte-for-byte).
 viewEncoding :: View AdbcTable -> E.Encoding
 viewEncoding v =
-  let q = ((v ^. #nav) ^. #tbl % #query)
+  let q = v ^. #nav % #tbl % #query
       searchEnc = maybe E.null_
         (\(i, s) -> E.pairs (E.pair "col" (E.int i) <> E.pair "val" (E.text s)))
         (v ^. #search)
