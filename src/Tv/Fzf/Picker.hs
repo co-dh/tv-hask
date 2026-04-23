@@ -88,8 +88,8 @@ runPicker opts@PickerOpts{items, header, initial} = do
       boxW    = max 40 (min (sw - 2) ((sw * 7) `div` 10))
       rowsN   = V.length its
       listH   = min 12 (max 1 rowsN)
-      boxH    = listH + 3 + (if hasHdr then 1 else 0)
-                -- 3 = top border + prompt + bottom border
+      boxH    = listH + 4 + (if hasHdr then 1 else 0)
+                -- 4 = top border + prompt + count line + bottom border
       boxX    = max 0 ((sw - boxW) `div` 2)
       boxY    = max 0 ((sh - boxH) `div` 2)
       box     = Box { bx = boxX, by = boxY, bw = boxW, bh = boxH }
@@ -232,7 +232,7 @@ computeMatches q its
 -- Rendering --------------------------------------------------------------
 
 listRows :: PickerState -> Int
-listRows st = (st ^. #psBox % #bh) - 3  -- minus top border, prompt, bottom border
+listRows st = (st ^. #psBox % #bh) - 4  -- minus top border, prompt, count, bottom border
 
 -- | Strip the index field for display when 'withNth' is True.
 display :: Bool -> Text -> Text
@@ -241,17 +241,18 @@ display True line = case T.splitOn "\t" line of
   _        -> line
 display False line = line
 
--- | Draw the whole popup — border, prompt, optional header, item rows —
--- into the cell buffer and flush. Colours are hardcoded (not theme-driven)
--- so the popup looks consistent across themes and so this module can stay
--- independent of 'Tv.Theme' (Theme imports Fzf, which would create a
--- module cycle).
+-- | Draw the whole popup — border, prompt, count line, optional header,
+-- item rows — into the cell buffer and flush. Colours are hardcoded
+-- (not theme-driven) so the popup looks consistent across themes and so
+-- this module can stay independent of 'Tv.Theme' (Theme imports Fzf,
+-- which would create a module cycle).
 --
 -- Layout:
 --   row 0                 top border      ┌────────────┐
 --   row 1                 prompt          │> query     │
---   row 2 (optional)      header          │header      │
---   row 2+ … bh-2         item rows       │> item …    │
+--   row 2                 counts          │  3/100     │
+--   row 3 (optional)      header          │header      │
+--   row 3+ … bh-2         item rows       │> item …    │
 --   row bh-1              bottom border   └────────────┘
 drawFrame :: PickerOpts -> PickerState -> IO ()
 drawFrame opts st = do
@@ -259,13 +260,18 @@ drawFrame opts st = do
       hasHdr   = not (T.null (opts ^. #header))
       innerW   = bw - 2
       promptY  = by + 1
-      hdrY     = by + 2
-      firstRow = by + 2 + (if hasHdr then 1 else 0)
-      nRows    = bh - 3 - (if hasHdr then 1 else 0)
+      countY   = by + 2
+      hdrY     = by + 3
+      firstRow = by + 3 + (if hasHdr then 1 else 0)
+      nRows    = bh - 4 - (if hasHdr then 1 else 0)
       scroll   = scrollOff (st ^. #psCur) nRows
       promptLn = (opts ^. #prompt) <> (st ^. #psQuery)
+      total    = V.length (opts ^. #items)
+      matched  = V.length (st ^. #psMatch)
+      countLn  = "  " <> T.pack (show matched) <> "/" <> T.pack (show total)
   drawBorder bx by bw bh
   drawLine bx promptY innerW promptLn fgPrompt bgPanel
+  drawLine bx countY  innerW countLn  fgHdr    bgPanel
   when hasHdr $
     drawLine bx hdrY innerW (opts ^. #header) fgHdr bgPanel
   forM_ [0 .. nRows - 1] $ \r -> do
