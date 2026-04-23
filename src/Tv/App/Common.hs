@@ -28,7 +28,7 @@ import qualified Tv.Sparkline as Sparkline
 import qualified Tv.StatusAgg as StatusAgg
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
-import Tv.Types (Cmd(..), ColCache(..), ViewKind(..), toString, noEffect)
+import Tv.Types (Cmd(..), ColCache(..), ViewKind(..), toString, toggle, noEffect)
 import qualified Tv.UI as UI
 import qualified Tv.Util as Log
 import qualified Tv.Socket as Socket
@@ -148,6 +148,13 @@ localCmds = V.fromList
   , hdl (mkEntry CmdPrecInc   ""  ""   "Increase decimal precision"         False "") (precAdj 1)
   , hdl (mkEntry CmdPrecZero  ""  ""   "Set precision to 0 decimals"        False "") (precSet 0)
   , hdl (mkEntry CmdPrecMax   ""  ""   "Set precision to max (17)"          False "") (precSet 17)
+  , hdl (mkEntry CmdPrecCommas ""  ""   "Toggle thousand separators (all int cols)" False "")
+        (\a _ _ -> pure $ ActOk $ a & #stk % #hd % #commas %~ not)
+  , hdl (mkEntry CmdPrecComma  ""  ""   "Toggle thousand separators (current col only)" False "")
+        (\a _ _ ->
+          let nav_ = View.cur (a ^. #stk) ^. #nav
+              name = Nav.colName nav_
+          in pure $ ActOk $ a & #stk % #hd % #commaFlip %~ (`toggle` name))
   , hdl (mkEntry CmdCellUp    ""  "{"  "Scroll cell preview up"             False "")
         (\a _ _ -> pure $ ActOk $ a & #prevScroll %~ (\p -> p - min p 5))
   , hdl (mkEntry CmdCellDn    ""  "}"  "Scroll cell preview down"           False "")

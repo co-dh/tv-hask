@@ -48,6 +48,8 @@ data View t = View
   , vkind    :: ViewKind               -- default VkTbl
   , disp     :: Text                   -- custom display name (overrides filename)
   , prec     :: Int                    -- float decimal count (0-17)
+  , commas   :: Bool                   -- global thousand separators on int cells
+  , commaFlip:: Vector Text             -- column names whose comma setting is flipped from `commas`
   , widthAdj :: Int                    -- width adjustment offset (-=narrower, +=wider)
   , widths   :: Vector Int             -- cached column widths (per-view for type safety)
   , search   :: Maybe (Int, Text)      -- last search: (colIdx, value)
@@ -65,6 +67,8 @@ new nav_ path_ = View
   , vkind    = VkTbl
   , disp     = ""
   , prec     = 3
+  , commas   = True
+  , commaFlip= V.empty
   , widthAdj = 0
   , widths   = V.empty
   , search   = Nothing
@@ -110,7 +114,7 @@ doRender v vs styles heatMode sparklines = do
   -- regardless of the AppState toggle.
   let heatMode' = if (v ^. #vkind) == VkCorr then 1 else heatMode
   (vs', widths_) <-
-    Render.render (v ^. #nav) vs (v ^. #widths) styles (v ^. #prec) (v ^. #widthAdj)
+    Render.render (v ^. #nav) vs (v ^. #widths) styles (v ^. #prec) (v ^. #commas) (v ^. #commaFlip) (v ^. #widthAdj)
       (v ^. #vkind) heatMode' sparklines extraHidden
   pure (vs', v & #widths .~ widths_)
 

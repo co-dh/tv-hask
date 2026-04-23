@@ -175,15 +175,18 @@ fmtIntComma v
                            in h <> "," <> addCommas rest
 
 -- | Format a single cell for display, given a pre-resolved 'ColumnView'
--- and the local row offset. Dispatches on column type.
-formatCellFromCV :: DB.ColumnView -> Int -> Int -> Tc.ColType -> T.Text
-formatCellFromCV cv local prec_ typ = case typ of
-  Tc.ColTypeInt     -> maybe "" fmtIntComma (DB.cellInt cv local)
+-- and the local row offset. Dispatches on column type. @commas_@ toggles
+-- thousand separators on integer cells (off for identifier-like columns
+-- such as PIDs, UIDs, ports).
+formatCellFromCV :: DB.ColumnView -> Int -> Int -> Bool -> Tc.ColType -> T.Text
+formatCellFromCV cv local prec_ commas_ typ = case typ of
+  Tc.ColTypeInt     -> maybe "" fmtInt (DB.cellInt cv local)
   Tc.ColTypeBool    -> maybe "" boolStr (DB.cellInt cv local)
   Tc.ColTypeFloat   -> maybe "" fmtFloat (DB.cellDbl cv local)
   Tc.ColTypeDecimal -> maybe "" fmtFloat (DB.cellDbl cv local)
   _                 -> DB.cellAny cv local
   where
+    fmtInt n   = if commas_ then fmtIntComma n else T.pack (show n)
     fmtFloat f = if isNaN f then "" else T.pack (showFFloat (Just prec_) f "")
     boolStr 0  = "false"
     boolStr _  = "true"
@@ -196,18 +199,20 @@ formatCellFromCV cv local prec_ typ = case typ of
 -- was dominant (4 safe ccalls per cellRead × N cells); this drops it
 -- to 4 safe ccalls per (chunk, column). Typical visible windows
 -- (≤ 1000 rows) live in one chunk, so the cross-chunk loop runs once.
-fetchRows :: QueryResult -> Int -> Int -> Int -> IO (V.Vector (V.Vector T.Text))
-fetchRows qr r0 r1 prec_ = do
+fetchRows :: QueryResult -> Int -> Int -> Int -> V.Vector Bool -> IO (V.Vector (V.Vector T.Text))
+fetchRows qr r0 r1 prec_ commasPC = do
   let nc = V.length (qr ^. #colNames)
       types = qr ^. #colTypes
   if r1 <= r0
     then pure (V.replicate nc V.empty)
     else V.generateM nc $ \c -> do
       let typ = if c < V.length types then types V.! c else Tc.ColTypeOther
+          -- Default to commas-on when the per-col vec is shorter than nc.
+          commas_ = if c < V.length commasPC then commasPC V.! c else True
       -- Resolve chunks for this column once; then batch-format inside each.
       withChunkRuns qr r0 r1 $ \ch local n ->
         let cv = DB.chunkColumn ch (fromIntegral c)
-        in pure $ V.generate n $ \i -> formatCellFromCV cv (local + i) prec_ typ
+        in pure $ V.generate n $ \i -> formatCellFromCV cv (local + i) prec_ commas_ typ
 
 -- | Fetch raw doubles for heat mode. NaN for non-numeric or null cells.
 -- Non-numeric columns short-circuit to an empty Vector (the renderer's

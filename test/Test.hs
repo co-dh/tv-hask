@@ -15,10 +15,10 @@ import qualified Data.Text.IO as TIO
 import qualified Data.Vector as V
 import System.Directory (copyFile, createDirectoryIfMissing, removeFile, getCurrentDirectory)
 import System.FilePath (takeBaseName, takeExtension)
-import System.Environment (lookupEnv)
+import System.Environment (getEnvironment, lookupEnv)
 import System.Exit (ExitCode (..))
 import System.IO.Unsafe (unsafePerformIO)
-import System.Process (readProcessWithExitCode, proc, createProcess, CreateProcess(..), StdStream(..), waitForProcess, ProcessHandle, terminateProcess)
+import System.Process (readProcessWithExitCode, readCreateProcessWithExitCode, proc, createProcess, CreateProcess(..), StdStream(..), waitForProcess, ProcessHandle, terminateProcess)
 import System.IO (Handle, hGetContents)
 
 import Test.Tasty (TestTree, testGroup)
@@ -1143,6 +1143,41 @@ test_osquery_sort_enter = do
       assert (contains tab "osquery://") "sort+enter: osquery tab still visible"
       assert (not (contains out "safety")) "sort+enter: opened table, not listing"
 
+-- prec.commas toggles thousand separators globally; prec.comma
+-- toggles them for the current column only. TV_CMD invokes a named
+-- command through the space menu override.
+runTvCmd :: String -> Text -> FilePath -> IO Text
+runTvCmd cmd keys file = do
+  parentEnv <- getEnvironment
+  let envOverride = ("TV_CMD", cmd) : filter ((/= "TV_CMD") . fst) parentEnv
+      args = [file, "-c", T.unpack keys]
+      cp = (proc tvHaskBin args) { env = Just envOverride }
+  (_, out, _) <- readCreateProcessWithExitCode cp ""
+  pure (T.pack out)
+
+commasFixture :: FilePath -> IO FilePath
+commasFixture name = do
+  p <- Tmp.threadPath name
+  writeFile p "id,amount\n1000000,1500000\n2000000,2500000\n"
+  pure p
+
+test_prec_comma_global :: Assertion
+test_prec_comma_global = do
+  p <- commasFixture "commas_global.csv"
+  on_ <- run "" p
+  assert (contains on_ "1,000,000") "commas on by default"
+  off_ <- runTvCmd "prec.commas" " " p
+  assert (contains off_ "1000000") "prec.commas strips commas"
+  assert (not (contains off_ "1,000,000")) "prec.commas: no commas anywhere"
+
+test_prec_comma_col :: Assertion
+test_prec_comma_col = do
+  -- cursor on 'id' (col 0); toggle → id raw, amount still has commas
+  p <- commasFixture "commas_col.csv"
+  out <- runTvCmd "prec.comma" " " p
+  assert (contains out "1000000")  "id col loses commas"
+  assert (contains out "1,500,000") "amount col keeps commas"
+
 -- When osqueryi is not installed, `tv osquery://` must not crash with a
 -- raw DuckDB "database does not exist" message — the user needs a clear
 -- pointer to the missing dependency.
@@ -1394,6 +1429,8 @@ ciTests = testGroup "ci"
   , testCase "session_missing" test_session_missing
   , testCase "diff" test_diff
   , testCase "diff_show_same" test_diff_show_same
+  , testCase "prec_comma_global" test_prec_comma_global
+  , testCase "prec_comma_col" test_prec_comma_col
   , testCase "plot_key_dispatch" test_plot_key_dispatch
   , testCase "plot_export_string_col" test_plot_export_string_col
   , testCase "plot_export_data" test_plot_export_data

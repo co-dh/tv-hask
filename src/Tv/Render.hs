@@ -51,8 +51,8 @@ visRows = 200
 
 -- | Fetch rows from AdbcTable and render via renderCols
 renderView :: AdbcTable -> RenderCtx -> IO (Vector Int)
-renderView t ctx@RenderCtx{r0, r1, prec, heatMode} = do
-  texts <- Conn.fetchRows (t ^. #qr) r0 r1 prec
+renderView t ctx@RenderCtx{r0, r1, prec, commasPerCol, heatMode} = do
+  texts <- Conn.fetchRows (t ^. #qr) r0 r1 prec commasPerCol
   heatDs <- if heatMode == 0
     then pure V.empty
     else Conn.fetchHeatDoubles (t ^. #qr) r0 r1
@@ -99,10 +99,10 @@ renderCols texts names fmts colTypes totalRows RenderCtx{..} r0_ nVisible heatDs
 -- Calls renderView with NavState fields unpacked
 render
   :: NavState AdbcTable -> ViewState -> Vector Int
-  -> Vector Word32 -> Int -> Int
+  -> Vector Word32 -> Int -> Bool -> Vector Text -> Int
   -> ViewKind -> Word8 -> Vector Text -> Vector Int
   -> IO (ViewState, Vector Int)
-render nav ViewState{rowOff, lastCol} inWidths_ styles_ prec_ widthAdj_ vkind heatMode_ sparklines_ extraHidden = do
+render nav ViewState{rowOff, lastCol} inWidths_ styles_ prec_ commas_ commaFlip_ widthAdj_ vkind heatMode_ sparklines_ extraHidden = do
   Term.clear
   h <- Term.height
   w <- Term.width
@@ -115,6 +115,9 @@ render nav ViewState{rowOff, lastCol} inWidths_ styles_ prec_ widthAdj_ vkind he
         else if curColIdx_ < lastCol then -1
         else 0
   let nRows_ = nav ^. #tbl % #nRows
+  -- Comma display per column: global `commas_` flipped for names in commaFlip_.
+  let commasPC = V.map (\n -> if V.elem n commaFlip_ then not commas_ else commas_)
+                       (nav ^. #tblNames)
   let ctx = RenderCtx
         { inWidths   = inWidths_
         , dispIdxs   = nav ^. #dispIdxs
@@ -129,6 +132,7 @@ render nav ViewState{rowOff, lastCol} inWidths_ styles_ prec_ widthAdj_ vkind he
         , hiddenIdxs = Nav.hiddenIdxs nav V.++ extraHidden
         , styles     = styles_
         , prec       = prec_
+        , commasPerCol = commasPC
         , widthAdj   = widthAdj_
         , heatMode   = heatMode_
         , sparklines = sparklines_

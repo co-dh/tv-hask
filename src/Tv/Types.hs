@@ -158,6 +158,7 @@ data RenderCtx = RenderCtx
   , hiddenIdxs :: Vector Int
   , styles     :: Vector Word32
   , prec       :: Int
+  , commasPerCol :: Vector Bool
   , widthAdj   :: Int
   , heatMode   :: Word8  -- 0=off, 1=numeric, 2=categorical, 3=both
   , sparklines :: Vector Text
@@ -501,6 +502,8 @@ data Cmd
   | CmdPrecInc
   | CmdPrecZero
   | CmdPrecMax
+  | CmdPrecCommas
+  | CmdPrecComma
   | CmdCellUp
   | CmdCellDn
   | CmdCellYank
@@ -588,6 +591,8 @@ instance StrEnum Cmd where
   toString CmdPrecInc        = "prec.inc"
   toString CmdPrecZero       = "prec.zero"
   toString CmdPrecMax        = "prec.max"
+  toString CmdPrecCommas     = "prec.commas"
+  toString CmdPrecComma      = "prec.comma"
   toString CmdCellUp         = "cell.up"
   toString CmdCellDn         = "cell.dn"
   toString CmdCellYank       = "cell.yank"
@@ -630,7 +635,7 @@ instance StrEnum Cmd where
     , CmdPlotVol, CmdPlotQQ, CmdPlotBB, CmdPlotCandle
     , CmdTblMenu, CmdStkSwap, CmdStkPop, CmdStkDup, CmdTblQuit, CmdTblXpose
     , CmdTblDiff, CmdInfoTog
-    , CmdPrecDec, CmdPrecInc, CmdPrecZero, CmdPrecMax
+    , CmdPrecDec, CmdPrecInc, CmdPrecZero, CmdPrecMax, CmdPrecCommas, CmdPrecComma
     , CmdCellUp, CmdCellDn, CmdCellYank, CmdHeat0, CmdHeat1, CmdHeat2, CmdHeat3
     , CmdMetaPush, CmdMetaSetKey, CmdMetaSelNull, CmdMetaSelSingle, CmdMetaStats, CmdMetaCorr
     , CmdSample, CmdDupes, CmdCrosstab

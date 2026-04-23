@@ -137,6 +137,8 @@ viewEncoding v =
       <> E.pair "vkind"    (E.value (vkToJ (v ^. #vkind)))
       <> E.pair "disp"     (E.text (v ^. #disp))
       <> E.pair "prec"     (E.int (v ^. #prec))
+      <> E.pair "commas"   (E.bool (v ^. #commas))
+      <> E.pair "commaFlip" (E.list E.text (V.toList (v ^. #commaFlip)))
       <> E.pair "widthAdj" (E.int (v ^. #widthAdj))
       <> E.pair "row"      (E.int (n ^. #row % #cur))
       <> E.pair "col"      (E.int (n ^. #col % #cur))
@@ -221,6 +223,8 @@ applyFields tbl j path_ vkind_ =
       pure $ v & #vkind    .~ vkind_
                & #disp     .~ (jd j "disp" "" :: Text)
                & #prec     .~ fromMaybe 3 (jdMaybe j "prec")
+               & #commas   .~ fromMaybe True (jdMaybe j "commas")
+               & #commaFlip .~ (jd j "commaFlip" V.empty :: Vector Text)
                & #widthAdj .~ (jd j "widthAdj" 0 :: Int)
                & #search   .~ search_
                & #nav      .~ nav'
