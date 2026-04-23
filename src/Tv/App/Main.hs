@@ -151,9 +151,12 @@ applyInitialPrql prqlOps v = do
     Nothing   -> pure Nothing
     Just tbl' -> pure (View.rebuild v tbl' 0 V.empty 0)
 
--- | After the session, print a CLI command that recreates a view from
--- the stack. Format: `tv <path> [-p '<prql>']`. The PRQL is the initial
--- -p (if any) concatenated with the ops added interactively.
+-- | After the session, print a recreate hint to stderr. Two lines:
+--
+--   * @# recreate: tv <path> [-p '<ops>']@ — copy-paste to rerun in tv;
+--   * @# prql:     from `<path>` | <ops>@ — same pipeline with the
+--     leading from-clause, so it can be pasted into prqlc / psql /
+--     anywhere else PRQL is accepted.
 --
 -- Only VkTbl views are scriptable (their query.base is `from <path>`).
 -- Derived views (Freq, Meta, …) live on top of a temp table whose name
@@ -179,10 +182,13 @@ printScriptCmd initialPrql a =
                        (False, False) -> pre <> " | " <> ops
              cmd = "tv " <> shellQuote p
                 <> if T.null prql_ then "" else " -p " <> shellQuote prql_
-         -- Stderr so the recreate hint stays out of any pipe consuming
-         -- tv's table dump on stdout. Terminals merge stderr to the
-         -- screen, so users still see the line.
+             fullPrql = "from `" <> p <> "`"
+                     <> if T.null prql_ then "" else " | " <> prql_
+         -- Stderr so the hint stays out of any pipe consuming tv's
+         -- table dump on stdout. Terminals merge stderr to the screen,
+         -- so users still see both lines.
          TIO.hPutStrLn stderr ("# recreate: " <> cmd)
+         TIO.hPutStrLn stderr ("# prql:     " <> fullPrql)
        Nothing -> pure ()
 
 -- | Quote a value for the shell. Three tiers, picked to keep PRQL

@@ -255,11 +255,14 @@ Two pieces let you replay or share a tv session as a single shell command:
   appended to the loaded table's `from <path>` and re-executed before the
   TUI starts.
 
-- **`# recreate: …` line**: when tv exits, it prints to **stderr** a
-  one-line CLI command that recreates the top view. The PRQL combines the
-  initial `-p` (if any) with every interactive op (filter, sort, derive,
-  hide, …) added during the session. Stderr keeps the line out of any
-  stdout pipe consuming the table dump.
+- **Two-line exit hint**: when tv exits, it prints to **stderr**:
+  - `# recreate: tv <path> -p '<ops>'` — copy-paste to rerun in tv;
+  - `# prql: from <path> | <ops>` — the same pipeline with a leading
+    from-clause, ready to paste into prqlc / psql / any PRQL-aware tool.
+
+  The PRQL combines the initial `-p` (if any) with every interactive op
+  (filter, sort, derive, hide, …) added during the session. Stderr
+  keeps both lines out of any stdout pipe consuming the table dump.
 
 Quoting: tv prefers double quotes for the PRQL value (cleaner for the
 common case `filter x > 1`) and falls back to single quotes when the
@@ -273,6 +276,7 @@ Example session:
 $ tv data/full.csv -p 'filter score > 80 | sort name'
 ... interactive table view ...
 # recreate: tv data/full.csv -p "filter score > 80 | sort name"
+# prql:     from `data/full.csv` | filter score > 80 | sort name
 ```
 
 Sort interactively, exit with `q`:
@@ -280,6 +284,7 @@ Sort interactively, exit with `q`:
 ```bash
 $ tv data/full.csv         # press [ to sort ascending, then q
 # recreate: tv data/full.csv -p 'sort {this.`name`}'
+# prql:     from `data/full.csv` | sort {this.`name`}
 ```
 
 Press `Q` (capital) to quit without popping the stack — the recreate
