@@ -188,21 +188,26 @@ test_script_print_after_sort = do
 
 -- `-p "filter ..."` must (a) actually filter the rows on stdout and
 -- (b) round-trip back into the printed recreate command on stderr.
+-- The PRQL `filter score > 80` has no $/`/\\/" so shellQuote picks
+-- double quotes (cleaner than single+escape).
 test_script_p_flag_filters :: Assertion
 test_script_p_flag_filters = do
   out <- runHask    "" "data/full.csv" ["-p", "filter score > 80"]
   err <- runHaskErr "" "data/full.csv" ["-p", "filter score > 80"]
   assert (contains out "r0/3")
          ("expected -p filter to drop to 3 rows; got: " ++ show (T.takeEnd 300 out))
-  assert (contains err "# recreate: tv data/full.csv -p 'filter score > 80'")
-         ("expected recreate to round-trip -p; got: " ++ show err)
+  assert (contains err "# recreate: tv data/full.csv -p \"filter score > 80\"")
+         ("expected recreate to round-trip -p in double quotes; got: " ++ show err)
 
 -- Initial -p + interactive op should be combined with " | " in the recreate.
+-- The interactive sort op renders with backticks (`{this.\`name\`}`),
+-- which trip command substitution in double quotes — falls back to
+-- single quotes for the whole pipeline.
 test_script_combines_p_and_ops :: Assertion
 test_script_combines_p_and_ops = do
   err <- runHaskErr "[" "data/full.csv" ["-p", "filter score > 80"]
   assert (contains err "# recreate: tv data/full.csv -p 'filter score > 80 |")
-         ("expected combined -p | sort; got: " ++ show err)
+         ("expected combined -p | sort fallback to single quotes; got: " ++ show err)
 
 -- Q (capital) quits the app immediately without popping the stack.
 -- Recreate falls through to the deepest VkTbl when top is derived.

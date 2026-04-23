@@ -185,13 +185,22 @@ printScriptCmd initialPrql a =
          TIO.hPutStrLn stderr ("# recreate: " <> cmd)
        Nothing -> pure ()
 
--- | Single-quote a value for the shell, escaping embedded quotes.
+-- | Quote a value for the shell. Three tiers, picked to keep PRQL
+-- pipelines readable when copy-pasted:
+--   * all-safe chars → no quotes;
+--   * no $/`/\\/" → double quotes (so PRQL's `name == 'foo'` reads
+--     plainly without `'\\''` noise);
+--   * otherwise → single quotes with the standard `'\\''` escape, so
+--     backticked column names like `sort {this.\`name\`}` stay literal.
 shellQuote :: Text -> Text
 shellQuote s
-  | T.all safe s = s
-  | otherwise    = "'" <> T.replace "'" "'\\''" s <> "'"
-  where safe c = isAlphaNum c || c `elem` ("/._-:" :: String)
-        isAlphaNum c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+  | T.all safe   s = s
+  | T.all dqSafe s = "\"" <> s <> "\""
+  | otherwise      = "'" <> T.replace "'" "'\\''" s <> "'"
+  where
+    safe c   = isAlphaNum c || c `elem` ("/._-:" :: String)
+    dqSafe c = c `notElem` ("\"$`\\" :: String)
+    isAlphaNum c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 
 -- run from TSV string result
 runTsv

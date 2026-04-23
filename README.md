@@ -261,12 +261,18 @@ Two pieces let you replay or share a tv session as a single shell command:
   hide, …) added during the session. Stderr keeps the line out of any
   stdout pipe consuming the table dump.
 
+Quoting: tv prefers double quotes for the PRQL value (cleaner for the
+common case `filter x > 1`) and falls back to single quotes when the
+pipeline contains a character double quotes can't safely hold (`$`,
+`` ` ``, `\`, `"`). Rendered ops with backticks like `sort {this.\`x\`}`
+land in single quotes for that reason.
+
 Example session:
 
 ```bash
 $ tv data/full.csv -p 'filter score > 80 | sort name'
 ... interactive table view ...
-# recreate: tv data/full.csv -p 'filter score > 80 | sort name'
+# recreate: tv data/full.csv -p "filter score > 80 | sort name"
 ```
 
 Sort interactively, exit with `q`:
@@ -276,8 +282,10 @@ $ tv data/full.csv         # press [ to sort ascending, then q
 # recreate: tv data/full.csv -p 'sort {this.`name`}'
 ```
 
-Skipped for derived views (Freq, Meta, …) whose query base is a temp
-table and isn't portable across CLI invocations.
+Press `Q` (capital) to quit without popping the stack — the recreate
+line walks down to the deepest table view and prints its accumulated
+ops. Useful when you've drilled into a Freq or Meta view and want the
+underlying pipeline back.
 
 ## Keybindings
 
