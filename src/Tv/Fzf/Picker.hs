@@ -148,9 +148,8 @@ readPalette = do
       matchFg = Theme.styleFg sty Theme.sPickerMatch
   pure Palette
     { fgBorder = panelFg, bgPanel = panelBg
-      -- brYellow (11) for the input region so it's visually distinct
-      -- from the item rows and the user can see what they're typing.
-    , fgPrompt = 11,      fgHdr   = panelFg
+    , fgPrompt = Term.parseColor "brYellow"
+    , fgHdr    = panelFg
     , fgRow    = panelFg
     , fgSel    = selFg,   bgSel   = selBg
     , fgMatch  = matchFg
@@ -181,7 +180,7 @@ toKey Term.Event{Term.typ, Term.keyCode, Term.ch}
   | ch == 0x0B                    = KCtrlK
   | ch == 0x0A                    = KCtrlJ
   | ch == 0x0D                    = KEnter
-  | ch == 0x09                    = KTab
+  | ch == Term.ctrlI              = KTab
   | ch /= 0                       = KChar (chr (fromIntegral ch))
   | otherwise                     = KIgnore
 
@@ -214,16 +213,19 @@ dropLast t = if T.null t then t else T.init t
 
 -- | Handle a query change: re-filter, reset highlight, redraw, fire
 -- onFocus only if the top match changed so a no-op query update doesn't
--- re-trigger the caller's live preview.
+-- re-trigger the caller's live preview. Skip the whole pipeline if the
+-- query didn't change (Tab on a row whose text already matches the query).
 typed :: PickerOpts -> PickerState -> Text -> IO PickerState
-typed opts st q' = do
-  let ms'     = computeMatches q' (opts ^. #items)
-      st'     = st { psQuery = q', psMatch = ms', psCur = 0 }
-      prevTop = (\(i,_,_) -> i) <$> ((st ^. #psMatch) V.!? (st ^. #psCur))
-      newTop  = (\(i,_,_) -> i) <$> (ms' V.!? 0)
-  drawFrame opts st'
-  when (prevTop /= newTop) (fireFocus opts st')
-  pure st'
+typed opts st q'
+  | q' == st ^. #psQuery = pure st
+  | otherwise = do
+      let ms'     = computeMatches q' (opts ^. #items)
+          st'     = st { psQuery = q', psMatch = ms', psCur = 0 }
+          prevTop = (\(i,_,_) -> i) <$> ((st ^. #psMatch) V.!? (st ^. #psCur))
+          newTop  = (\(i,_,_) -> i) <$> (ms' V.!? 0)
+      drawFrame opts st'
+      when (prevTop /= newTop) (fireFocus opts st')
+      pure st'
 
 moveCur :: PickerOpts -> PickerState -> Int -> IO PickerState
 moveCur opts st d = setCur opts st (st ^. #psCur + d)
