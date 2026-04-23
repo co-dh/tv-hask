@@ -31,6 +31,7 @@ module Tv.Types
   , filterPrompt
   , exprError
   , isPrqlKeyword
+  , colRef
   , colText
     -- * Agg
   , Agg(..)
@@ -51,6 +52,7 @@ module Tv.Types
 import Tv.Prelude
 import qualified Data.Aeson as A
 import qualified Data.Aeson.Types as A
+import Data.Char (isAlpha, isAlphaNum)
 import qualified Data.Text as T
 import qualified Data.Vector as V
 import Optics.TH (makeFieldLabelsNoPrefix)
@@ -211,21 +213,38 @@ numType t = isNumeric (ofString t)
 -- use @this.col@ so a copy-paste works without tripping the parser.
 filterPrompt :: Text -> Text -> Text
 filterPrompt col typ =
-  let c = if isPrqlKeyword col then "this." <> col else col
+  let c = colRef col
       eg = if numType typ
              then c <> " == null,  " <> c <> " > 5 && " <> c <> " < 10"
              else c <> " == null,  " <> c <> " ~= 'pat'"
   in "e.g. " <> eg
 
--- | Column names that clash with a PRQL keyword or std module — bare
--- references to these would resolve to the builtin instead of the row
+-- | Render a column reference for *user-facing* expression text (filter
+-- examples, prompts). Bare name when safe; @this.`name`@ when the name
+-- is a PRQL keyword/std module or contains chars not valid in a bare
+-- identifier (spaces, dots, hyphens, leading digit, …).
+colRef :: Text -> Text
+colRef c
+  | isPrqlKeyword c || not (identSafe c) = "this.`" <> c <> "`"
+  | otherwise                            = c
+  where
+    identSafe s = case T.uncons s of
+      Nothing     -> False
+      Just (h, t) -> (isAlpha h || h == '_') && T.all (\x -> isAlphaNum x || x == '_') t
+
+-- | Column names that clash with a PRQL keyword, std module, or type
+-- primitive — bare references resolve to the builtin instead of the row
 -- column. Users hitting one of these should prefix with @this.@.
+-- Source: prql-lang.org/book/reference/syntax/keywords.html plus the
+-- std modules ('math', 'text', 'date') and type primitives. Transforms
+-- ('from', 'filter', …) are *not* keywords in PRQL — they're functions
+-- in std and can be shadowed by columns, so they don't need 'this.'.
 isPrqlKeyword :: Text -> Bool
 isPrqlKeyword c = c `elem`
-  [ "date", "text", "math", "time", "std", "case"
-  , "from", "filter", "sort", "select", "derive", "group", "take"
-  , "aggregate", "join", "append", "remove", "uniq"
-  , "true", "false", "null", "this"
+  [ "prql", "let", "into", "case", "type", "func", "module", "internal"
+  , "true", "false", "null", "this", "that"
+  , "math", "text", "date", "time", "timestamp", "std"
+  , "bool", "int", "float"
   ]
 
 -- | Lint a user-entered filter/derive expression and return a

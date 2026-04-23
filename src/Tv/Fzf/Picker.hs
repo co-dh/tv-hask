@@ -103,8 +103,9 @@ runPicker opts@PickerOpts{items, header, initial} = do
       boxW    = max 40 (min (sw - 2) ((sw * 7) `div` 10))
       rowsN   = V.length its
       listH   = min 12 (max 1 rowsN)
-      boxH    = listH + 4 + (if hasHdr then 1 else 0)
-                -- 4 = top border + prompt + count line + bottom border
+      boxH    = listH + 3 + (if hasHdr then 1 else 0)
+                -- 3 = top border + prompt + bottom border (count is
+                -- embedded in the bottom border, no separate row).
       boxX    = max 0 ((sw - boxW) `div` 2)
       boxY    = max 0 ((sh - boxH) `div` 2)
       box     = Box { bx = boxX, by = boxY, bw = boxW, bh = boxH }
@@ -147,14 +148,16 @@ readPalette = do
       matchFg = Theme.styleFg sty Theme.sPickerMatch
   pure Palette
     { fgBorder = panelFg, bgPanel = panelBg
-    , fgPrompt = panelFg, fgHdr   = panelFg
+      -- brYellow (11) for the input region so it's visually distinct
+      -- from the item rows and the user can see what they're typing.
+    , fgPrompt = 11,      fgHdr   = panelFg
     , fgRow    = panelFg
     , fgSel    = selFg,   bgSel   = selBg
     , fgMatch  = matchFg
     }
 
 data Key
-  = KChar Char | KEnter | KEsc | KBackspace
+  = KChar Char | KEnter | KEsc | KBackspace | KTab
   | KUp | KDown | KHome | KEnd | KPgUp | KPgDn
   | KCtrlU | KCtrlK | KCtrlJ
   | KIgnore
@@ -178,6 +181,7 @@ toKey Term.Event{Term.typ, Term.keyCode, Term.ch}
   | ch == 0x0B                    = KCtrlK
   | ch == 0x0A                    = KCtrlJ
   | ch == 0x0D                    = KEnter
+  | ch == 0x09                    = KTab
   | ch /= 0                       = KChar (chr (fromIntegral ch))
   | otherwise                     = KIgnore
 
@@ -194,6 +198,7 @@ loop opts st = do
       KChar c    -> typed opts st (st ^. #psQuery <> T.singleton c) >>= loop opts
       KBackspace -> typed opts st (dropLast (st ^. #psQuery))       >>= loop opts
       KCtrlU     -> typed opts st ""                                >>= loop opts
+      KTab       -> typed opts st (currentDisplay opts st)          >>= loop opts
       KUp        -> moveCur opts st (-1)                            >>= loop opts
       KCtrlK     -> moveCur opts st (-1)                            >>= loop opts
       KDown      -> moveCur opts st 1                               >>= loop opts
@@ -251,6 +256,13 @@ selection opts st = case (st ^. #psMatch) V.!? (st ^. #psCur) of
     | opts ^. #printQuery -> st ^. #psQuery
     | otherwise           -> ""
 
+-- | Tab pulls the highlighted row's *displayed* text (with-nth applied)
+-- into the query box. If nothing is highlighted, the query is unchanged.
+currentDisplay :: PickerOpts -> PickerState -> Text
+currentDisplay opts st = case (st ^. #psMatch) V.!? (st ^. #psCur) of
+  Just (i, _, _) -> display (opts ^. #withNth) ((opts ^. #items) V.! i)
+  Nothing        -> st ^. #psQuery
+
 -- | Re-run fuzzy filter. Empty query → all items in original order.
 computeMatches :: Text -> Vector Text -> Vector (Int, Int, [Int])
 computeMatches q its
@@ -263,7 +275,7 @@ computeMatches q its
 -- Rendering --------------------------------------------------------------
 
 listRows :: PickerState -> Int
-listRows st = (st ^. #psBox % #bh) - 4  -- minus top border, prompt, count, bottom border
+listRows st = (st ^. #psBox % #bh) - 3  -- minus top border, prompt, bottom border
 
 -- | Strip the index field for display when 'withNth' is True.
 display :: Bool -> Text -> Text
@@ -272,18 +284,18 @@ display True line = case T.splitOn "\t" line of
   _        -> line
 display False line = line
 
--- | Draw the whole popup — border, prompt, count line, optional header,
--- item rows — into the cell buffer and flush. Colours come from the
--- active theme via 'readPalette' ('Theme.stylesRef'), read once per
--- frame. The Theme↔Fzf module cycle is broken with an hs-boot import.
+-- | Draw the whole popup — border (with embedded match-count on the
+-- bottom row), prompt, optional header, item rows — into the cell
+-- buffer and flush. Colours come from the active theme via 'readPalette'
+-- ('Theme.stylesRef'), read once per frame. The Theme↔Fzf module cycle
+-- is broken with an hs-boot import.
 --
 -- Layout:
 --   row 0                 top border      ┌────────────┐
 --   row 1                 prompt          │> query     │
---   row 2                 counts          │  3/100     │
---   row 3 (optional)      header          │header      │
---   row 3+ … bh-2         item rows       │> item …    │
---   row bh-1              bottom border   └────────────┘
+--   row 2 (optional)      header          │header      │
+--   row 2+ … bh-2         item rows       │> item …    │
+--   row bh-1              bottom border   └──── 3/100 ─┘
 drawFrame :: PickerOpts -> PickerState -> IO ()
 drawFrame opts st = do
   pal <- readPalette
@@ -291,18 +303,16 @@ drawFrame opts st = do
       hasHdr   = not (T.null (opts ^. #header))
       innerW   = bw - 2
       promptY  = by + 1
-      countY   = by + 2
-      hdrY     = by + 3
-      firstRow = by + 3 + (if hasHdr then 1 else 0)
-      nRows    = bh - 4 - (if hasHdr then 1 else 0)
+      hdrY     = by + 2
+      firstRow = by + 2 + (if hasHdr then 1 else 0)
+      nRows    = bh - 3 - (if hasHdr then 1 else 0)
       scroll   = scrollOff (st ^. #psCur) nRows
       promptLn = (opts ^. #prompt) <> (st ^. #psQuery)
       total    = V.length (opts ^. #items)
       matched  = V.length (st ^. #psMatch)
-      countLn  = "  " <> T.pack (show matched) <> "/" <> T.pack (show total)
-  drawBorder pal bx by bw bh
+      countTxt = T.pack (show matched) <> "/" <> T.pack (show total)
+  drawBorder pal bx by bw bh countTxt
   drawLine bx promptY innerW promptLn (pal ^. #fgPrompt) (pal ^. #bgPanel)
-  drawLine bx countY  innerW countLn  (pal ^. #fgHdr)    (pal ^. #bgPanel)
   when hasHdr $
     drawLine bx hdrY innerW (opts ^. #header) (pal ^. #fgHdr) (pal ^. #bgPanel)
   forM_ [0 .. nRows - 1] $ \r -> do
@@ -322,14 +332,15 @@ drawFrame opts st = do
                  fgLine bgLine (pal ^. #fgMatch) bgLine
   Term.present
 
--- | Render the outer frame.
-drawBorder :: Palette -> Int -> Int -> Int -> Int -> IO ()
-drawBorder pal x y w h = do
-  let innerW = w - 2
-      top    = "┌" <> T.replicate innerW "─" <> "┐"
-      bot    = "└" <> T.replicate innerW "─" <> "┘"
-      fg     = pal ^. #fgBorder
-      bg     = pal ^. #bgPanel
+-- | Render the outer frame. The bottom row has the matched/total count
+-- right-embedded as ── 3/100 ─┘ so we don't burn a whole row on it.
+drawBorder :: Palette -> Int -> Int -> Int -> Int -> Text -> IO ()
+drawBorder pal x y w h countTxt = do
+  let innerW   = w - 2
+      top      = "┌" <> T.replicate innerW "─" <> "┐"
+      bot      = bottomBorder innerW countTxt
+      fg       = pal ^. #fgBorder
+      bg       = pal ^. #bgPanel
   Term.padC (fromIntegral x) (fromIntegral y)
             (fromIntegral w) fg bg top 0
   Term.padC (fromIntegral x) (fromIntegral (y + h - 1))
@@ -340,6 +351,20 @@ drawBorder pal x y w h = do
               fg bg "│" 0
     Term.padC (fromIntegral (x + w - 1)) (fromIntegral (y + dy)) 1
               fg bg "│" 0
+
+-- | Bottom border with the count embedded near the right end:
+-- @└──────── 3/100 ─┘@. Falls back to a plain rule if the count
+-- doesn't fit (very narrow popups).
+bottomBorder :: Int -> Text -> Text
+bottomBorder innerW countTxt =
+  let w     = T.length countTxt + 2  -- spaces around the count
+      tail_ = 2                      -- trailing dashes
+  in if innerW < w + tail_ + 1
+       then "└" <> T.replicate innerW "─" <> "┘"
+       else
+         let fill = innerW - w - tail_
+         in "└" <> T.replicate fill "─" <> " " <> countTxt <> " "
+              <> T.replicate tail_ "─" <> "┘"
 
 -- | Draw a text row inside the frame (between the two side bars).
 drawLine :: Int -> Int -> Int -> Text -> Word32 -> Word32 -> IO ()

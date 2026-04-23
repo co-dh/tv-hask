@@ -23,7 +23,7 @@ import Tv.App.Types (HandlerFn, onStk, stackIO)
 import Tv.CmdConfig (Entry, mkEntry, hdl)
 import Tv.Nav (rowCur, colCur, finClamp)
 import qualified Tv.Nav as Nav
-import Tv.Types (Cmd(..), isNumeric, toString, filterPrql, filterPrompt, exprError)
+import Tv.Types (Cmd(..), isNumeric, toString, filterPrql, filterPrompt, exprError, colRef)
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Table as Table
 import Tv.Data.DuckDB.Table (AdbcTable)
@@ -220,10 +220,12 @@ rowFilter tm s = withDistinct s $ \_curCol curName vals -> do
 
 -- | PRQL example snippets shown as picker items in the row-filter
 -- popup, by column type. The strings are complete expressions ready
--- to commit; pick one and submit, or type your own.
+-- to commit; pick one and submit, or type your own. Uses bare column
+-- name when safe ('Symbol == null') and falls back to qualified form
+-- ('this.`text` == null') only for PRQL keywords / non-identifier names.
 filterExamples :: Text -> Bool -> Vector Text
 filterExamples col numeric =
-  let c = "this.`" <> col <> "`"
+  let c = colRef col
       common =
         [ c <> " == null"
         , c <> " != null"
