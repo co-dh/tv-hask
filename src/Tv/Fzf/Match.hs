@@ -2,10 +2,12 @@
 {-# LANGUAGE BangPatterns #-}
 -- | Fuzzy subsequence matcher, fzf-v2 inspired.
 --
--- Case-insensitive subsequence match with positional bonuses:
--- start-of-word, camelCase boundary, consecutive chars, case match,
--- start-of-string. Returns 'Nothing' on miss. The position list points at
--- the matched target chars so callers can highlight them.
+-- Smartcase subsequence match: all-lowercase query is case-insensitive;
+-- any uppercase letter in the query flips the match to case-sensitive
+-- (matches fzf's default). Positional bonuses: start-of-word, camelCase
+-- boundary, consecutive chars, case match, start-of-string. Returns
+-- 'Nothing' on miss. The position list points at the matched target
+-- chars so callers can highlight them.
 --
 -- Kept small and pure so it runs inside the picker hot loop (one call per
 -- (item, keystroke) pair) without allocating much.
@@ -44,9 +46,16 @@ eqCI a b = toLower a == toLower b
 --  * @^prefix@ — anchor the first match position to the start of the target
 --  * @suffix$@ — anchor the match to end at the last target position
 --
+-- Smartcase: lowercase-only query is case-insensitive; any uppercase
+-- char in the query makes the whole match case-sensitive.
+--
 -- >>> snd <$> match "abc" "a-b-c"
 -- Just [0,2,4]
--- >>> snd <$> match "ABC" "abc"
+-- >>> snd <$> match "abc" "A-B-C"
+-- Just [0,2,4]
+-- >>> match "ABC" "abc"
+-- Nothing
+-- >>> snd <$> match "ABC" "ABCdef"
 -- Just [0,1,2]
 -- >>> snd <$> match "fB" "fooBar"
 -- Just [0,3]
@@ -76,6 +85,8 @@ match query0 target
       if not (T.null afterCaret) && T.last afterCaret == '$'
         then (True, T.init afterCaret)
         else (False, afterCaret)
+    -- Smartcase: query has any uppercase → exact match; else case-insensitive.
+    eq = if T.any isUpper query then (==) else eqCI
     qn = T.length query
     tn = T.length target
     go !qi !prev !acc !poses
@@ -90,9 +101,9 @@ match query0 target
                       exact = if T.index target ti == T.index query qi then 2 else 0
                   in go (qi + 1) ti (acc + 1 + b + exact) (ti : poses)
     findFrom qi fromIdx
-      | fromIdx >= tn                                    = Nothing
-      | eqCI (T.index query qi) (T.index target fromIdx) = Just fromIdx
-      | otherwise                                        = findFrom qi (fromIdx + 1)
+      | fromIdx >= tn                                = Nothing
+      | eq (T.index query qi) (T.index target fromIdx) = Just fromIdx
+      | otherwise                                    = findFrom qi (fromIdx + 1)
 
 -- | Score-only variant. Used when the caller only ranks candidates.
 matchNoPos :: Text -> Text -> Maybe Int
