@@ -24,8 +24,9 @@ import System.IO (stderr)
 
 import qualified Tv.App.Common as Common
 import Tv.App.Types (AppState(..))
-import Tv.Types (ColCache(..))
+import Tv.Types (ColCache(..), ViewKind(..))
 import qualified Tv.Data.DuckDB.Ops as Ops
+import qualified Tv.Data.DuckDB.Prql as Prql
 import qualified Tv.Data.DuckDB.Table as AdbcTable
 import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.Text as TextParse
@@ -52,11 +53,12 @@ data CliArgs = CliArgs
   , test    :: Bool
   , noSign  :: Bool
   , session :: Maybe Text   -- -s "name" session restore
+  , prql    :: Maybe Text   -- -q "PRQL ops" applied as initial pipeline
   }
 makeFieldLabelsNoPrefix ''CliArgs
 
 defArgs :: CliArgs
-defArgs = CliArgs { path = Nothing, keys = V.empty, test = False, noSign = False, session = Nothing }
+defArgs = CliArgs { path = Nothing, keys = V.empty, test = False, noSign = False, session = Nothing, prql = Nothing }
 
 -- extract flag with value, return (value?, remaining args)
 extractFlag :: Text -> [Text] -> (Maybe Text, [Text])
@@ -65,22 +67,24 @@ extractFlag flag (f : v : rest)
   | otherwise = let (r, rest') = extractFlag flag (v : rest) in (r, f : rest')
 extractFlag _ other = (Nothing, other)
 
--- parse args: path?, -c keys?, test mode, +n, -s session
+-- parse args: path?, -c keys?, test mode, +n, -s session, -q PRQL
 parseArgs :: [Text] -> CliArgs
 parseArgs args0 =
   let noSign_    = elem "+n" args0
       args1      = filter (/= "+n") args0
       (session_, args2) = extractFlag "-s" args1
+      (prql_,    args3) = extractFlag "-q" args2
       toK s      = Key.tokenizeKeys s
-  in case args2 of
+      base       = defArgs & #noSign .~ noSign_ & #session .~ session_ & #prql .~ prql_
+  in case args3 of
        ("-c" : k : _) ->
-         CliArgs { path = Nothing, keys = toK k, test = True, noSign = noSign_, session = session_ }
+         base & #keys .~ toK k & #test .~ True
        (p : "-c" : k : _) ->
-         CliArgs { path = Just p, keys = toK k, test = True, noSign = noSign_, session = session_ }
+         base & #path .~ Just p & #keys .~ toK k & #test .~ True
        (p : _) ->
-         defArgs & #path .~ Just p & #noSign .~ noSign_ & #session .~ session_
+         base & #path .~ Just p
        [] ->
-         defArgs & #noSign .~ noSign_ & #session .~ session_
+         base
 
 -- | Init/shutdown socket + terminal around a mainLoop call
 withTui :: Bool -> IO a -> IO a
@@ -112,8 +116,8 @@ initState stk_ th tm ns =
   }
 
 -- run app with view
-runApp :: View AdbcTable -> Bool -> Bool -> Bool -> Theme.State -> Vector Text -> IO AppState
-runApp v pipe test_ ns th ks = do
+runApp :: View AdbcTable -> Bool -> Bool -> Bool -> Theme.State -> Vector Text -> Maybe Text -> IO AppState
+runApp v0 pipe test_ ns th ks initialPrql = do
   when (pipe && not test_) $ do
     ok <- Term.reopenTty
     unless ok $ do
@@ -121,15 +125,72 @@ runApp v pipe test_ ns th ks = do
         "Error: stdin was piped but /dev/tty is not accessible. \
         \Run `tv` in an interactive terminal, or pass a file path."
       exitWith (ExitFailure 1)
+  v <- case initialPrql of
+    Just q | not (T.null q) -> do
+      mv' <- applyInitialPrql q v0
+      case mv' of
+        Just v' -> pure v'
+        Nothing -> do
+          TIO.hPutStrLn stderr ("Error: -q PRQL failed to apply: " <> q)
+          exitWith (ExitFailure 1)
+    _ -> pure v0
   _ <- Term.init
   let stk_ = ViewStack { hd = v, tl = [] }
-  withTui test_ (Common.mainLoop (initState stk_ th test_ ns) test_ ks)
+  finalSt <- withTui test_ (Common.mainLoop (initState stk_ th test_ ns) test_ ks)
+  printScriptCmd initialPrql finalSt
+  pure finalSt
+
+-- | Re-execute the initial table with `oldBase | prql`, return rebuilt view.
+applyInitialPrql :: Text -> View AdbcTable -> IO (Maybe (View AdbcTable))
+applyInitialPrql prqlOps v = do
+  let oldQ = v ^. #nav % #tbl % #query
+      newQ = oldQ { Prql.base = oldQ ^. #base <> " | " <> prqlOps }
+  total <- AdbcTable.queryCount newQ
+  mTbl <- AdbcTable.requery newQ total
+  case mTbl of
+    Nothing   -> pure Nothing
+    Just tbl' -> pure (View.rebuild v tbl' 0 V.empty 0)
+
+-- | After the session, print a CLI command that recreates the top view.
+-- Format: `tv <path> [-q '<prql>']`. The PRQL is the initial -q (if
+-- any) concatenated with the ops added interactively during the
+-- session. Skipped for derived views (Freq, Meta, etc.) whose query
+-- base is a temp table — not portable across CLI invocations.
+printScriptCmd :: Maybe Text -> AppState -> IO ()
+printScriptCmd initialPrql a =
+  let v     = View.cur (a ^. #stk)
+      p     = v ^. #path
+      ops   = Prql.renderOps (v ^. #nav % #tbl % #query)
+      pre   = fromMaybe "" initialPrql
+      prql_ = case (T.null pre, T.null ops) of
+                (True,  True)  -> ""
+                (False, True)  -> pre
+                (True,  False) -> ops
+                (False, False) -> pre <> " | " <> ops
+  in case v ^. #vkind of
+       VkTbl | not (T.null p) -> do
+         let cmd = "tv " <> shellQuote p
+                <> if T.null prql_ then "" else " -q " <> shellQuote prql_
+         -- Stderr so the recreate hint stays out of any pipe consuming
+         -- tv's table dump on stdout (test harness, `tv x | grep …`,
+         -- etc). Terminals merge stderr to the screen, so users still
+         -- see the line.
+         TIO.hPutStrLn stderr ("# recreate: " <> cmd)
+       _ -> pure ()
+
+-- | Single-quote a value for the shell, escaping embedded quotes.
+shellQuote :: Text -> Text
+shellQuote s
+  | T.all safe s = s
+  | otherwise    = "'" <> T.replace "'" "'\\''" s <> "'"
+  where safe c = isAlphaNum c || c `elem` ("/._-:" :: String)
+        isAlphaNum c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 
 -- run from TSV string result
 runTsv
-  :: Either Text Text -> Text -> Bool -> Bool -> Bool -> Theme.State -> Vector Text
+  :: Either Text Text -> Text -> Bool -> Bool -> Bool -> Theme.State -> Vector Text -> Maybe Text
   -> IO (Maybe AppState)
-runTsv r nm pipe test_ ns th ks = case r of
+runTsv r nm pipe test_ ns th ks initialPrql = case r of
   Left e -> do
     TIO.hPutStrLn stderr ("Parse error: " <> e)
     pure Nothing
@@ -139,7 +200,7 @@ runTsv r nm pipe test_ ns th ks = case r of
       Nothing   -> do TIO.hPutStrLn stderr "Empty table"; pure Nothing
       Just adbc -> case View.fromTbl adbc nm 0 V.empty 0 of
         Nothing -> do TIO.hPutStrLn stderr "Empty table"; pure Nothing
-        Just v  -> Just <$> runApp v pipe test_ ns th ks
+        Just v  -> Just <$> runApp v pipe test_ ns th ks initialPrql
 
 -- output table as plain text
 outputTable :: AppState -> IO ()
@@ -183,9 +244,10 @@ runSession sessName theme testMode noSign_ keys_ = do
     Nothing -> TIO.hPutStrLn stderr ("Session not found: " <> sessName)
 
 -- | Dispatch folder / source / file by path shape.
-dispatchPath :: Text -> Vector Text -> Bool -> Bool -> Bool -> Theme.State -> IO ()
-dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
+dispatchPath :: Text -> Vector Text -> Bool -> Bool -> Bool -> Theme.State -> Maybe Text -> IO ()
+dispatchPath path_ keys_ testMode noSign_ pipeMode theme initialPrql = do
   let srcCfg = Source.findSource path_
+      go v = runApp v pipeMode testMode noSign_ theme keys_ initialPrql
   isDir <- doesDirectoryExist (T.unpack path_)
   if T.null path_ || isJust srcCfg || isDir then do
     let p = if T.null path_ then "." else path_
@@ -199,25 +261,24 @@ dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
           case r of
             Source.OpenAsTable adbc ->
               case View.fromTbl adbc p 0 V.empty 0 of
-                Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_
-                              pure True
+                Just v  -> do _ <- go v; pure True
                 Nothing -> do TIO.hPutStrLn stderr ("Empty: " <> p); pure True
             _ -> pure False  -- fall through to folder listing
       _ -> pure False
     unless handled $ do
       mv <- Folder.mkView noSign_ p 1
       case mv of
-        Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+        Just v  -> do _ <- go v; pure ()
         Nothing -> TIO.hPutStrLn stderr ("Cannot browse: " <> p)
   else if T.isSuffixOf ".txt" path_ then do
     content <- TIO.readFile (T.unpack path_)
-    _ <- runTsv (TextParse.fromText content) path_ pipeMode testMode noSign_ theme keys_
+    _ <- runTsv (TextParse.fromText content) path_ pipeMode testMode noSign_ theme keys_ initialPrql
     pure ()
   else if T.isSuffixOf ".gz" path_ && not (FileFormat.isData path_) then do
     -- Smart: try read_csv for unrecognized .gz (handles decompression natively)
     mv <- FileFormat.readCsv path_
     case mv of
-      Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+      Just v  -> do _ <- go v; pure ()
       Nothing -> FileFormat.viewFile testMode path_
   else do
     r <- try (FileFormat.openFile path_) :: IO (Either SomeException (Maybe (View AdbcTable)))
@@ -225,7 +286,7 @@ dispatchPath path_ keys_ testMode noSign_ pipeMode theme = do
       Right m -> pure m
       Left e  -> do Log.write "open" (T.pack (show e)); pure Nothing
     case mv of
-      Just v  -> do _ <- runApp v pipeMode testMode noSign_ theme keys_; pure ()
+      Just v  -> do _ <- go v; pure ()
       Nothing -> FileFormat.viewFile testMode path_
 
 helpText :: Text
@@ -253,8 +314,13 @@ helpText = T.unlines
   , "Options:"
   , "  -c KEYS             Test mode: replay KEYS, render once, exit."
   , "  -s NAME             Restore session NAME (~/.cache/tv/sessions/NAME.json)."
+  , "  -q PRQL             Apply PRQL pipeline to the input as initial ops"
+  , "                      (e.g. -q 'filter score > 80 | sort name')."
   , "  +n                  no-sign mode for S3 and similar anonymous sources."
   , "  -h, --help          Show this help and exit."
+  , ""
+  , "On exit, tv prints a recreate command (path + -q PRQL) so you can"
+  , "rerun the same view from the shell."
   , ""
   , "In-app: press `I` for the quick reference, or Space for the command menu."
   ]
@@ -266,6 +332,7 @@ appMain args
   | otherwise = do
   let cli = parseArgs args
       CliArgs { path = path_, keys = keys_, noSign = noSign_ } = cli
+      prql_ = cli ^. #prql
   envTest  <- isJust <$> lookupEnv "TV_TEST_MODE"
   let testMode = cli ^. #test || envTest
   pipeMode <- if testMode then pure False else not <$> Term.isattyStdin
@@ -277,11 +344,11 @@ appMain args
     Nothing
       | pipeMode && isNothing path_ -> do
           stdinRes <- TextParse.fromStdin
-          m <- runTsv stdinRes "stdin" True testMode noSign_ theme keys_
+          m <- runTsv stdinRes "stdin" True testMode noSign_ theme keys_ prql_
           maybe (pure ()) outputTable m
       | otherwise ->
           finallyCleanup
-            (dispatchPath (fromMaybe "" path_) keys_ testMode noSign_ pipeMode theme)
+            (dispatchPath (fromMaybe "" path_) keys_ testMode noSign_ pipeMode theme prql_)
 
 
 main :: IO ()

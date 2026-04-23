@@ -27,6 +27,7 @@ import Test.Tasty.HUnit (testCase, assertBool, Assertion, assertFailure)
 import TestUtil
   ( tvHaskBin
   , runHask
+  , runHaskErr
   , contains
   , footer
   , header
@@ -164,6 +165,44 @@ test_sparkline_after_freq_back = do
   assert (glyphs baseline == glyphs fqBack)
          ("sparkline glyphs after Fq must match baseline; got "
            ++ show (glyphs fqBack) ++ " vs " ++ show (glyphs baseline))
+
+-- ============================================================================
+-- === Scriptability tests (-q flag, recreate cmd at session end) ===
+-- ============================================================================
+
+-- A vanilla session should print `tv <path>` (no -q segment) on stderr.
+test_script_print_no_ops :: Assertion
+test_script_print_no_ops = do
+  err <- runHaskErr "" "data/full.csv" []
+  assert (contains err "# recreate: tv data/full.csv")
+         ("expected recreate line for plain session; got: " ++ show err)
+
+-- An interactively-added op (sort via `[`) must show up in -q on stderr.
+test_script_print_after_sort :: Assertion
+test_script_print_after_sort = do
+  err <- runHaskErr "[" "data/full.csv" []
+  assert (contains err "# recreate: tv data/full.csv -q")
+         ("expected -q segment after sort; got: " ++ show err)
+  assert (contains err "sort")
+         "recreate -q segment must mention sort"
+
+-- `-q "filter ..."` must (a) actually filter the rows on stdout and
+-- (b) round-trip back into the printed recreate command on stderr.
+test_script_q_flag_filters :: Assertion
+test_script_q_flag_filters = do
+  out <- runHask    "" "data/full.csv" ["-q", "filter score > 80"]
+  err <- runHaskErr "" "data/full.csv" ["-q", "filter score > 80"]
+  assert (contains out "r0/3")
+         ("expected -q filter to drop to 3 rows; got: " ++ show (T.takeEnd 300 out))
+  assert (contains err "# recreate: tv data/full.csv -q 'filter score > 80'")
+         ("expected recreate to round-trip -q; got: " ++ show err)
+
+-- Initial -q + interactive op should be combined with " | " in the recreate.
+test_script_combines_q_and_ops :: Assertion
+test_script_combines_q_and_ops = do
+  err <- runHaskErr "[" "data/full.csv" ["-q", "filter score > 80"]
+  assert (contains err "# recreate: tv data/full.csv -q 'filter score > 80 |")
+         ("expected combined -q | sort; got: " ++ show err)
 
 -- ============================================================================
 -- === Meta selection tests (M0/M1) ===
@@ -1249,6 +1288,10 @@ ciTests = testGroup "ci"
   , testCase "freq_multi_key" test_freq_multi_key
   , testCase "freq_keeps_grp" test_freq_keeps_grp
   , testCase "sparkline_after_freq_back" test_sparkline_after_freq_back
+  , testCase "script_print_no_ops" test_script_print_no_ops
+  , testCase "script_print_after_sort" test_script_print_after_sort
+  , testCase "script_q_flag_filters" test_script_q_flag_filters
+  , testCase "script_combines_q_and_ops" test_script_combines_q_and_ops
   , testCase "meta_0" test_meta_0
   , testCase "meta_1" test_meta_1
   , testCase "meta_0_enter" test_meta_0_enter

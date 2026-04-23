@@ -2,6 +2,7 @@
 module TestUtil
   ( tvHaskBin
   , runHask
+  , runHaskErr
   , runPty
   , isContent
   , contains
@@ -44,6 +45,15 @@ runHask keys file extraArgs = do
   let args = (if null file then [] else [file]) ++ extraArgs ++ ["-c", T.unpack keys]
   (_, out, _) <- readProcessWithExitCode tvHaskBin args ""
   pure (T.pack out)
+
+-- | Like 'runHask' but returns stderr instead of stdout. Used for the
+-- session-end recreate hint, which goes to stderr so it stays out of
+-- pipes consuming the table dump.
+runHaskErr :: Text -> FilePath -> [String] -> IO Text
+runHaskErr keys file extraArgs = do
+  let args = (if null file then [] else [file]) ++ extraArgs ++ ["-c", T.unpack keys]
+  (_, _, err) <- readProcessWithExitCode tvHaskBin args ""
+  pure (T.pack err)
 
 -- | Drive `tv` through a real pty via test/pty_run.py. `keys` is passed
 -- verbatim to pty_run.py, which expands only \\r/\\n/\\t/\\b/\\e — so send
