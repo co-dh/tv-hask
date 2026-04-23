@@ -15,6 +15,7 @@ module Tv.Fzf.Match where
 
 import Tv.Prelude
 import Data.Char (isUpper, isLower, isAlphaNum, toLower)
+import qualified Data.IntSet as IS
 import qualified Data.Text as T
 
 -- | Word-boundary start: position 0, or prior char is a non-alnum separator,
@@ -112,3 +113,52 @@ matchNoPos q t = fmap fst (match q t)
 -- | Score, returning 'minBound' on miss. Convenient as a sort key.
 score :: Text -> Text -> Int
 score q t = fromMaybe minBound (matchNoPos q t)
+
+-- | Multi-term match: the query is split on whitespace into terms that
+-- must all match (AND). A term prefixed with @!@ is a negation — the
+-- item matches only if that term does NOT appear. Each positive term
+-- keeps all of 'match's features (smartcase, @^prefix@, @suffix$@).
+-- Score is the sum of positive-term scores; positions are the union
+-- (sorted, deduped) so every matched character is highlighted.
+--
+-- A bare @!@ or all-negation query with no matching negation returns
+-- @Just (0, [])@ — matches everything.
+--
+-- >>> snd <$> matchMulti "foo bar" "foo and bar"
+-- Just [0,1,2,8,9,10]
+-- >>> matchMulti "foo !bar" "foo and bar"
+-- Nothing
+-- >>> snd <$> matchMulti "foo !bar" "foo and baz"
+-- Just [0,1,2]
+-- >>> matchMulti "!bar" "no match"
+-- Just (0,[])
+-- >>> matchMulti "!bar" "bar here"
+-- Nothing
+-- >>> matchMulti "" "anything"
+-- Just (0,[])
+matchMulti :: Text -> Text -> Maybe (Int, [Int])
+matchMulti q target
+  | T.null q  = Just (0, [])
+  | otherwise = matchParsed (parseQuery q) target
+
+-- | Parse a multi-term query into @(negated, stripped)@ pairs.
+-- Empty-after-strip terms (bare @!@, double spaces) are dropped.
+parseQuery :: Text -> [(Bool, Text)]
+parseQuery q = [ (neg, t) | w <- T.words q, let (neg, t) = split w, not (T.null t) ]
+  where
+    split w = case T.uncons w of
+      Just ('!', rest) -> (True, rest)
+      _                -> (False, w)
+
+-- | Multi-term match with terms pre-parsed. Hoist 'parseQuery' out of
+-- inner loops (pickers iterate the term list per item per keystroke).
+matchParsed :: [(Bool, Text)] -> Text -> Maybe (Int, [Int])
+matchParsed terms0 target = fmap finalize (go terms0 0 IS.empty)
+  where
+    finalize (s, ps) = (s, IS.toAscList ps)
+    go []                  acc ps = Just (acc, ps)
+    go ((neg, t) : rest) acc ps
+      | neg = if isJust (match t target) then Nothing else go rest acc ps
+      | otherwise = case match t target of
+          Nothing       -> Nothing
+          Just (s, ps') -> go rest (acc + s) (IS.union ps (IS.fromList ps'))
