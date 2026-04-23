@@ -248,48 +248,61 @@ tv data.csv -p 'filter score > 80 | sort name'   # Apply PRQL pipeline up front
 
 ## Scripting
 
-Two pieces let you replay or share a tv session as a single shell command:
+Replay or share a tv session as a single shell command:
 
-- **`-p PRQL`**: applies a PRQL pipeline to the input as initial ops, e.g.
-  `tv data/full.csv -p 'filter score > 80 | sort name'`. The pipeline is
-  appended to the loaded table's `from <path>` and re-executed before the
-  TUI starts.
+- **`-p PRQL`**: applies a PRQL pipeline to the input. Two forms:
+  - Appended to the file's `from`-clause: `tv data.csv -p 'filter score > 80 | sort name'`.
+  - Self-contained — when the PRQL begins with `from \`<path>\``, the
+    positional path is optional: `tv -p 'from \`data.csv\` | filter score > 80'`.
 
-- **Two-line exit hint**: when tv exits, it prints to **stderr**:
-  - `# recreate: tv <path> -p '<ops>'` — copy-paste to rerun in tv;
-  - `# prql: from <path> | <ops>` — the same pipeline with a leading
-    from-clause, ready to paste into prqlc / psql / any PRQL-aware tool.
+- **`-f FILE`**: read PRQL from a file (multi-line, may have `let`
+  definitions). Shorthand for `-p "$(< FILE)"`.
+
+- **Exit hint**: when tv exits, it prints a single self-contained
+  `tv -p '...'` line on **stderr** — no `# ` comment prefix, ready to
+  paste back. The PRQL always carries its own `from <path>` clause, so
+  the line works as both:
+  - a tv command (paste in shell to rerun the same view);
+  - a standalone PRQL pipeline (strip the `tv -p '…'` wrapper to use
+    in prqlc, psql, or any PRQL-aware tool).
 
   The PRQL combines the initial `-p` (if any) with every interactive op
-  (filter, sort, derive, hide, …) added during the session. Stderr
-  keeps both lines out of any stdout pipe consuming the table dump.
+  (filter, sort, derive, hide, …) added during the session.
 
-Quoting: tv prefers double quotes for the PRQL value (cleaner for the
-common case `filter x > 1`) and falls back to single quotes when the
-pipeline contains a character double quotes can't safely hold (`$`,
-`` ` ``, `\`, `"`). Rendered ops with backticks like `sort {this.\`x\`}`
-land in single quotes for that reason.
+Quoting: tv prefers double quotes for the PRQL value, but falls back
+to single quotes when the pipeline contains backticks (which trigger
+command substitution under double quotes). Since `from \`<path>\``
+always has backticks, the recreate line is single-quoted in practice.
 
 Example session:
 
 ```bash
 $ tv data/full.csv -p 'filter score > 80 | sort name'
 ... interactive table view ...
-# recreate: tv data/full.csv -p "filter score > 80 | sort name"
-# prql:     from `data/full.csv` | filter score > 80 | sort name
+tv -p 'from `data/full.csv` | filter score > 80 | sort name'
 ```
 
 Sort interactively, exit with `q`:
 
 ```bash
 $ tv data/full.csv         # press [ to sort ascending, then q
-# recreate: tv data/full.csv -p 'sort {this.`name`}'
-# prql:     from `data/full.csv` | sort {this.`name`}
+tv -p 'from `data/full.csv` | sort {this.`name`}'
 ```
 
-Press `Q` (capital) to quit without popping the stack — the recreate
-line walks down to the deepest table view and prints its accumulated
-ops. Useful when you've drilled into a Freq or Meta view and want the
+Run from a script file:
+
+```bash
+$ cat > q.prql <<'EOF'
+from `data/full.csv`
+| filter score > 80
+| sort name
+EOF
+$ tv -f q.prql
+```
+
+Press `Q` (capital) to quit without popping the stack — the exit line
+walks down to the deepest table view and prints its accumulated ops.
+Useful when you've drilled into a Freq or Meta view and want the
 underlying pipeline back.
 
 ## Keybindings

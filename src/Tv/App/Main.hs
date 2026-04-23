@@ -54,11 +54,13 @@ data CliArgs = CliArgs
   , noSign  :: Bool
   , session :: Maybe Text   -- -s "name" session restore
   , prql    :: Maybe Text   -- -p "PRQL ops" applied as initial pipeline
+  , script  :: Maybe Text   -- -f FILE  read PRQL from file (multi-line, may have `let`s)
   }
 makeFieldLabelsNoPrefix ''CliArgs
 
 defArgs :: CliArgs
-defArgs = CliArgs { path = Nothing, keys = V.empty, test = False, noSign = False, session = Nothing, prql = Nothing }
+defArgs = CliArgs { path = Nothing, keys = V.empty, test = False, noSign = False
+                  , session = Nothing, prql = Nothing, script = Nothing }
 
 -- extract flag with value, return (value?, remaining args)
 extractFlag :: Text -> [Text] -> (Maybe Text, [Text])
@@ -67,24 +69,38 @@ extractFlag flag (f : v : rest)
   | otherwise = let (r, rest') = extractFlag flag (v : rest) in (r, f : rest')
 extractFlag _ other = (Nothing, other)
 
--- parse args: path?, -c keys?, test mode, +n, -s session, -p PRQL
+-- parse args: path?, -c keys?, test mode, +n, -s session, -p PRQL, -f FILE.
+-- If the resolved PRQL starts with `from \`<path>\`` and no positional
+-- path is given, the path is extracted from the from-clause so users
+-- can rerun a self-contained `tv -p '...'` line (the format
+-- `printScriptCmd` emits). The `-f` flag is used to inject prql_ at
+-- runtime in @appMain@; only `-p` and `-s` are extracted here.
 parseArgs :: [Text] -> CliArgs
 parseArgs args0 =
   let noSign_    = elem "+n" args0
       args1      = filter (/= "+n") args0
       (session_, args2) = extractFlag "-s" args1
       (prql_,    args3) = extractFlag "-p" args2
+      (script_,  args4) = extractFlag "-f" args3
       toK s      = Key.tokenizeKeys s
-      base       = defArgs & #noSign .~ noSign_ & #session .~ session_ & #prql .~ prql_
-  in case args3 of
-       ("-c" : k : _) ->
-         base & #keys .~ toK k & #test .~ True
-       (p : "-c" : k : _) ->
-         base & #path .~ Just p & #keys .~ toK k & #test .~ True
-       (p : _) ->
-         base & #path .~ Just p
-       [] ->
-         base
+      base       = defArgs & #noSign .~ noSign_ & #session .~ session_
+                           & #prql .~ prql_ & #script .~ script_
+      cli = case args4 of
+        ("-c" : k : _)        -> base & #keys .~ toK k & #test .~ True
+        (p : "-c" : k : _)    -> base & #path .~ Just p & #keys .~ toK k & #test .~ True
+        (p : _)               -> base & #path .~ Just p
+        []                    -> base
+  in case (cli ^. #path, prql_ >>= pathFromPrql) of
+       (Nothing, Just p) -> cli & #path .~ Just p
+       _                 -> cli
+
+-- | Extract `<path>` from a PRQL string that begins with `from \`<path>\``.
+-- Returns Nothing if the prefix isn't there.
+pathFromPrql :: Text -> Maybe Text
+pathFromPrql t = do
+  rest <- T.stripPrefix "from `" (T.stripStart t)
+  let (p, after) = T.breakOn "`" rest
+  if T.null after then Nothing else Just p
 
 -- | Init/shutdown socket + terminal around a mainLoop call
 withTui :: Bool -> IO a -> IO a
@@ -140,23 +156,31 @@ runApp v0 pipe test_ ns th ks initialPrql = do
   printScriptCmd initialPrql finalSt
   pure finalSt
 
--- | Re-execute the initial table with `oldBase | prql`, return rebuilt view.
+-- | Re-execute the table with the user's PRQL. If the PRQL begins with
+-- `from \`...\`` it's used as the entire base (so the recreate line tv
+-- prints — which always carries a from-clause — round-trips). Otherwise
+-- it's appended to the existing `from <path>` base.
 applyInitialPrql :: Text -> View AdbcTable -> IO (Maybe (View AdbcTable))
 applyInitialPrql prqlOps v = do
   let oldQ = v ^. #nav % #tbl % #query
-      newQ = oldQ { Prql.base = oldQ ^. #base <> " | " <> prqlOps }
+      newBase = case pathFromPrql prqlOps of
+        Just _  -> prqlOps
+        Nothing -> oldQ ^. #base <> " | " <> prqlOps
+      newQ = oldQ { Prql.base = newBase }
   total <- AdbcTable.queryCount newQ
   mTbl <- AdbcTable.requery newQ total
   case mTbl of
     Nothing   -> pure Nothing
     Just tbl' -> pure (View.rebuild v tbl' 0 V.empty 0)
 
--- | After the session, print a recreate hint to stderr. Two lines:
+-- | After the session, print a single self-contained line on stderr
+-- that recreates the top view:
 --
---   * @# recreate: tv <path> [-p '<ops>']@ — copy-paste to rerun in tv;
---   * @# prql:     from `<path>` | <ops>@ — same pipeline with the
---     leading from-clause, so it can be pasted into prqlc / psql /
---     anywhere else PRQL is accepted.
+--   @tv -p 'from `<path>` | <ops>'@
+--
+-- The from-clause makes the PRQL valid on its own (paste into prqlc /
+-- psql / etc), and the corresponding parseArgs branch lets `tv -p`
+-- consume that exact string back without a positional path argument.
 --
 -- Only VkTbl views are scriptable (their query.base is `from <path>`).
 -- Derived views (Freq, Meta, …) live on top of a temp table whose name
@@ -174,21 +198,28 @@ printScriptCmd initialPrql a =
        Just v -> do
          let p     = v ^. #path
              ops   = Prql.renderOps (v ^. #nav % #tbl % #query)
-             pre   = fromMaybe "" initialPrql
+             pre   = case initialPrql of
+                       Just q | Just _ <- pathFromPrql q
+                                -- already had its own from-clause, strip
+                                -- it so we don't double up; only keep the
+                                -- ops portion.
+                                -> fromMaybe q $ T.stripPrefix
+                                                   ("from `" <> p <> "` | ")
+                                                   q
+                       Just q  -> q
+                       Nothing -> ""
              prql_ = case (T.null pre, T.null ops) of
                        (True,  True)  -> ""
                        (False, True)  -> pre
                        (True,  False) -> ops
                        (False, False) -> pre <> " | " <> ops
-             cmd = "tv " <> shellQuote p
-                <> if T.null prql_ then "" else " -p " <> shellQuote prql_
              fullPrql = "from `" <> p <> "`"
                      <> if T.null prql_ then "" else " | " <> prql_
          -- Stderr so the hint stays out of any pipe consuming tv's
          -- table dump on stdout. Terminals merge stderr to the screen,
-         -- so users still see both lines.
-         TIO.hPutStrLn stderr ("# recreate: " <> cmd)
-         TIO.hPutStrLn stderr ("# prql:     " <> fullPrql)
+         -- so the user still sees the line. No `# ` comment prefix —
+         -- this line is meant to be copy-pasted as the next command.
+         TIO.hPutStrLn stderr ("tv -p " <> shellQuote fullPrql)
        Nothing -> pure ()
 
 -- | Quote a value for the shell. Three tiers, picked to keep PRQL
@@ -338,11 +369,17 @@ helpText = T.unlines
   , "  -s NAME             Restore session NAME (~/.cache/tv/sessions/NAME.json)."
   , "  -p PRQL             Apply PRQL pipeline to the input as initial ops"
   , "                      (e.g. -p 'filter score > 80 | sort name')."
+  , "                      If PRQL begins with `from \\`<path>\\``, the"
+  , "                      positional path argument is optional."
+  , "  -f FILE             Read PRQL from FILE (multi-line, may contain"
+  , "                      `let` definitions). Shorthand for `-p \"$(<FILE)\"`."
   , "  +n                  no-sign mode for S3 and similar anonymous sources."
   , "  -h, --help          Show this help and exit."
   , ""
-  , "On exit, tv prints a recreate command (path + -p PRQL) so you can"
-  , "rerun the same view from the shell."
+  , "On exit, tv prints a self-contained `tv -p '...'` line on stderr"
+  , "(the PRQL carries its own from-clause), so you can copy-paste it"
+  , "to rerun the same view, or strip `tv -p '…'` to use the PRQL in"
+  , "another tool (prqlc, psql, …)."
   , ""
   , "In-app: press `I` for the quick reference, or Space for the command menu."
   ]
@@ -352,9 +389,21 @@ appMain :: [Text] -> IO ()
 appMain args
   | any (`elem` (["-h", "--help"] :: [Text])) args = TIO.putStr helpText
   | otherwise = do
-  let cli = parseArgs args
+  let cli0 = parseArgs args
+  -- -f FILE reads a PRQL script (multi-line, with `let`s) and feeds it
+  -- as if -p had been passed verbatim. -p still wins if both given.
+  prql_  <- case (cli0 ^. #prql, cli0 ^. #script) of
+    (Just q, _)       -> pure (Just q)
+    -- Strip trailing whitespace; PRQL's parser is intolerant of a
+    -- terminating newline / blank line at EOF.
+    (Nothing, Just f) -> (Just . T.stripEnd) <$> TIO.readFile (T.unpack f)
+    (Nothing, Nothing) -> pure Nothing
+  let cli = cli0 & #prql .~ prql_
+        -- re-extract path from the file's from-clause if -f provided one
+        & (\c -> case (c ^. #path, prql_ >>= pathFromPrql) of
+                   (Nothing, Just p) -> c & #path .~ Just p
+                   _                 -> c)
       CliArgs { path = path_, keys = keys_, noSign = noSign_ } = cli
-      prql_ = cli ^. #prql
   envTest  <- isJust <$> lookupEnv "TV_TEST_MODE"
   let testMode = cli ^. #test || envTest
   pipeMode <- if testMode then pure False else not <$> Term.isattyStdin
