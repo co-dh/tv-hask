@@ -80,9 +80,9 @@ wrapText s maxW
           final = if not (T.null cur) || null lns then lns ++ [cur] else lns
       in V.fromList final
 
--- | Render preview box at bottom-left. Width scales with the screen
--- (70% up to screenW-4 safety margin) so long cell strings wrap less
--- and the box no longer looks cramped on wide terminals.
+-- | Render preview box centered on the screen. Width scales with the
+-- screen (70% up to screenW-4 safety margin) so long cell strings wrap
+-- less and the box no longer looks cramped on wide terminals.
 prevRender :: Int -> Int -> Text -> Int -> IO ()
 prevRender screenH screenW text scroll0 = do
   let maxW = min (screenW - 4) (screenW * 7 `div` 10)
@@ -96,18 +96,20 @@ prevRender screenH screenW text scroll0 = do
         scroll = min scroll0 maxScroll
         contentW = V.foldl' (\mx l -> max mx $ T.length l) 0 lns
         innerW0 = min contentW maxW
-        innerW = max innerW0 4  -- minimum inner width
-        -- bottom-left: x0=0, box ends at screenH - 3 (above tab + status lines)
-        x0 :: Int
-        x0 = 0
-        y1 = screenH - 3                  -- last row of box (bottom border)
-        y0 = if y1 + 1 > visible + 2 then y1 - visible - 1 else 0  -- top border
-        actualVisible = y1 - y0 - 1       -- rows between borders
-    -- Fixed high-contrast colours: bright white on a dark grey panel
-    -- (much more readable than the prior white-on-blue sBar style).
-    let fg  = 15  :: Word32  -- bright white
-        bg  = 236 :: Word32  -- dark grey panel
-        dfg = 244 :: Word32  -- dim grey for bottom border + scroll indicator
+        innerW = max innerW0 4     -- minimum inner width
+        boxH = visible + 2         -- top + content rows + bottom
+        boxW = innerW + 2          -- inner + side borders
+        -- Center on the full screen. Previously anchored bottom-left,
+        -- which cut into the column-name row on tall tables.
+        x0 = max 0 ((screenW - boxW) `div` 2)
+        y0 = max 0 ((screenH - boxH) `div` 2)
+        y1 = y0 + boxH - 1
+        actualVisible = y1 - y0 - 1
+    -- Black on light blue panel (rgb245 ≈ #87d7ff). High contrast,
+    -- clearly differentiated from the themed picker (dark panels).
+    let fg  = 16  :: Word32   -- black
+        bg  = 117 :: Word32   -- rgb245 (light blue)
+        dfg = 16  :: Word32   -- black for bottom border + scroll indicator
         dbg = bg
     -- top border
     Term.print (fromIntegral x0 :: Word32) (fromIntegral y0 :: Word32) fg bg
