@@ -91,6 +91,17 @@ menuItems cc vctx = V.mapMaybe go (cc ^. #ccMenu)
       | not (T.null viewCtx) && viewCtx /= vctx = Nothing
       | otherwise = Just (toString cmd, ctx, key, label)
 
+-- | Hints for the info overlay: view-specific entries with both key and label.
+-- Global entries are dropped — the info box shows what's unique to this view;
+-- the full menu is still reachable via Space.
+infoHints :: CmdCache -> Text -> Vector (Text, Text)
+infoHints cc vctx = V.mapMaybe go (cc ^. #ccMenu)
+  where
+    go Entry{..}
+      | T.null key || T.null label = Nothing
+      | viewCtx /= vctx            = Nothing
+      | otherwise                  = Just (key, label)
+
 -- | Entry constructor shorthand.
 mkEntry :: Cmd -> Text -> Text -> Text -> Bool -> Text -> Entry
 mkEntry c ctx_ key_ label_ resets_ vctx = Entry

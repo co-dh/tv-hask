@@ -16,7 +16,8 @@ import Tv.Prelude
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
-import Tv.Types (Cmd(..), ViewKind(..))
+import Tv.CmdConfig (CmdCache, infoHints)
+import Tv.Types (Cmd(..), StrEnum(..), ViewKind(..))
 import qualified Tv.Term as Term
 import qualified Tv.Theme as Theme
 
@@ -29,37 +30,6 @@ infoUpdate :: Bool -> Cmd -> Maybe Bool
 infoUpdate vis CmdInfoTog = Just (not vis)
 infoUpdate _   _          = Nothing
 
--- | Context-specific key hints per view (no common navigation)
-viewHints :: ViewKind -> Vector (Text, Text)
-viewHints VkColMeta =
-  V.fromList
-    [ ("M0", "select nulls")
-    , ("M1", "select unique")
-    , ("\x23ce", "set as key")
-    , ("q", "back")
-    ]
-viewHints (VkFreqV _ _) =
-  V.fromList
-    [ ("\x23ce", "filter by val")
-    , ("q", "back")
-    ]
-viewHints (VkFld _ _) =
-  V.fromList
-    [ ("\x23ce", "open")
-    , ("D-", "trash")
-    , ("D<", "less depth")
-    , ("D>", "more depth")
-    ]
-viewHints VkTbl =
-  V.fromList
-    [ ("T", "toggle row sel")
-    , ("!", "group by")
-    , ("c\\", "hide column")
-    , ("S-\x2190\x2192", "reorder cols")
-    , ("SPC", "command menu")
-    ]
-viewHints VkCorr = V.fromList [("q", "back")]
-
 -- | Pad string s on the left with spaces to width w
 padLeft :: Int -> Text -> Text
 padLeft w s = T.replicate (max 0 $ w - T.length s) " " <> s
@@ -70,19 +40,21 @@ padRight w s =
   let t = T.take w s
   in t <> T.replicate (max 0 $ w - min (T.length s) w) " "
 
--- | Render info overlay at bottom-right
-infoRender :: Int -> Int -> ViewKind -> IO ()
-infoRender screenH screenW vk = do
-  let hints = viewHints vk
+-- | Render info overlay at bottom-right. Hints are sourced from the command
+-- cache (view-specific entries with both key and label non-empty), so the
+-- info box and the Space menu stay in sync.
+infoRender :: Int -> Int -> CmdCache -> ViewKind -> IO ()
+infoRender screenH screenW cc vk = do
+  let hints = V.take 10 (infoHints cc (toString vk))
   let nRows = V.length hints
-  let keyW = 5 :: Int
-  let hintW = 14 :: Int
-  let boxW = keyW + 1 + hintW
+  let keyW   = V.foldl' (\a (k, _) -> max a (T.length k)) 3 hints
+  let labelW = min 24 $ V.foldl' (\a (_, d) -> max a (T.length d)) 0 hints
+  let boxW = keyW + 1 + labelW
   let x0 = screenW - boxW - 2
   let y0 = screenH - nRows - 3
   V.iforM_ hints $ \i (k, d) -> do
     let kpad = padLeft keyW k
-    let dpad = padRight hintW d
+    let dpad = padRight labelW d
     s <- Theme.getStyles
     Term.print
       (fromIntegral x0 :: Word32)

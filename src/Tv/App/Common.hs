@@ -112,7 +112,7 @@ renderSnap ref stk' styles_ = do
   tabLine (View.tabNames stk') 0 (View.opsStr (View.cur stk'))
   when (a ^. #info) $ do
     h <- Term.height; w <- Term.width
-    UI.infoRender (fromIntegral h) (fromIntegral w) (View.cur stk' ^. #vkind)
+    UI.infoRender (fromIntegral h) (fromIntegral w) (a ^. #cmdCache) (View.cur stk' ^. #vkind)
   Term.present
 
 freqH :: HandlerFn
@@ -254,7 +254,7 @@ renderBase a0 = do
   let a''' = a'' & #aggCache .~ agg'
   when (a''' ^. #info) $ do
     h <- Term.height; w <- Term.width
-    UI.infoRender (fromIntegral h) (fromIntegral w) (View.cur (a''' ^. #stk) ^. #vkind)
+    UI.infoRender (fromIntegral h) (fromIntegral w) (a''' ^. #cmdCache) (View.cur (a''' ^. #stk) ^. #vkind)
   pure a'''
 
 renderFrame :: Bool -> AppState -> IO AppState

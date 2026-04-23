@@ -122,12 +122,14 @@ test_freq_quit = do
 -- Pure: key_I (I → info.ent)
 -- Pure: Info.State.update (toggle vis on/off, returns Effect.none)
 
--- Info overlay hidden by default; I toggles it on
+-- Info overlay hidden by default; I toggles it on. Hints now come from the
+-- command cache's view-specific entries — on VkTbl none exist, so open the
+-- column-metadata view (M) first, where CmdMetaSetKey's label is shown.
 test_info :: IO ()
 test_info = do
-  out <- runHask "I" "data/basic.csv" []
-  assertBool "Info overlay shown after I toggle"
-    (contains out "group by" || contains out "command menu")
+  out <- runHask "MI" "data/basic.csv" []
+  assertBool "Info overlay shown after MI (metadata + info toggle)"
+    (contains out "key columns" || contains out "Correlation")
 
 -- === Cursor tracking ===
 -- Pure: nav_grp_col (l! groups c1, cursor tracks)
