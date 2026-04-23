@@ -139,6 +139,20 @@ test_freq_keeps_grp = do
   out <- run "!F" "data/basic.csv"
   assert (contains (snd (footer out)) "grp=1") "Freq view keeps grp columns"
 
+-- Pressing F (open Freq) then q (pop back) used to leave sparklines
+-- empty: resetVS cleared them on the freq push, but on pop the
+-- previous-table sparklines never re-computed. Now pureDispatch's
+-- stack-op branch calls resetVS too, so renderBase recomputes for the
+-- popped-to table.
+test_sparkline_after_freq_back :: Assertion
+test_sparkline_after_freq_back = do
+  out <- run "Fq" "data/basic.csv"
+  -- Sparkline glyphs: U+2581..U+2588 (▁▂▃▄▅▆▇█).
+  let hasGlyph = any (`T.isInfixOf` out)
+                     ["\x2581", "\x2582", "\x2583", "\x2584",
+                      "\x2585", "\x2586", "\x2587", "\x2588"]
+  assert hasGlyph "Sparkline glyphs present after F → q"
+
 -- ============================================================================
 -- === Meta selection tests (M0/M1) ===
 -- ============================================================================
@@ -1222,6 +1236,7 @@ ciTests = testGroup "ci"
   , testCase "freq_by_key" test_freq_by_key
   , testCase "freq_multi_key" test_freq_multi_key
   , testCase "freq_keeps_grp" test_freq_keeps_grp
+  , testCase "sparkline_after_freq_back" test_sparkline_after_freq_back
   , testCase "meta_0" test_meta_0
   , testCase "meta_1" test_meta_1
   , testCase "meta_0_enter" test_meta_0_enter
