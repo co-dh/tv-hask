@@ -147,6 +147,38 @@ test_q_quit = do
   (code, _, _) <- readProcessWithExitCode tvHaskBin ["data/basic.csv", "-c", "q"] ""
   assertBool "q on empty stack exits cleanly" (code == ExitSuccess)
 
+-- === Agent/script flags ===
+
+test_prql_funcs :: IO ()
+test_prql_funcs = do
+  (code, out, _) <- readProcessWithExitCode tvHaskBin ["--prql-funcs"] ""
+  assertBool "--prql-funcs exit code" (code == ExitSuccess)
+  assertBool "--prql-funcs emits prelude comment header"
+    (contains (T.pack out) "PRQL function definitions")
+
+test_schema_csv :: IO ()
+test_schema_csv = do
+  (code, out, _) <- readProcessWithExitCode tvHaskBin ["--schema", "data/basic.csv"] ""
+  assertBool "--schema exit code" (code == ExitSuccess)
+  assertBool "--schema emits header"     (contains (T.pack out) "column\ttype\tnullable")
+  assertBool "--schema lists column a"   (contains (T.pack out) "a\tBIGINT")
+
+test_emit_csv :: IO ()
+test_emit_csv = do
+  (code, out, _) <- readProcessWithExitCode tvHaskBin
+    ["--emit", "csv", "-p", "take 2", "data/basic.csv"] ""
+  assertBool "--emit csv exit code" (code == ExitSuccess)
+  assertBool "--emit csv header row" (contains (T.pack out) "a,b")
+
+test_doc_commands :: IO ()
+test_doc_commands = do
+  (code, out, _) <- readProcessWithExitCode tvHaskBin ["--doc", "commands"] ""
+  assertBool "--doc commands exit code" (code == ExitSuccess)
+  assertBool "--doc commands header"
+    (contains (T.pack out) "handler\tkey\tviewCtx\thint\tlabel")
+  assertBool "--doc commands has row.sel entry"
+    (contains (T.pack out) "row.sel")
+
 -- === Run all backup screen tests ===
 
 tests :: TestTree
@@ -168,4 +200,8 @@ tests = testGroup "TestScreen"
   , testCase "info"         test_info
   , testCase "key_cursor"   test_key_cursor
   , testCase "q_quit"       test_q_quit
+  , testCase "prql_funcs"   test_prql_funcs
+  , testCase "schema_csv"   test_schema_csv
+  , testCase "emit_csv"     test_emit_csv
+  , testCase "doc_commands" test_doc_commands
   ]
