@@ -137,17 +137,28 @@ score q t = fromMaybe minBound (matchNoPos q t)
 -- >>> matchMulti "" "anything"
 -- Just (0,[])
 matchMulti :: Text -> Text -> Maybe (Int, [Int])
-matchMulti q0 target
-  | T.null q0 = Just (0, [])
-  | otherwise = fmap finalize (go (T.words q0) 0 IS.empty)
+matchMulti q target
+  | T.null q  = Just (0, [])
+  | otherwise = matchParsed (parseQuery q) target
+
+-- | Parse a multi-term query into @(negated, stripped)@ pairs.
+-- Empty-after-strip terms (bare @!@, double spaces) are dropped.
+parseQuery :: Text -> [(Bool, Text)]
+parseQuery q = [ (neg, t) | w <- T.words q, let (neg, t) = split w, not (T.null t) ]
+  where
+    split w = case T.uncons w of
+      Just ('!', rest) -> (True, rest)
+      _                -> (False, w)
+
+-- | Multi-term match with terms pre-parsed. Hoist 'parseQuery' out of
+-- inner loops (pickers iterate the term list per item per keystroke).
+matchParsed :: [(Bool, Text)] -> Text -> Maybe (Int, [Int])
+matchParsed terms0 target = fmap finalize (go terms0 0 IS.empty)
   where
     finalize (s, ps) = (s, IS.toAscList ps)
-    go []          acc ps = Just (acc, ps)
-    go (term : ts) acc ps = case T.uncons term of
-      Just ('!', rest)
-        | T.null rest                -> go ts acc ps
-        | isJust (match rest target) -> Nothing
-        | otherwise                  -> go ts acc ps
-      _ -> case match term target of
-             Nothing       -> Nothing
-             Just (s, ps') -> go ts (acc + s) (IS.union ps (IS.fromList ps'))
+    go []                  acc ps = Just (acc, ps)
+    go ((neg, t) : rest) acc ps
+      | neg = if isJust (match t target) then Nothing else go rest acc ps
+      | otherwise = case match t target of
+          Nothing       -> Nothing
+          Just (s, ps') -> go rest (acc + s) (IS.union ps (IS.fromList ps'))

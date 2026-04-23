@@ -35,7 +35,7 @@ import Data.Ord (Down(..))
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
-import Tv.Fzf.Match (matchMulti)
+import Tv.Fzf.Match (matchParsed, parseQuery)
 import qualified Tv.Term as Term
 import {-# SOURCE #-} qualified Tv.Theme as Theme
 import Optics.TH (makeFieldLabelsNoPrefix)
@@ -266,13 +266,14 @@ currentDisplay opts st = case (st ^. #psMatch) V.!? (st ^. #psCur) of
   Nothing        -> st ^. #psQuery
 
 -- | Re-run fuzzy filter. Empty query → all items in original order.
--- Delegates to 'matchMulti' so space-separated terms are ANDed and
--- @!term@ inverts.
+-- Parses the multi-term query once (space-separated AND, @!@ negates)
+-- and reuses it across items.
 computeMatches :: Text -> Vector Text -> Vector (Int, Int, [Int])
 computeMatches q its
   | T.null q  = V.generate (V.length its) (\i -> (i, 0, []))
   | otherwise =
-      let scoreOne i line = (\(s, ps) -> (i, s, ps)) <$> matchMulti q line
+      let terms         = parseQuery q
+          scoreOne i ln = (\(s, ps) -> (i, s, ps)) <$> matchParsed terms ln
       in V.fromList $ sortOn (\(_, s, _) -> Down s)
                     $ V.toList $ V.imapMaybe scoreOne its
 
