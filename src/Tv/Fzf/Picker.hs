@@ -147,7 +147,7 @@ readPalette = do
       matchFg = Theme.styleFg sty Theme.sPickerMatch
   pure Palette
     { fgBorder = panelFg, bgPanel = panelBg
-    , fgPrompt = selFg,   fgHdr   = panelFg
+    , fgPrompt = panelFg, fgHdr   = panelFg
     , fgRow    = panelFg
     , fgSel    = selFg,   bgSel   = selBg
     , fgMatch  = matchFg
