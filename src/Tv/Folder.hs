@@ -23,7 +23,7 @@ import System.FilePath ((</>))
 import qualified System.Posix.Files as Posix
 
 import Tv.App.Types (HandlerFn, tryStk, viewUp)
-import Tv.CmdConfig (Entry, mkEntry, hdl)
+import Tv.CmdConfig (Entry, mkEntry, hdl, withHint)
 import Tv.Data.DuckDB.Table (AdbcTable)
 import qualified Tv.Data.DuckDB.Table as Table
 import qualified Tv.Data.DuckDB.Ops as Ops
@@ -471,9 +471,9 @@ commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList
   [ hdl (mkEntry CmdFolderPush     "r" "D"     "Browse folder"               True  "")
         (\a ci _ -> tryStk a ci (push (a ^. #noSign) (a ^. #stk)))
-  , hdl (mkEntry CmdFolderEnter    "r" "<ret>" "Open file or enter directory" True "fld")
+  , hdl (withHint (mkEntry CmdFolderEnter    "r" "<ret>" "Open file or enter directory" True "fld"))
         (\a ci _ -> tryStk a ci (enter (a ^. #testMode) (a ^. #noSign) (a ^. #stk)))
-  , hdl (mkEntry CmdFolderParent   ""  "<bs>"  "Go to parent directory"       True "fld")
+  , hdl (withHint (mkEntry CmdFolderParent   ""  "<bs>"  "Go to parent directory"       True "fld"))
         (\a ci _ -> tryStk a ci (goParent (a ^. #noSign) (a ^. #stk)))
   , hdl (mkEntry CmdFolderDel      "r" ""      "Move to trash"               True  "")
         (\a ci _ -> case View.cur (a ^. #stk) ^. #vkind of

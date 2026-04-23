@@ -14,7 +14,7 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Tv.App.Types (HandlerFn, onStk, tryStk, viewUp)
-import Tv.CmdConfig (Entry, mkEntry, hdl)
+import Tv.CmdConfig (Entry, mkEntry, hdl, withHint)
 import qualified Tv.Nav as Nav
 import Tv.Types (Cmd (..), ViewKind (..))
 import Tv.View (ViewStack)
@@ -128,10 +128,10 @@ setKey s =
 commands :: V.Vector (Entry, Maybe HandlerFn)
 commands = V.fromList $
   [ hdl (mkEntry CmdMetaPush      ""  "M"     "Open column metadata view"       True  "")        (onStk push)
-  , hdl (mkEntry CmdMetaSetKey    "s" "<ret>" "Set selected rows as key columns" True  "colMeta")
+  , hdl (withHint (mkEntry CmdMetaSetKey    "s" "<ret>" "Set selected rows as key columns" True  "colMeta"))
         (\a ci _ -> if View.cur (a ^. #stk) ^. #vkind == VkColMeta then tryStk a ci (setKey (a ^. #stk)) else viewUp a ci)
-  , hdl (mkEntry CmdMetaStats     "s" "S"     "Compute stats for selected numeric cols" True "colMeta")
+  , hdl (withHint (mkEntry CmdMetaStats     "s" "S"     "Compute stats for selected numeric cols" True "colMeta"))
         (\a ci _ -> if View.cur (a ^. #stk) ^. #vkind == VkColMeta then tryStk a ci (stats (a ^. #stk)) else viewUp a ci)
-  , hdl (mkEntry CmdMetaCorr      "s" "C"     "Correlation matrix for selected numeric cols" True "colMeta")
+  , hdl (withHint (mkEntry CmdMetaCorr      "s" "C"     "Correlation matrix for selected numeric cols" True "colMeta"))
         (\a ci _ -> if View.cur (a ^. #stk) ^. #vkind == VkColMeta then tryStk a ci (corr (a ^. #stk)) else viewUp a ci)
   ] ++ [ hdl (mkEntry c "" k lbl True "") (selByH flt) | (c, k, lbl, flt) <- metaSels ]

@@ -32,7 +32,8 @@ data Entry = Entry
                              -- g=group columns, s=selected rows, a=user arg, S=stack(2+ views)
   , key      :: Text    -- key name: "j", "<ret>", "<C-d>", "<S-left>", etc.
   , label    :: Text    -- fzf menu label (empty = hidden from menu)
-  , resets :: Bool
+  , resets   :: Bool
+  , hint     :: Bool    -- surface in the info overlay (independent of menu visibility)
   , viewCtx  :: Text    -- context filter: "freqV", "colMeta", "fld", "tbl", or "" (global)
   }
 makeFieldLabelsNoPrefix ''Entry
@@ -94,7 +95,22 @@ menuItems cc vctx = V.mapMaybe go (cc ^. #ccMenu)
 -- | Entry constructor shorthand.
 mkEntry :: Cmd -> Text -> Text -> Text -> Bool -> Text -> Entry
 mkEntry c ctx_ key_ label_ resets_ vctx = Entry
-  { cmd = c, ctx = ctx_, key = key_, label = label_, resets = resets_, viewCtx = vctx }
+  { cmd = c, ctx = ctx_, key = key_, label = label_, resets = resets_
+  , hint = False, viewCtx = vctx }
+
+-- | Mark entry as hint-surfacing (shown in the info overlay).
+withHint :: Entry -> Entry
+withHint e = e { hint = True }
+
+-- | Hints for the info overlay: hint-flagged entries visible in the current view.
+infoHints :: CmdCache -> Text -> Vector (Text, Text)
+infoHints cc vctx = V.mapMaybe go (cc ^. #ccMenu)
+  where
+    go Entry{..}
+      | not hint                                = Nothing
+      | T.null key || T.null label              = Nothing
+      | not (T.null viewCtx) && viewCtx /= vctx = Nothing
+      | otherwise                               = Just (key, label)
 
 -- | Nav/sort entry: no handler, falls through to viewUp in dispatch.
 navE :: Entry -> (Entry, Maybe f)

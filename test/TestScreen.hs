@@ -122,12 +122,14 @@ test_freq_quit = do
 -- Pure: key_I (I → info.ent)
 -- Pure: Info.State.update (toggle vis on/off, returns Effect.none)
 
--- Info overlay hidden by default; I toggles it on
+-- Info overlay hidden by default; I toggles it on.
+-- After the CmdCache-sourced rewrite, VkTbl surfaces the hint-flagged
+-- global commands; assert on labels known to stay stable.
 test_info :: IO ()
 test_info = do
   out <- runHask "I" "data/basic.csv" []
   assertBool "Info overlay shown after I toggle"
-    (contains out "group by" || contains out "command menu")
+    (contains out "Select/deselect" || contains out "command menu")
 
 -- === Cursor tracking ===
 -- Pure: nav_grp_col (l! groups c1, cursor tracks)
