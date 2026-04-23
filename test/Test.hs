@@ -221,6 +221,15 @@ test_script_Q_quits_from_freq = do
   assert (contains err "# recreate: tv data/full.csv -p 'sort")
          ("expected recreate from underlying VkTbl on Q; got: " ++ show err)
 
+-- The second hint line (# prql:) carries the full pipeline with a
+-- leading `from <path>` so it can be pasted into prqlc / psql /
+-- anywhere else PRQL is accepted, without tv's CLI involvement.
+test_script_prql_line_has_from :: Assertion
+test_script_prql_line_has_from = do
+  err <- runHaskErr "[" "data/full.csv" []
+  assert (contains err "# prql:     from `data/full.csv` | sort")
+         ("expected # prql: line with from-clause; got: " ++ show err)
+
 -- ============================================================================
 -- === Meta selection tests (M0/M1) ===
 -- ============================================================================
@@ -1310,6 +1319,7 @@ ciTests = testGroup "ci"
   , testCase "script_p_flag_filters" test_script_p_flag_filters
   , testCase "script_combines_p_and_ops" test_script_combines_p_and_ops
   , testCase "script_Q_quits_from_freq" test_script_Q_quits_from_freq
+  , testCase "script_prql_line_has_from" test_script_prql_line_has_from
   , testCase "meta_0" test_meta_0
   , testCase "meta_1" test_meta_1
   , testCase "meta_0_enter" test_meta_0_enter

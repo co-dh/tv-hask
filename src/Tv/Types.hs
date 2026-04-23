@@ -26,8 +26,8 @@ module Tv.Types
   , RenderCtx(..)
     -- * Filter
   , filterPrql
-  , numType
     -- * Table helpers
+  , numType
   , filterPrompt
   , exprError
   , isPrqlKeyword
@@ -192,15 +192,19 @@ numType :: Text -> Bool
 numType t = isNumeric (ofString t)
 
 -- | Filter prompt hint (PRQL examples for the given column/type).
+-- Tight on screen real estate — show only the surprising-vs-SQL forms:
+-- `==` for equality (not `=`), `== null` for NULL check (not `IS NULL`),
+-- `~=` for regex (string only). The column name and type are already
+-- in the picker's prompt line above.
 -- If @col@ is a PRQL keyword (date, text, math, time, …) the examples
 -- use @this.col@ so a copy-paste works without tripping the parser.
 filterPrompt :: Text -> Text -> Text
 filterPrompt col typ =
   let c = if isPrqlKeyword col then "this." <> col else col
       eg = if numType typ
-             then "e.g. " <> c <> " > 5,  " <> c <> " >= 10 && " <> c <> " < 100"
-             else "e.g. " <> c <> " == 'USD',  " <> c <> " ~= 'pattern'"
-  in "PRQL filter on " <> col <> " (" <> typ <> "):  use == not =,  " <> eg
+             then c <> " == null,  " <> c <> " > 5 && " <> c <> " < 10"
+             else c <> " == null,  " <> c <> " ~= 'pat'"
+  in "e.g. " <> eg
 
 -- | Column names that clash with a PRQL keyword or std module — bare
 -- references to these would resolve to the builtin instead of the row
