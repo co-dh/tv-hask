@@ -15,6 +15,7 @@ module Tv.Fzf.Match where
 
 import Tv.Prelude
 import Data.Char (isUpper, isLower, isAlphaNum, toLower)
+import qualified Data.IntSet as IS
 import qualified Data.Text as T
 
 -- | Word-boundary start: position 0, or prior char is a non-alnum separator,
@@ -112,3 +113,41 @@ matchNoPos q t = fmap fst (match q t)
 -- | Score, returning 'minBound' on miss. Convenient as a sort key.
 score :: Text -> Text -> Int
 score q t = fromMaybe minBound (matchNoPos q t)
+
+-- | Multi-term match: the query is split on whitespace into terms that
+-- must all match (AND). A term prefixed with @!@ is a negation — the
+-- item matches only if that term does NOT appear. Each positive term
+-- keeps all of 'match's features (smartcase, @^prefix@, @suffix$@).
+-- Score is the sum of positive-term scores; positions are the union
+-- (sorted, deduped) so every matched character is highlighted.
+--
+-- A bare @!@ or all-negation query with no matching negation returns
+-- @Just (0, [])@ — matches everything.
+--
+-- >>> snd <$> matchMulti "foo bar" "foo and bar"
+-- Just [0,1,2,8,9,10]
+-- >>> matchMulti "foo !bar" "foo and bar"
+-- Nothing
+-- >>> snd <$> matchMulti "foo !bar" "foo and baz"
+-- Just [0,1,2]
+-- >>> matchMulti "!bar" "no match"
+-- Just (0,[])
+-- >>> matchMulti "!bar" "bar here"
+-- Nothing
+-- >>> matchMulti "" "anything"
+-- Just (0,[])
+matchMulti :: Text -> Text -> Maybe (Int, [Int])
+matchMulti q0 target
+  | T.null q0 = Just (0, [])
+  | otherwise = fmap finalize (go (T.words q0) 0 IS.empty)
+  where
+    finalize (s, ps) = (s, IS.toAscList ps)
+    go []          acc ps = Just (acc, ps)
+    go (term : ts) acc ps = case T.uncons term of
+      Just ('!', rest)
+        | T.null rest                -> go ts acc ps
+        | isJust (match rest target) -> Nothing
+        | otherwise                  -> go ts acc ps
+      _ -> case match term target of
+             Nothing       -> Nothing
+             Just (s, ps') -> go ts (acc + s) (IS.union ps (IS.fromList ps'))

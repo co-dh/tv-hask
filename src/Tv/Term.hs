@@ -981,11 +981,7 @@ fitToScreen screenW headerWidthsV dataWidthsV rawWidthsV colIdxs curCol
 -- | Order display columns cursor-first: the cursor column, then its
 -- neighbours outward — left-neighbour, right-neighbour, left+2, right+2…
 -- If @curCol@ isn't in @colIdxs@, falls back to left-to-right order.
---
--- >>> cursorOutOrder (V.fromList [0,1,2,3,4,5]) 2
--- [2,1,3,0,4,5]
--- >>> cursorOutOrder (V.fromList [10,11,12]) 11
--- [11,10,12]
+-- E.g. @colIdxs=[0,1,2,3,4,5]@, @curCol=2@ → @[2,1,3,0,4,5]@.
 cursorOutOrder :: Vector Word64 -> Word64 -> [Int]
 cursorOutOrder colIdxs curCol =
   let n     = V.length colIdxs
