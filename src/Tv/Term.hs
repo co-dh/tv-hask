@@ -655,9 +655,13 @@ print x y fg bg s =
 -- ============================================================================
 
 -- Constants matching the C renderer
-_MIN_HDR_WIDTH, _MAX_DISP_WIDTH :: Int
+_MIN_HDR_WIDTH, _MAX_DISP_WIDTH, _MAX_GROW_WIDTH :: Int
 _MIN_HDR_WIDTH  = 3
 _MAX_DISP_WIDTH = 50
+-- | Hard ceiling when a column is allowed to exceed _MAX_DISP_WIDTH
+-- because the screen has slack. Stops one wide column (JSON blob,
+-- long URL) from swallowing the whole row.
+_MAX_GROW_WIDTH = 200
 
 _SEP_FG :: Word32
 _SEP_FG = 240
@@ -877,26 +881,28 @@ layoutCols
 layoutCols screenW nCols texts names inWidths colIdxs nKeysI hidBits curCol colOff0 widthAdj =
   (layoutV, visKeys, baseWidthsV)
   where
-    (baseWidthsV, dataWidthsV, headerWidthsV) =
+    (baseWidthsV, dataWidthsV, headerWidthsV, rawWidthsV) =
       colWidths nCols texts names inWidths hidBits widthAdj
-    effWidthsV = shrinkToFit screenW headerWidthsV dataWidthsV colIdxs
+    effWidthsV = fitToScreen screenW headerWidthsV dataWidthsV rawWidthsV colIdxs curCol
     adjColOff = scrollOff screenW effWidthsV colIdxs nKeysI curCol colOff0
     layoutV   = placeCols screenW effWidthsV colIdxs nKeysI adjColOff
     visKeys   = V.length $ V.takeWhile (\(d, _, _) -> d < nKeysI) layoutV
 
--- | Phase 1 of layout: compute widths per original column. Returns a
--- triple: `baseWidthsV` is the cached monotonically-growing width
+-- | Phase 1 of layout: compute widths per original column. Returns:
+-- `baseWidthsV` is the cached monotonically-growing width
 -- (data+header, fed back as `inWidths` on the next render);
 -- `dataWidthsV` is the screen-ready width ignoring the header
 -- (minimum needed to fit the data); `headerWidthsV` is the screen-ready
--- width covering both data and header. Both display widths are clamped
--- to `_MAX_DISP_WIDTH` and shifted by `widthAdj`. Hidden columns collapse
--- to 0 base / 3 display.
+-- width covering both data and header — both clamped to `_MAX_DISP_WIDTH`
+-- and shifted by `widthAdj`; `rawWidthsV` is the uncapped natural width
+-- (max(dataW, headerW) + padding), used by `fitToScreen` to spend
+-- screen slack on columns that were truncated by the cap. Hidden
+-- columns collapse to 0 base / 3 display.
 colWidths
   :: Int -> Vector (Vector Text) -> Vector Text -> Vector Word64 -> IS.IntSet -> Int64
-  -> (Vector Int, Vector Int, Vector Int)
+  -> (Vector Int, Vector Int, Vector Int, Vector Int)
 colWidths nCols texts names inWidths hidBits widthAdj =
-  (baseWidthsV, dataWidthsV, headerWidthsV)
+  (baseWidthsV, dataWidthsV, headerWidthsV, rawWidthsV)
   where
     dataWV = V.generate nCols $ \c ->
       let col = if c < V.length texts then texts V.! c else V.empty
@@ -915,31 +921,78 @@ colWidths nCols texts names inWidths hidBits widthAdj =
     headerWidthsV = V.generate nCols $ \c ->
       if IS.member c hidBits then 3
       else adjust $ baseWidthsV V.! c
+    rawWidthsV = V.generate nCols $ \c ->
+      if IS.member c hidBits then 3
+      else let natural = max (max (dataWV V.! c) (headerW c)) _MIN_HDR_WIDTH + 2
+           in max 3 (natural + fromIntegral widthAdj)
 
--- | If the sum of `headerWidthsV` (plus separators) overruns `screenW`,
--- walk display columns right-to-left and replace each header width with
--- the (smaller) data width until the excess is gone or every column has
--- been narrowed. Keys live at the left of `colIdxs`, so non-key columns
--- shrink first.
-shrinkToFit
-  :: Int -> Vector Int -> Vector Int -> Vector Word64 -> Vector Int
-shrinkToFit screenW headerWidthsV dataWidthsV colIdxs
-  | excess0 <= 0 = headerWidthsV
-  | otherwise    = V.update headerWidthsV (V.fromList $ go (nDisp - 1) excess0 [])
+-- | Fit columns to screen: one pass, either shrink (overflow) or grow
+-- (underflow) depending on the sign of the slack.
+--
+-- Overflow (sum headerWidths > screenW): walk display columns
+-- right-to-left and replace each header width with the (smaller) data
+-- width until the excess is gone. Keys live at the left of `colIdxs`,
+-- so non-key columns shrink first.
+--
+-- Underflow (sum headerWidths < screenW): walk columns cursor-out
+-- (cursor → leftward → rightward), bump each capped column from its
+-- header width up to @min rawWidth growCeiling@ where
+-- @growCeiling = min _MAX_GROW_WIDTH (screenW * 3 `div` 4)@, spending
+-- slack until either each column has what it wants or slack is gone.
+fitToScreen
+  :: Int -> Vector Int -> Vector Int -> Vector Int -> Vector Word64 -> Word64 -> Vector Int
+fitToScreen screenW headerWidthsV dataWidthsV rawWidthsV colIdxs curCol
+  | slack < 0 = shrink (abs slack)
+  | slack > 0 = grow  slack
+  | otherwise = headerWidthsV
   where
     nDisp  = V.length colIdxs
     totalW = sum [ headerWidthsV V.! fromIntegral (colIdxs V.! c) + 1
                  | c <- [0 .. nDisp - 1] ]
-    excess0 = totalW - screenW
-    go idx excess acc
-      | idx < 0 || excess <= 0 = acc
-      | otherwise =
-          let origIdx = fromIntegral (colIdxs V.! idx)
-              h = headerWidthsV V.! origIdx
-              d = dataWidthsV   V.! origIdx
-          in if h > d
-             then go (idx - 1) (excess - (h - d)) ((origIdx, d) : acc)
-             else go (idx - 1) excess acc
+    slack  = screenW - totalW
+
+    shrink excess0 = V.update headerWidthsV (V.fromList $ go (nDisp - 1) excess0 [])
+      where
+        go idx excess acc
+          | idx < 0 || excess <= 0 = acc
+          | otherwise =
+              let origIdx = fromIntegral (colIdxs V.! idx)
+                  h = headerWidthsV V.! origIdx
+                  d = dataWidthsV   V.! origIdx
+              in if h > d
+                 then go (idx - 1) (excess - (h - d)) ((origIdx, d) : acc)
+                 else go (idx - 1) excess acc
+
+    grow slack0 = V.update headerWidthsV (V.fromList (go slack0 (cursorOutOrder colIdxs curCol) []))
+      where
+        ceiling_ = min _MAX_GROW_WIDTH (screenW * 3 `div` 4)
+        go _     []           acc = acc
+        go avail (origIdx:xs) acc
+          | avail <= 0 = acc
+          | otherwise =
+              let h    = headerWidthsV V.! origIdx
+                  r    = min ceiling_ (rawWidthsV V.! origIdx)
+                  take_ = min avail (r - h)
+              in if take_ > 0
+                 then go (avail - take_) xs ((origIdx, h + take_) : acc)
+                 else go avail xs acc
+
+-- | Order display columns cursor-first: the cursor column, then its
+-- neighbours outward. Columns whose orig index equals @curCol@ come
+-- first; remaining columns follow in left-to-right order.
+cursorOutOrder :: Vector Word64 -> Word64 -> [Int]
+cursorOutOrder colIdxs curCol =
+  let n     = V.length colIdxs
+      origs = [ fromIntegral (colIdxs V.! c) | c <- [0 .. n - 1] ]
+      cur_  = fromIntegral curCol :: Int
+      (l, r) = break (== cur_) origs
+  in case r of
+       []      -> origs
+       (x:xs)  -> x : interleave (reverse l) xs
+  where
+    interleave (a:as) (b:bs) = a : b : interleave as bs
+    interleave as     []     = as
+    interleave []     bs     = bs
 
 -- | Phase 2: scroll the non-key window right until the cursor column fits
 -- on screen. Key columns are pinned at the left and never scrolled.
