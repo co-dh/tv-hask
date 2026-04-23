@@ -16,7 +16,7 @@ module Tv.Term
     -- modifiers
   , modAlt, modCtrl, modShift
     -- ctrl codes
-  , ctrlD, ctrlU
+  , ctrlD, ctrlI, ctrlU
     -- colors / attributes
   , parseColor, underline
     -- event record
@@ -93,8 +93,9 @@ modCtrl  = 2
 modShift = 4
 
 -- | Ctrl+letter codes (Ctrl+A=1, Ctrl+B=2, ...)
-ctrlD, ctrlU :: Word32
+ctrlD, ctrlI, ctrlU :: Word32
 ctrlD = 4   -- Ctrl+D (page down)
+ctrlI = 9   -- Ctrl+I = Tab
 ctrlU = 21  -- Ctrl+U (page up)
 
 -- | All xterm-256 color names -> index. Built once at init.
