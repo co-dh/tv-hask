@@ -73,6 +73,7 @@ makeFieldLabelsNoPrefix ''Box
 
 data PickerState = PickerState
   { psQuery  :: !Text
+  , psCaret  :: !Int    -- ^ cursor index into psQuery (0..T.length)
   , psCur    :: !Int
   , psMatch  :: !(Vector (Int, Int, [Int]))
   , psBox    :: !Box
@@ -111,7 +112,7 @@ runPicker opts@PickerOpts{items, header, initial} = do
       boxY    = max 0 ((sh - boxH) `div` 2)
       box     = Box { bx = boxX, by = boxY, bw = boxW, bh = boxH }
       ms0     = computeMatches initial its
-      st0     = PickerState { psQuery = initial, psCur = 0
+      st0     = PickerState { psQuery = initial, psCaret = T.length initial, psCur = 0
                             , psMatch = ms0, psBox = box }
   drawFrame opts st0
   -- fireFocus instead of inlining: it does the redraw-after-callback
@@ -157,9 +158,9 @@ readPalette = do
     }
 
 data Key
-  = KChar Char | KEnter | KEsc | KBackspace | KTab
-  | KUp | KDown | KHome | KEnd | KPgUp | KPgDn
-  | KCtrlU | KCtrlK | KCtrlJ
+  = KChar Char | KEnter | KEsc | KBackspace | KTab | KDel
+  | KUp | KDown | KLeft | KRight | KHome | KEnd | KPgUp | KPgDn
+  | KCtrlU | KCtrlK | KCtrlJ | KCtrlA | KCtrlE | KCtrlW
   | KIgnore
   deriving (Eq, Show)
 
@@ -169,15 +170,21 @@ toKey Term.Event{Term.typ, Term.keyCode, Term.ch}
   | typ /= Term.eventKey          = KIgnore
   | keyCode == Term.keyArrowUp    = KUp
   | keyCode == Term.keyArrowDown  = KDown
+  | keyCode == Term.keyArrowLeft  = KLeft
+  | keyCode == Term.keyArrowRight = KRight
   | keyCode == Term.keyEnter      = KEnter
   | keyCode == Term.keyEsc        = KEsc
   | keyCode == Term.keyBackspace  = KBackspace
   | keyCode == Term.keyBackspace2 = KBackspace
+  | keyCode == Term.keyDelete     = KDel
   | keyCode == Term.keyHome       = KHome
   | keyCode == Term.keyEnd        = KEnd
   | keyCode == Term.keyPageUp     = KPgUp
   | keyCode == Term.keyPageDown   = KPgDn
+  | ch == Term.ctrlA              = KCtrlA
+  | ch == Term.ctrlE              = KCtrlE
   | ch == Term.ctrlU              = KCtrlU
+  | ch == Term.ctrlW              = KCtrlW
   | ch == 0x0B                    = KCtrlK
   | ch == 0x0A                    = KCtrlJ
   | ch == 0x0D                    = KEnter
@@ -195,10 +202,19 @@ loop opts st = do
     Just ev -> case toKey ev of
       KEsc       -> pure ""
       KEnter     -> pure (selection opts st)
-      KChar c    -> typed opts st (st ^. #psQuery <> T.singleton c) >>= loop opts
-      KBackspace -> typed opts st (dropLast (st ^. #psQuery))       >>= loop opts
-      KCtrlU     -> typed opts st ""                                >>= loop opts
-      KTab       -> typed opts st (currentDisplay opts st)          >>= loop opts
+      -- query edits
+      KChar c    -> editQ opts st (insertAt c   q i) (i + 1)
+      KBackspace -> editQ opts st (deleteBefore q i) (max 0 (i - 1))
+      KDel       -> editQ opts st (deleteAt     q i) i
+      KCtrlU     -> editQ opts st ""                 0
+      KCtrlW     -> let (q', c') = deleteWordBack q i in editQ opts st q' c'
+      KTab       -> let t = currentDisplay opts st   in editQ opts st t (T.length t)
+      -- cursor moves within query
+      KLeft      -> moveCaret opts st (max 0 (i - 1))
+      KRight     -> moveCaret opts st (min (T.length q) (i + 1))
+      KCtrlA     -> moveCaret opts st 0
+      KCtrlE     -> moveCaret opts st (T.length q)
+      -- list navigation
       KUp        -> moveCur opts st (-1)                            >>= loop opts
       KCtrlK     -> moveCur opts st (-1)                            >>= loop opts
       KDown      -> moveCur opts st 1                               >>= loop opts
@@ -208,20 +224,53 @@ loop opts st = do
       KHome      -> setCur opts st 0                                >>= loop opts
       KEnd       -> setCur opts st (V.length (st ^. #psMatch) - 1)  >>= loop opts
       KIgnore    -> loop opts st
+  where
+    q = st ^. #psQuery
+    i = st ^. #psCaret
+    editQ o s q' c' = typed o s q' c' >>= loop o
+    moveCaret o s c' = do
+      let c'' = max 0 (min (T.length (s ^. #psQuery)) c')
+          s' = s { psCaret = c'' }
+      when (s ^. #psCaret /= c'') (drawFrame o s')
+      loop o s'
 
-dropLast :: Text -> Text
-dropLast t = if T.null t then t else T.init t
+-- | Text editing primitives parameterised by caret index.
+insertAt :: Char -> Text -> Int -> Text
+insertAt c q i = T.take i q <> T.singleton c <> T.drop i q
 
--- | Handle a query change: re-filter, reset highlight, redraw, fire
--- onFocus only if the top match changed so a no-op query update doesn't
--- re-trigger the caller's live preview. Skip the whole pipeline if the
--- query didn't change (Tab on a row whose text already matches the query).
-typed :: PickerOpts -> PickerState -> Text -> IO PickerState
-typed opts st q'
-  | q' == st ^. #psQuery = pure st
+deleteBefore :: Text -> Int -> Text
+deleteBefore q i
+  | i <= 0    = q
+  | otherwise = T.take (i - 1) q <> T.drop i q
+
+deleteAt :: Text -> Int -> Text
+deleteAt q i
+  | i >= T.length q = q
+  | otherwise       = T.take i q <> T.drop (i + 1) q
+
+-- | Ctrl-W: delete back to the start of the previous word (spaces, then
+-- non-spaces). Returns updated (query, caret). Matches bash/readline.
+deleteWordBack :: Text -> Int -> (Text, Int)
+deleteWordBack q i = (T.take newI q <> T.drop i q, newI)
+  where
+    -- walk back over spaces, then over non-spaces
+    left = T.take i q
+    trimR = T.dropWhileEnd (== ' ') left
+    trimWord = T.dropWhileEnd (/= ' ') trimR
+    newI = T.length trimWord
+
+-- | Handle a query edit: re-filter if the query text changed; always
+-- advance the caret and redraw. fireFocus only if the top match
+-- changed so a no-op query update doesn't re-trigger live preview.
+typed :: PickerOpts -> PickerState -> Text -> Int -> IO PickerState
+typed opts st q' caret'
+  | q' == st ^. #psQuery = do
+      let st' = st { psCaret = caret' }
+      when (st ^. #psCaret /= caret') (drawFrame opts st')
+      pure st'
   | otherwise = do
       let ms'     = computeMatches q' (opts ^. #items)
-          st'     = st { psQuery = q', psMatch = ms', psCur = 0 }
+          st'     = st { psQuery = q', psCaret = caret', psMatch = ms', psCur = 0 }
           prevTop = (\(i,_,_) -> i) <$> ((st ^. #psMatch) V.!? (st ^. #psCur))
           newTop  = (\(i,_,_) -> i) <$> (ms' V.!? 0)
       drawFrame opts st'
@@ -319,6 +368,12 @@ drawFrame opts st = do
       countTxt = T.pack (show matched) <> "/" <> T.pack (show total)
   drawBorder pal bx by bw bh countTxt
   drawLine bx promptY innerW promptLn (pal ^. #fgPrompt) (pal ^. #bgPanel)
+  -- Paint the caret as an inverted cell over the prompt line. The caret
+  -- index is into psQuery, so the screen column is prompt-length + caret.
+  drawCaret bx promptY innerW
+            (T.length (opts ^. #prompt) + (st ^. #psCaret))
+            (caretCh st)
+            (pal ^. #bgPanel) (pal ^. #fgPrompt)
   when hasHdr $
     drawLine bx hdrY innerW (opts ^. #header) (pal ^. #fgHdr) (pal ^. #bgPanel)
   forM_ [0 .. nRows - 1] $ \r -> do
@@ -371,6 +426,31 @@ bottomBorder innerW countTxt =
          let fill = innerW - w - tail_
          in "└" <> T.replicate fill "─" <> " " <> countTxt <> " "
               <> T.replicate tail_ "─" <> "┘"
+
+-- | Pick the character that sits under the caret — the char to the
+-- right of the caret if any, else a space. @drawLine@ has already
+-- painted a leading space inside the border, so caret-at-end lands
+-- on that space. Uses 'T.compareLength' to avoid an extra full scan.
+caretCh :: PickerState -> Text
+caretCh st =
+  let q = st ^. #psQuery
+      i = st ^. #psCaret
+  in case T.compareLength q i of
+       GT -> T.singleton (T.index q i)
+       _  -> " "
+
+-- | Paint a single inverted cell over an already-drawn line, used as
+-- the caret. @col@ is the screen column *offset* inside the inner
+-- region (0 = first cell after the left border bar). No-op if @col@
+-- is outside the visible inner width.
+drawCaret :: Int -> Int -> Int -> Int -> Text -> Word32 -> Word32 -> IO ()
+drawCaret xBox y innerW col ch fg bg
+  -- drawLine writes from (xBox+1) and pads a leading space, so caret
+  -- at col 0 sits on that leading space — shift everything by +1.
+  | col + 1 >= innerW = pure ()
+  | otherwise =
+      Term.padC (fromIntegral (xBox + 1 + col + 1)) (fromIntegral y)
+                1 fg bg ch 0
 
 -- | Draw a text row inside the frame (between the two side bars).
 drawLine :: Int -> Int -> Int -> Text -> Word32 -> Word32 -> IO ()
