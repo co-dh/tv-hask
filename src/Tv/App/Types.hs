@@ -171,7 +171,11 @@ stkH :: HandlerFn
 stkH = \a ci _ ->
   pure $ case View.updateStack (a ^. #stk) (ci ^. #ciCmd) of
     Just (_, EffectQuit) -> ActQuit
-    Just (s', _)         -> ActOk (withStk a ci s')
+    -- Stack pop/dup/swap puts a different table on top; the cached
+    -- sparklines belong to the previous table and would render against
+    -- the wrong column counts. resetVS clears them so renderBase
+    -- recomputes for the new top.
+    Just (s', _)         -> ActOk (resetVS (withStk a ci s'))
     Nothing              -> ActUnhandled
 
 precSet :: Int -> HandlerFn
