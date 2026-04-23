@@ -53,11 +53,6 @@ data NavAxis elem = NavAxis
   }
 makeFieldLabelsNoPrefix ''NavAxis
 
--- Default NavAxis (cursor at 0, no selections).
--- Lean requires `h : n > 0`; caller guarantees this in Haskell.
-defAxis :: NavAxis elem
-defAxis = NavAxis { cur = 0, sels = V.empty }
-
 -- Type aliases: Row uses Int (index), Col uses Text (name, stable across deletion)
 type RowNav = NavAxis Int
 type ColNav = NavAxis Text
@@ -135,21 +130,6 @@ hiddenIdxs :: NavState t -> Vector Int
 hiddenIdxs nav =
   let names = colNames nav
   in V.mapMaybe (idxOf names) (nav ^. #hidden)
-
--- | Constructor. Caller provides cached metadata extracted from the table.
-new :: Int -> Int -> Vector Text -> Vector ColType -> t -> NavState t
-new nRows_ total names types t = NavState
-  { tbl      = t
-  , tblRows  = nRows_
-  , tblTotal = total
-  , tblNames = names
-  , tblTypes = types
-  , row      = defAxis
-  , col      = defAxis
-  , grp      = V.empty
-  , hidden   = V.empty
-  , dispIdxs = dispOrder V.empty names
-  }
 
 -- | Constructor with initial row/col cursor and group (clamped to valid range)
 newAt :: Int -> Int -> Vector Text -> Vector ColType -> t -> Int -> Vector Text -> Int -> NavState t

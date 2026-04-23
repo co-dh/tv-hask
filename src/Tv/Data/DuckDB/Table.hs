@@ -1,5 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 {-
   DuckDB table: AdbcTable with PRQL query support.
 
@@ -186,7 +187,7 @@ remoteName path_ =
   in "tc_" <> s
   where
     isAlphaNum c =
-      (isDigit c) || (isAsciiLower c) || (isAsciiUpper c)
+      isDigit c || isAsciiLower c || isAsciiUpper c
 
 -- | Create from file path (queries total count).
 --   Remote URLs (hf://) are materialized into a DuckDB temp table first.
@@ -228,7 +229,7 @@ fromTable table = do
       q = Prql.defaultQuery { Prql.base = "from " <> qualName }
   total <- queryCount q
   m <- requery q total
-  pure $ fmap (\t -> (t, keys)) m
+  pure $ fmap (, keys) m
 
 -- | Sort: append sort op and re-query (all columns use given direction)
 sortBy :: AdbcTable -> Vector Int -> Bool -> IO AdbcTable

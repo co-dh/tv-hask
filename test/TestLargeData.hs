@@ -10,6 +10,7 @@
 --   Lean's "runlarge" separation from regular CI.
 module TestLargeData (tests) where
 
+import Control.Monad (when)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Tv.Types (headD, getD)
@@ -29,9 +30,7 @@ import TestUtil
 withFixture :: FilePath -> Assertion -> Assertion
 withFixture path body = do
   ok <- hasFile path
-  if ok
-    then body
-    else pure ()
+  when ok body
 
 
 -- === Width stability (pac.csv — gitignored) ===

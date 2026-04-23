@@ -312,7 +312,7 @@ runCandle s = do
       case Nav.idxOf names xName of
         Nothing -> err s ("candle: x column '" <> xName <> "' not found")
         Just xIdx -> do
-          let xType0 = (Ops.colType tbl xIdx)
+          let xType0 = Ops.colType tbl xIdx
           xType  <- sniffXType tbl xIdx xType0
           Term.shutdown
           altEnter
@@ -329,7 +329,7 @@ runCandle s = do
               renderFrame pngPath (V.singleton (Interval "all" 1)) 0 renderErr
               -- wait for q to exit
               let waitQ = do c <- readKey
-                             unless (c == 'q') $ waitQ
+                             unless (c == 'q') waitQ
               waitQ
               exitPlot
               pure (Just s)
@@ -402,7 +402,7 @@ runSingle s kind = do
       setRaw
       let loop = do
             key <- readKey
-            unless (handleKey key == KeyQuit) $ loop
+            unless (handleKey key == KeyQuit) loop
       loop
       exitPlot
       pure (Just s)

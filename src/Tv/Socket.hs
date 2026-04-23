@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 -- | Unix-domain socket command channel.
 --
 -- Wire protocol: bind a Unix domain socket at /tmp/tv-<pid>.sock, spawn a
@@ -76,7 +77,7 @@ sockStart p = do
 
 sockPoll :: IO String
 sockPoll = do
-  cmd <- atomicModifyIORef' bufRef (\t -> (T.empty, t))
+  cmd <- atomicModifyIORef' bufRef (T.empty,)
   pure (T.unpack cmd)
 
 sockClose :: IO ()

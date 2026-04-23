@@ -1,2 +1,6 @@
-roots = [ "^Main\\.main$", "^Spec\\.main$", "^Main\\.spec$" ]
+# Template Haskell splice target: Tv.Types.$(deriveStrEnum ''X) expands to
+# code that references `deriveStrEnum`, but weeder doesn't follow TH, so
+# keep the helper live as a root.
+roots = [ "^Main\\.main$", "^Spec\\.main$", "^Main\\.spec$",
+          "^Tv\\.Types\\.TH\\.deriveStrEnum$" ]
 type-class-roots = true

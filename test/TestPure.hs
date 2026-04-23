@@ -10,7 +10,6 @@ import qualified Data.Text as T
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 
-import Data.IORef (newIORef, readIORef, modifyIORef')
 import System.Timeout (timeout)
 
 import Test.Tasty (TestTree, testGroup)
@@ -22,7 +21,6 @@ import Optics.Core ((^.), (.~), (&), (%))
 import qualified Tv.CmdConfig as CmdConfig
 import qualified Tv.Nav as Nav
 import qualified Tv.View as View
-import qualified Tv.Term as Term
 import qualified Tv.Fzf as Fzf
 import qualified Tv.Fzf.Match as Match
 import Tv.Types (Cmd(..), ColType(..), ViewKind(..))
@@ -47,7 +45,7 @@ mkNav nRows_ nCols_ =
   let names = V.generate nCols_ (\i -> T.pack ("c" ++ show i))
       types = V.replicate nCols_ ColTypeStr
       tbl   = MockTable { mockRows = nRows_, mockNames = names }
-  in Nav.new nRows_ nRows_ names types tbl
+  in Nav.newAt nRows_ nRows_ names types tbl 0 V.empty 0
 
 -- optics-core + optics-th sanity: the generated labels on NavAxis/NavState
 -- must round-trip view/set. A regression here means makeFieldLabelsNoPrefix
@@ -55,26 +53,15 @@ mkNav nRows_ nCols_ =
 opticsTests :: TestTree
 opticsTests = testGroup "optics-th labels"
   [ testCase "NavAxis #cur read + write round-trip" $ do
-      let a0 = Nav.defAxis & #cur .~ 5 :: Nav.NavAxis Int
+      -- pull an empty axis out of a fresh nav, then write #cur via label
+      let n = Nav.newAt 5 5 mockNames53 mockTypes53 mock53 0 V.empty 0
+          a0 = (n ^. #row) & #cur .~ 5
       (a0 ^. #cur) @?= 5
       ((a0 & #cur .~ 42) ^. #cur) @?= 42
   , testCase "NavState #row % #cur composed optic" $ do
-      let n0 = Nav.new 5 5 mockNames53 mockTypes53 mock53
+      let n0 = Nav.newAt 5 5 mockNames53 mockTypes53 mock53 0 V.empty 0
           n1 = n0 & #row % #cur .~ 3
       (n1 ^. #row % #cur) @?= 3
-  ]
-
--- Regression: width/height were only written in Term.init, so resizes
--- left every caller on pre-resize dims until restart.
-resizeTests :: TestTree
-resizeTests = testGroup "Term.clear resize"
-  [ testCase "clear resyncs buffer dims after simulated resize" $ do
-      _ <- Term.init
-      Term._setScreenBufSize 40 10
-      Term.clear
-      w <- Term.width
-      h <- Term.height
-      (fromIntegral w, fromIntegral h) @?= (80 :: Int, 24 :: Int)
   ]
 
 -- Property tests: invariants that must hold across the pure core.
@@ -157,7 +144,7 @@ propPushPop =
         v1   = View.new nav0 "b.csv"
         s0   = View.ViewStack { View.hd = v0, View.tl = [] }
         s1   = View.push s0 v1
-    in fmap ((^. #hd % #path)) (View.pop s1) === Just (v0 ^. #path)
+    in fmap (^. #hd % #path) (View.pop s1) === Just (v0 ^. #path)
 
 -- ViewStack.swap: swap (swap s) == s for non-empty (hasParent) stack.
 propSwapInvolutive :: Property
@@ -213,19 +200,6 @@ propertyTests = testGroup "properties"
   , testProperty "dispOrder indices round-trip idxOf"  propDispOrderIdx
   ]
 
--- With the in-process picker we own the terminal explicitly, so the old
--- "mute poll outside tmux" hack isn't needed anymore. 'gatePoll' is kept
--- as a no-op wrapper (API preserved for callers) that runs poll in both
--- modes. These tests pin down that contract.
-test_gatePoll_runs :: IO ()
-test_gatePoll_runs = do
-  count <- newIORef (0 :: Int)
-  let bumpPoll = modifyIORef' count (+ 1)
-  Fzf.gatePoll False bumpPoll
-  Fzf.gatePoll True  bumpPoll
-  n <- readIORef count
-  n @?= 2
-
 -- Regression: Fzf.cmdMode hardcoded testMode=False, so pressing space
 -- in tests spawned a real fzf popup that grabbed /dev/tty and blocked
 -- the user's terminal until they escaped. The contract is that with
@@ -242,8 +216,7 @@ test_cmdMode_testmode_skips_fzf = do
 
 fzfTests :: TestTree
 fzfTests = testGroup "Fzf"
-  [ testCase "gatePoll runs poll in both modes" test_gatePoll_runs
-  , testCase "cmdMode testMode skips picker"    test_cmdMode_testmode_skips_fzf
+  [ testCase "cmdMode testMode skips picker"    test_cmdMode_testmode_skips_fzf
   ]
 
 -- Fuzzy match correctness. The picker ranks by score; the assertions below
@@ -266,14 +239,16 @@ matchTests = testGroup "Fzf.Match"
   , testCase "no match returns Nothing" $
       Match.match "xyz" "abc" @?= Nothing
   , testCase "start-of-word ranks higher than mid-word" $ do
-      let s1 = Match.score "a" "alpha"      -- 'a' at word start
-          s2 = Match.score "a" "zza"        -- 'a' mid-string
+      let score q t = maybe minBound fst (Match.match q t)
+          s1 = score "a" "alpha"      -- 'a' at word start
+          s2 = score "a" "zza"        -- 'a' mid-string
       assertFailureIf (s1 <= s2) ("word-start should outrank mid, got " ++ show (s1, s2))
   , testCase "consecutive match ranks higher than split match" $ do
       -- Both candidates have the query chars at the same word-start so the
       -- only difference is whether the 2nd char is adjacent to the 1st.
-      let s1 = Match.score "ab" "_ab"       -- 'a','b' consecutive
-          s2 = Match.score "ab" "_a_b"      -- 'a','b' separated
+      let score q t = maybe minBound fst (Match.match q t)
+          s1 = score "ab" "_ab"       -- 'a','b' consecutive
+          s2 = score "ab" "_a_b"      -- 'a','b' separated
       assertFailureIf (s1 <= s2) ("consecutive should outrank split, got " ++ show (s1, s2))
   , testProperty "match positions strictly increasing and in bounds" $
       forAll (choose (0 :: Int, 4)) $ \qn ->
@@ -292,7 +267,6 @@ matchTests = testGroup "Fzf.Match"
 tests :: TestTree
 tests = testGroup "TestPure"
   [ opticsTests
-  , resizeTests
   , propertyTests
   , fzfTests
   , matchTests

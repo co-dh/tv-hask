@@ -135,7 +135,7 @@ attachFile ap Format{duckdbExt, attachType} = do
              let disp_ = case reverse (T.splitOn "/" ap) of
                            (x:_) -> x
                            []    -> ap
-             pure $ ((\v -> v & #vkind .~ Types.VkFld ap 1 & #disp .~ disp_) <$> View.fromTbl adbc ap 0 (V.singleton "name") 0)
+             pure ((\v -> v & #vkind .~ Types.VkFld ap 1 & #disp .~ disp_) <$> View.fromTbl adbc ap 0 (V.singleton "name") 0)
 
 -- | Open any supported data file as a View (attach for DB, reader for data files)
 openFile :: Text -> IO (Maybe (View AdbcTable))

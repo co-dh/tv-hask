@@ -246,7 +246,7 @@ listCache = unsafePerformIO (newIORef V.empty)
 cacheLookup :: Text -> IO (Maybe AdbcTable)
 cacheLookup path_ = do
   arr <- readIORef listCache
-  pure $ (snd <$> V.find (\(k, _) -> k == path_) arr)
+  pure (snd <$> V.find (\(k, _) -> k == path_) arr)
 
 cacheStore :: Text -> AdbcTable -> IO ()
 cacheStore path_ tbl =

@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
 -- | In-process fuzzy picker, rendered as a popup overlay on the existing
 -- TUI cell buffer — not a separate full-screen mode.
 --
@@ -270,7 +271,7 @@ currentDisplay opts st = case (st ^. #psMatch) V.!? (st ^. #psCur) of
 -- and reuses it across items.
 computeMatches :: Text -> Vector Text -> Vector (Int, Int, [Int])
 computeMatches q its
-  | T.null q  = V.generate (V.length its) (\i -> (i, 0, []))
+  | T.null q  = V.generate (V.length its) (, 0, [])
   | otherwise =
       let terms         = parseQuery q
           scoreOne i ln = (\(s, ps) -> (i, s, ps)) <$> matchParsed terms ln
