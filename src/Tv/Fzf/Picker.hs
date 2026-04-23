@@ -37,6 +37,7 @@ import qualified Data.Vector as V
 
 import Tv.Fzf.Match (match)
 import qualified Tv.Term as Term
+import {-# SOURCE #-} qualified Tv.Theme as Theme
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Options for one picker invocation.
@@ -76,6 +77,20 @@ data PickerState = PickerState
   , psBox    :: !Box
   }
 makeFieldLabelsNoPrefix ''PickerState
+
+-- | Palette snapshot for one frame — read once from 'Theme.stylesRef' so a
+-- mid-frame theme change can't split one popup across two colour schemes.
+data Palette = Palette
+  { fgBorder :: !Word32
+  , bgPanel  :: !Word32
+  , fgPrompt :: !Word32
+  , fgHdr    :: !Word32
+  , fgRow    :: !Word32
+  , fgSel    :: !Word32
+  , bgSel    :: !Word32
+  , fgMatch  :: !Word32
+  }
+makeFieldLabelsNoPrefix ''Palette
 
 runPicker :: PickerOpts -> IO Text
 runPicker opts@PickerOpts{items, header, initial} = do
@@ -121,6 +136,22 @@ erasePopup Box{bx, by, bw, bh} =
   forM_ [0 .. bh - 1] $ \dy ->
     Term.padC (fromIntegral bx) (fromIntegral (by + dy))
               (fromIntegral bw) 0 0 (T.replicate bw " ") 0
+
+readPalette :: IO Palette
+readPalette = do
+  sty <- Theme.getStyles
+  let panelFg = Theme.styleFg sty Theme.sPickerPanel
+      panelBg = Theme.styleBg sty Theme.sPickerPanel
+      selFg   = Theme.styleFg sty Theme.sPickerSel
+      selBg   = Theme.styleBg sty Theme.sPickerSel
+      matchFg = Theme.styleFg sty Theme.sPickerMatch
+  pure Palette
+    { fgBorder = panelFg, bgPanel = panelBg
+    , fgPrompt = selFg,   fgHdr   = panelFg
+    , fgRow    = panelFg
+    , fgSel    = selFg,   bgSel   = selBg
+    , fgMatch  = matchFg
+    }
 
 data Key
   = KChar Char | KEnter | KEsc | KBackspace
@@ -242,10 +273,9 @@ display True line = case T.splitOn "\t" line of
 display False line = line
 
 -- | Draw the whole popup — border, prompt, count line, optional header,
--- item rows — into the cell buffer and flush. Colours are hardcoded
--- (not theme-driven) so the popup looks consistent across themes and so
--- this module can stay independent of 'Tv.Theme' (Theme imports Fzf,
--- which would create a module cycle).
+-- item rows — into the cell buffer and flush. Colours come from the
+-- active theme via 'readPalette' ('Theme.stylesRef'), read once per
+-- frame. The Theme↔Fzf module cycle is broken with an hs-boot import.
 --
 -- Layout:
 --   row 0                 top border      ┌────────────┐
@@ -256,6 +286,7 @@ display False line = line
 --   row bh-1              bottom border   └────────────┘
 drawFrame :: PickerOpts -> PickerState -> IO ()
 drawFrame opts st = do
+  pal <- readPalette
   let Box{bx, by, bw, bh} = st ^. #psBox
       hasHdr   = not (T.null (opts ^. #header))
       innerW   = bw - 2
@@ -269,44 +300,46 @@ drawFrame opts st = do
       total    = V.length (opts ^. #items)
       matched  = V.length (st ^. #psMatch)
       countLn  = "  " <> T.pack (show matched) <> "/" <> T.pack (show total)
-  drawBorder bx by bw bh
-  drawLine bx promptY innerW promptLn fgPrompt bgPanel
-  drawLine bx countY  innerW countLn  fgHdr    bgPanel
+  drawBorder pal bx by bw bh
+  drawLine bx promptY innerW promptLn (pal ^. #fgPrompt) (pal ^. #bgPanel)
+  drawLine bx countY  innerW countLn  (pal ^. #fgHdr)    (pal ^. #bgPanel)
   when hasHdr $
-    drawLine bx hdrY innerW (opts ^. #header) fgHdr bgPanel
+    drawLine bx hdrY innerW (opts ^. #header) (pal ^. #fgHdr) (pal ^. #bgPanel)
   forM_ [0 .. nRows - 1] $ \r -> do
     let y = firstRow + r
     case (st ^. #psMatch) V.!? (scroll + r) of
       Nothing ->
-        drawLine bx y innerW "" fgRow bgPanel
+        drawLine bx y innerW "" (pal ^. #fgRow) (pal ^. #bgPanel)
       Just (idx, _, poses) -> do
         let selected = (scroll + r) == st ^. #psCur
             raw      = (opts ^. #items) V.! idx
             shown    = display (opts ^. #withNth) raw
             adj      = if opts ^. #withNth then adjustPositions raw poses else poses
-            bgLine   = if selected then bgSel else bgPanel
-            fgLine   = if selected then fgSel else fgRow
+            bgLine   = if selected then pal ^. #bgSel else pal ^. #bgPanel
+            fgLine   = if selected then pal ^. #fgSel else pal ^. #fgRow
             marker   = if selected then "> " else "  "
         drawItem bx y innerW marker shown adj
-                 fgLine bgLine fgMatch bgLine
+                 fgLine bgLine (pal ^. #fgMatch) bgLine
   Term.present
 
 -- | Render the outer frame.
-drawBorder :: Int -> Int -> Int -> Int -> IO ()
-drawBorder x y w h = do
+drawBorder :: Palette -> Int -> Int -> Int -> Int -> IO ()
+drawBorder pal x y w h = do
   let innerW = w - 2
       top    = "┌" <> T.replicate innerW "─" <> "┐"
       bot    = "└" <> T.replicate innerW "─" <> "┘"
+      fg     = pal ^. #fgBorder
+      bg     = pal ^. #bgPanel
   Term.padC (fromIntegral x) (fromIntegral y)
-            (fromIntegral w) fgBorder bgPanel top 0
+            (fromIntegral w) fg bg top 0
   Term.padC (fromIntegral x) (fromIntegral (y + h - 1))
-            (fromIntegral w) fgBorder bgPanel bot 0
+            (fromIntegral w) fg bg bot 0
   -- side bars on each inner row
   forM_ [1 .. h - 2] $ \dy -> do
     Term.padC (fromIntegral x) (fromIntegral (y + dy)) 1
-              fgBorder bgPanel "│" 0
+              fg bg "│" 0
     Term.padC (fromIntegral (x + w - 1)) (fromIntegral (y + dy)) 1
-              fgBorder bgPanel "│" 0
+              fg bg "│" 0
 
 -- | Draw a text row inside the frame (between the two side bars).
 drawLine :: Int -> Int -> Int -> Text -> Word32 -> Word32 -> IO ()
@@ -314,18 +347,6 @@ drawLine x y innerW t fg bg = do
   let padded = " " <> padR (innerW - 1) t
   Term.padC (fromIntegral (x + 1)) (fromIntegral y) (fromIntegral innerW)
             fg bg padded 0
-
--- Hardcoded palette indices for the popup. White/grey on a dark panel so
--- it reads cleanly over any theme without ever using white-on-blue.
-fgBorder, bgPanel, fgPrompt, fgHdr, fgRow, fgSel, bgSel, fgMatch :: Word32
-bgPanel  = 236  -- dark grey panel background
-fgBorder = 244  -- medium grey border
-fgPrompt = 15   -- bright white prompt
-fgHdr    = 244  -- dim header
-fgRow    = 7    -- light grey rows
-bgSel    = 240  -- slightly lighter panel for selected row
-fgSel    = 15   -- bright white selected fg
-fgMatch  = 11   -- bright yellow match-position highlight
 
 -- | Right-pad a Text to exactly @n@ characters; truncate if longer.
 padR :: Int -> Text -> Text
