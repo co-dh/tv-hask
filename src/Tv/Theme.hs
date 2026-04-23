@@ -38,17 +38,22 @@ styleNames = V.fromList
   [ "cursor", "selRow", "selColCurRow", "selCol"
   , "curRow", "curCol", "default", "header", "group"
   , "status", "statusDim", "bar", "barDim", "error", "errorDim", "hint"
+  , "pickerPanel", "pickerSel", "pickerMatch"
   ]
 
 -- | Style index constants for Lean-side UI (C render uses 0-8 directly)
-sStatus, sStatusDim, sBar, sBarDim, sError, sErrorDim, sHint :: Int
-sStatus    = 9
-sStatusDim = 10
-sBar       = 11
-sBarDim    = 12
-sError     = 13
-sErrorDim  = 14
-sHint      = 15
+sStatus, sStatusDim, sBar, sBarDim, sError, sErrorDim, sHint,
+  sPickerPanel, sPickerSel, sPickerMatch :: Int
+sStatus      = 9
+sStatusDim   = 10
+sBar         = 11
+sBarDim      = 12
+sError       = 13
+sErrorDim    = 14
+sHint        = 15
+sPickerPanel = 16
+sPickerSel   = 17
+sPickerMatch = 18
 
 styleFg :: Vector Word32 -> Int -> Word32
 styleFg sty idx = fromMaybe 0 $ sty V.!? (idx * 2)
@@ -81,6 +86,9 @@ defaultDark = V.fromList
   , c "white", c "red"           -- 13: error
   , c "brBlack", c "red"         -- 14: errorDim
   , c "black", c "yellow"        -- 15: hint
+  , c "gray21", c "gray2"        -- 16: pickerPanel
+  , c "black", c "brYellow"      -- 17: pickerSel
+  , c "brYellow", c "default"    -- 18: pickerMatch
   ]
 
 -- | Global styles ref — lets errorPopup/statusMsg access theme without parameter threading
@@ -122,19 +130,19 @@ themeName idx =
 -- Inline copy of theme.csv (kept in sync with the file on disk).
 builtinCsv :: Text
 builtinCsv = T.unlines
-  [ "theme,variant,cursor,selRow,selColCurRow,selCol,curRow,curCol,default,header,group,status,statusDim,bar,barDim,error,errorDim,hint"
-  , "default,dark,black brWhite,black rgb354,black rgb435,brMagenta default,default gray2,default gray6,default default,green rgb112,default gray5,cyan default,brBlack default,white blue,brBlack blue,white red,brBlack red,black yellow"
-  , "default,light,white black,black brCyan,black rgb435,magenta default,default gray20,default gray20,default default,black brWhite,default gray20,cyan default,brBlack default,black white,brBlack white,white red,brBlack red,black yellow"
-  , "ansi,dark,black brWhite,black brCyan,black brMagenta,brYellow default,default brBlack,default brBlack,default default,brWhite blue,default brBlack,cyan default,brBlack default,white blue,brBlack blue,white red,brBlack red,black yellow"
-  , "ansi,light,brWhite black,black cyan,black magenta,blue default,default white,default white,default default,black white,default white,cyan default,brBlack default,black white,brBlack white,white red,brBlack red,black yellow"
-  , "nord,dark,black rgb234,black rgb232,black rgb435,rgb234 default,default gray4,default gray4,gray21 default,gray21 gray4,default gray4,cyan default,brBlack default,gray21 gray4,brBlack gray4,white red,brBlack red,black yellow"
-  , "nord,light,gray4 rgb234,gray4 rgb232,gray4 rgb435,rgb234 default,default gray21,default gray21,gray4 default,gray4 gray21,default gray21,gray4 default,brBlack default,gray4 gray21,brBlack gray21,white red,brBlack red,black yellow"
-  , "dracula,dark,black rgb524,black rgb325,black rgb435,rgb524 default,default gray6,default gray6,default default,brWhite rgb325,default gray6,cyan default,brBlack default,brWhite rgb325,brBlack rgb325,white red,brBlack red,black yellow"
-  , "dracula,light,white rgb325,white rgb524,black rgb435,rgb325 default,default gray18,default gray18,default default,white rgb325,default gray18,rgb325 default,brBlack default,white rgb325,brBlack rgb325,white red,brBlack red,black yellow"
-  , "gruvbox,dark,black rgb520,black rgb330,black rgb543,rgb520 default,default gray4,default gray4,rgb553 default,rgb553 rgb310,default gray4,rgb553 default,rgb310 default,rgb553 rgb310,rgb310 rgb310,white red,brBlack red,black yellow"
-  , "gruvbox,light,rgb310 rgb520,rgb310 rgb543,rgb310 rgb330,red default,default rgb553,default rgb553,rgb310 default,rgb553 rgb310,default rgb553,rgb310 default,rgb553 default,rgb310 rgb553,rgb553 rgb553,white red,brBlack red,black yellow"
-  , "monokai,dark,black brYellow,black rgb512,black rgb325,rgb512 default,default gray6,default gray6,default default,brWhite gray6,default gray6,cyan default,brBlack default,white gray6,brBlack gray6,white red,brBlack red,black yellow"
-  , "monokai,light,gray6 brYellow,black rgb512,black rgb325,rgb325 default,default gray20,default gray20,default default,white gray6,default gray20,cyan default,brBlack default,white gray6,brBlack gray6,white red,brBlack red,black yellow"
+  [ "theme,variant,cursor,selRow,selColCurRow,selCol,curRow,curCol,default,header,group,status,statusDim,bar,barDim,error,errorDim,hint,pickerPanel,pickerSel,pickerMatch"
+  , "default,dark,black brWhite,black rgb354,black rgb435,brMagenta default,default gray2,default gray6,default default,green rgb112,default gray5,cyan default,brBlack default,white blue,brBlack blue,white red,brBlack red,black yellow,gray21 gray2,black brYellow,brYellow default"
+  , "default,light,white black,black brCyan,black rgb435,magenta default,default gray20,default gray20,default default,black brWhite,default gray20,cyan default,brBlack default,black white,brBlack white,white red,brBlack red,black yellow,black gray22,white blue,red default"
+  , "ansi,dark,black brWhite,black brCyan,black brMagenta,brYellow default,default brBlack,default brBlack,default default,brWhite blue,default brBlack,cyan default,brBlack default,white blue,brBlack blue,white red,brBlack red,black yellow,brWhite rgb001,black brYellow,brYellow default"
+  , "ansi,light,brWhite black,black cyan,black magenta,blue default,default white,default white,default default,black white,default white,cyan default,brBlack default,black white,brBlack white,white red,brBlack red,black yellow,black rgb553,white blue,red default"
+  , "nord,dark,black rgb234,black rgb232,black rgb435,rgb234 default,default gray4,default gray4,gray21 default,gray21 gray4,default gray4,cyan default,brBlack default,gray21 gray4,brBlack gray4,white red,brBlack red,black yellow,gray22 rgb011,rgb011 rgb344,rgb542 default"
+  , "nord,light,gray4 rgb234,gray4 rgb232,gray4 rgb435,rgb234 default,default gray21,default gray21,gray4 default,gray4 gray21,default gray21,gray4 default,brBlack default,gray4 gray21,brBlack gray21,white red,brBlack red,black yellow,gray4 gray22,gray22 rgb345,rgb014 default"
+  , "dracula,dark,black rgb524,black rgb325,black rgb435,rgb524 default,default gray6,default gray6,default default,brWhite rgb325,default gray6,cyan default,brBlack default,brWhite rgb325,brBlack rgb325,white red,brBlack red,black yellow,rgb554 rgb122,rgb011 rgb524,rgb554 default"
+  , "dracula,light,white rgb325,white rgb524,black rgb435,rgb325 default,default gray18,default gray18,default default,white rgb325,default gray18,rgb325 default,brBlack default,white rgb325,brBlack rgb325,white red,brBlack red,black yellow,black rgb554,rgb554 rgb325,rgb325 default"
+  , "gruvbox,dark,black rgb520,black rgb330,black rgb543,rgb520 default,default gray4,default gray4,rgb553 default,rgb553 rgb310,default gray4,rgb553 default,rgb310 default,rgb553 rgb310,rgb310 rgb310,white red,brBlack red,black yellow,rgb553 rgb111,rgb111 rgb531,rgb520 default"
+  , "gruvbox,light,rgb310 rgb520,rgb310 rgb543,rgb310 rgb330,red default,default rgb553,default rgb553,rgb310 default,rgb553 rgb310,default rgb553,rgb310 default,rgb553 default,rgb310 rgb553,rgb553 rgb553,white red,brBlack red,black yellow,rgb200 rgb553,rgb553 rgb310,rgb310 default"
+  , "monokai,dark,black brYellow,black rgb512,black rgb325,rgb512 default,default gray6,default gray6,default default,brWhite gray6,default gray6,cyan default,brBlack default,white gray6,brBlack gray6,white red,brBlack red,black yellow,rgb554 rgb111,rgb111 rgb541,rgb502 default"
+  , "monokai,light,gray6 brYellow,black rgb512,black rgb325,rgb325 default,default gray20,default gray20,default default,white gray6,default gray20,cyan default,brBlack default,white gray6,brBlack gray6,white red,brBlack red,black yellow,gray6 rgb554,rgb554 rgb325,rgb325 default"
   ]
 
 -- | Find theme.csv: next to binary, then CWD, then builtin
