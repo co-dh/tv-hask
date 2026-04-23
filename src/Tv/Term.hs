@@ -9,14 +9,14 @@
 module Tv.Term
   ( -- keys
     keyArrowUp, keyArrowDown, keyArrowLeft, keyArrowRight
-  , keyPageUp, keyPageDown, keyHome, keyEnd
+  , keyPageUp, keyPageDown, keyHome, keyEnd, keyDelete
   , keyEsc, keyEnter, keyBackspace, keyBackspace2
     -- event types
   , eventKey
     -- modifiers
   , modAlt, modCtrl, modShift
     -- ctrl codes
-  , ctrlI, ctrlU
+  , ctrlA, ctrlE, ctrlI, ctrlU, ctrlW
     -- colors / attributes
   , parseColor
     -- event record
@@ -63,11 +63,12 @@ import Tv.Types (ColType(..), isNumeric)
 import Optics.TH (makeFieldLabelsNoPrefix)
 
 -- | Key codes (from termbox2.h)
-keyArrowUp, keyArrowDown, keyArrowLeft, keyArrowRight :: Word16
+keyArrowUp, keyArrowDown, keyArrowLeft, keyArrowRight, keyDelete :: Word16
 keyArrowUp    = 0xFFFF - 18
 keyArrowDown  = 0xFFFF - 19
 keyArrowLeft  = 0xFFFF - 20
 keyArrowRight = 0xFFFF - 21
+keyDelete     = 0xFFFF - 27
 
 keyPageUp, keyPageDown, keyHome, keyEnd :: Word16
 keyPageUp   = 0xFFFF - 23
@@ -92,9 +93,12 @@ modCtrl  = 2
 modShift = 4
 
 -- | Ctrl+letter codes (Ctrl+A=1, Ctrl+B=2, ...)
-ctrlI, ctrlU :: Word32
+ctrlA, ctrlE, ctrlI, ctrlU, ctrlW :: Word32
+ctrlA = 1   -- Ctrl+A (readline: go to start of line)
+ctrlE = 5   -- Ctrl+E (readline: go to end of line)
 ctrlI = 9   -- Ctrl+I = Tab
-ctrlU = 21  -- Ctrl+U (page up)
+ctrlU = 21  -- Ctrl+U (readline: clear line)
+ctrlW = 23  -- Ctrl+W (readline: delete word back)
 
 -- | All xterm-256 color names -> index. Built once at init.
 -- ANSI names (0-15, black=16), rgbRGB cube (16-231), grayN ramp (232-255).
@@ -539,6 +543,7 @@ toEvents s = case s of
     csiLetter 'F' = key keyEnd
     csiLetter _   = toEvent '\x1B'
     csiTilde "1" = key keyHome
+    csiTilde "3" = key keyDelete
     csiTilde "4" = key keyEnd
     csiTilde "5" = key keyPageUp
     csiTilde "6" = key keyPageDown
