@@ -139,19 +139,31 @@ test_freq_keeps_grp = do
   out <- run "!F" "data/basic.csv"
   assert (contains (snd (footer out)) "grp=1") "Freq view keeps grp columns"
 
--- Pressing F (open Freq) then q (pop back) used to leave sparklines
--- empty: resetVS cleared them on the freq push, but on pop the
--- previous-table sparklines never re-computed. Now pureDispatch's
--- stack-op branch calls resetVS too, so renderBase recomputes for the
--- popped-to table.
+-- Pressing F (open Freq) then q (pop back) used to leave the sparkline
+-- row reflecting the freq table's columns, not the popped-to table's.
+-- `stkH` (which handles q/CmdStkPop) called `withStk` which never
+-- touches sparklines, so the freq-table sparklines lingered against the
+-- popped-to table — column counts mismatched and `renderBase`'s
+-- "if null" guard kept the stale data. Fix: stkH now wraps in resetVS
+-- so the sparklines re-derive for the new top.
+--
+-- Strict assertion: post-Fq frame must contain the same sparkline
+-- glyph sequence as a fresh open. (full.csv exposes the bug: its freq
+-- view's mostly-empty count sparkline (single █ at index 10, beyond the
+-- visible col width) leaves the spark row blank with the bug, vs
+-- showing original's multi-glyph sparklines on value/score with the
+-- fix.)
 test_sparkline_after_freq_back :: Assertion
 test_sparkline_after_freq_back = do
-  out <- run "Fq" "data/basic.csv"
-  -- Sparkline glyphs: U+2581..U+2588 (▁▂▃▄▅▆▇█).
-  let hasGlyph = any (`T.isInfixOf` out)
-                     ["\x2581", "\x2582", "\x2583", "\x2584",
-                      "\x2585", "\x2586", "\x2587", "\x2588"]
-  assert hasGlyph "Sparkline glyphs present after F → q"
+  baseline <- run "" "data/full.csv"
+  fqBack   <- run "Fq" "data/full.csv"
+  let glyphs t = T.filter (`elem` blockChars) t
+      blockChars = "\x2581\x2582\x2583\x2584\x2585\x2586\x2587\x2588" :: String
+  assert (not (T.null (glyphs baseline)))
+         "baseline render has sparkline glyphs"
+  assert (glyphs baseline == glyphs fqBack)
+         ("sparkline glyphs after Fq must match baseline; got "
+           ++ show (glyphs fqBack) ++ " vs " ++ show (glyphs baseline))
 
 -- ============================================================================
 -- === Meta selection tests (M0/M1) ===
