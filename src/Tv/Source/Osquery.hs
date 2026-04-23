@@ -5,9 +5,10 @@
 module Tv.Source.Osquery where
 
 import Tv.Prelude
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, throwIO, try)
 import qualified Data.Text as T
 import qualified Data.Vector as V
+import System.Directory (findExecutable)
 import System.Exit (ExitCode (..))
 
 import qualified Tv.Data.DuckDB.Conn as Conn
@@ -40,10 +41,24 @@ osqSetup = Core.onceFor setupKey $ do
   case r of
     Right _ -> Log.write "src" "osquery:// attach ok"
     Left _  -> do
+      -- First attach failed: the cached DuckDB doesn't exist yet. Populating
+      -- it requires the osqueryi binary — if it's missing, fail fast with a
+      -- clear, actionable message instead of a cryptic DuckDB error from the
+      -- retry attach below.
+      mExe <- findExecutable "osqueryi"
+      case mExe of
+        Nothing -> throwIO $ userError
+          "osqueryi not found in PATH. Install osquery \
+          \(https://osquery.io) to use osquery:// URLs."
+        Just _  -> pure ()
       Log.write "src" "osquery:// attach failed, running OsquerySetup.run"
       Setup.run
-      _ <- Conn.query attach
-      pure ()
+      r2 <- try (Conn.query attach) :: IO (Either SomeException Conn.QueryResult)
+      case r2 of
+        Right _ -> pure ()
+        Left _  -> throwIO $ userError
+          "osquery:// setup produced no tables. Check `osqueryi --version` \
+          \and the log at ~/.cache/tv/tv.log."
 
 osqList :: Bool -> Text -> IO (Maybe AdbcTable)
 osqList _ _ = do

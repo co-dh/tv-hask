@@ -1151,6 +1151,20 @@ test_osquery_sort_enter = do
       assert (contains tab "osquery://") "sort+enter: osquery tab still visible"
       assert (not (contains out "safety")) "sort+enter: opened table, not listing"
 
+-- When osqueryi is not installed, `tv osquery://` must not crash with a
+-- raw DuckDB "database does not exist" message — the user needs a clear
+-- pointer to the missing dependency.
+test_osquery_missing_tool :: Assertion
+test_osquery_missing_tool = do
+  ok <- hasOsquery
+  if ok
+    then pure ()
+    else do
+      err <- runHaskErr "" "osquery://" []
+      assert (not (contains err "DuckDBError")) "no raw DuckDBError leak"
+      assert (not (contains err "database does not exist")) "no raw duckdb message"
+      assert (contains (T.toLower err) "osqueryi") "error mentions osqueryi"
+
 cachedCurlCheck :: IORef (Maybe Bool) -> String -> IO Bool
 cachedCurlCheck ref url = cachedCheck ref $ do
   (ec, _, _) <- readProcessWithExitCode "curl"
@@ -1415,6 +1429,7 @@ heavyTests = testGroup "heavy"
   , testCase "osquery_direct_table" test_osquery_direct_table
   , testCase "osquery_typed_columns" test_osquery_typed_columns
   , testCase "osquery_sort_enter" test_osquery_sort_enter
+  , testCase "osquery_missing_tool" test_osquery_missing_tool
   , testCase "hf_readme" test_hf_readme
   , testCase "hf_enter_parquet" test_hf_enter_parquet
   , testCase "hf_backspace" test_hf_backspace
