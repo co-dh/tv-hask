@@ -14,21 +14,24 @@ module Tv.App.Main
 
 import Tv.Prelude
 import Control.Exception (SomeException, fromException, try)
+import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified Data.Vector as V
-import System.Directory (doesDirectoryExist)
+import System.Directory (doesDirectoryExist, doesFileExist)
 import System.Environment (getArgs, lookupEnv)
-import System.Exit (ExitCode(..), exitWith)
-import System.IO (stderr)
+import System.Exit (ExitCode(..), exitSuccess, exitWith)
+import System.IO (stderr, stdout, hSetBuffering, BufferMode(..))
 
 import qualified Tv.App.Common as Common
 import Tv.App.Types (AppState(..))
-import Tv.Types (ColCache(..), ViewKind(..))
+import Tv.Types (ColCache(..), StrEnum(toString), ViewKind(..), escSql)
+import qualified Tv.Data.DuckDB.Conn as Conn
 import qualified Tv.Data.DuckDB.Ops as Ops
 import qualified Tv.Data.DuckDB.Prql as Prql
+import Tv.Data.DuckDB.Prql (funcsBytes)
 import qualified Tv.Data.DuckDB.Table as AdbcTable
-import Tv.Data.DuckDB.Table (AdbcTable)
+import Tv.Data.DuckDB.Table (AdbcTable, stripSemi)
 import qualified Tv.Data.Text as TextParse
 import qualified Tv.FileFormat as FileFormat
 import qualified Tv.Folder as Folder
@@ -342,6 +345,150 @@ dispatchPath path_ keys_ testMode noSign_ pipeMode theme initialPrql = do
       Just v  -> do _ <- go v; pure ()
       Nothing -> FileFormat.viewFile testMode path_
 
+-- ----------------------------------------------------------------------------
+-- Non-interactive (agent/script) flags: --prql-funcs, --schema, --emit, --doc
+--
+-- All of these write to stdout and exit; none of them touch Term.init or
+-- paint a TUI. Errors go to stderr. DuckDB is initialized on demand for
+-- flags that need it (schema, emit); --prql-funcs and --doc don't.
+-- ----------------------------------------------------------------------------
+
+-- | Dump embedded funcs.prql to stdout.
+dumpFuncs :: IO ()
+dumpFuncs = BS.hPut stdout funcsBytes
+
+-- | Initialize DuckDB for non-interactive flags; abort with stderr + exit
+-- code 1 if backend init fails. Returns nothing (just side-effect).
+initBackend :: IO ()
+initBackend = do
+  err <- AdbcTable.init
+  unless (T.null err) $ do
+    TIO.hPutStrLn stderr ("Backend init failed: " <> err)
+    exitWith (ExitFailure 1)
+
+-- | Check that a path refers to a local file. URL schemes and
+-- directories are rejected with an actionable error. We scope --schema
+-- and --emit to local files in this first cut — remote sources need
+-- auth/config plumbing that's not worth replicating for one-shot CLI.
+requireLocalFile :: Text -> IO ()
+requireLocalFile p
+  | T.null p = die "path is empty"
+  | T.isInfixOf "://" p = die ("remote sources not supported; got " <> p)
+  | otherwise = do
+      isDir <- doesDirectoryExist (T.unpack p)
+      when isDir $ die ("path is a directory, not a file: " <> p)
+      ok <- doesFileExist (T.unpack p)
+      unless ok $ die ("no such file: " <> p)
+  where
+    die msg = do TIO.hPutStrLn stderr ("Error: " <> msg); exitWith (ExitFailure 1)
+
+-- | Print column schema for a local data file as TSV: header
+-- @column\ttype\tnullable@, one row per column.
+dumpSchema :: Text -> IO ()
+dumpSchema path_ = do
+  requireLocalFile path_
+  initBackend
+  let sql = "DESCRIBE SELECT * FROM '" <> escSql path_ <> "'"
+  r <- try (Conn.query sql) :: IO (Either SomeException Conn.QueryResult)
+  case r of
+    Left e -> do
+      TIO.hPutStrLn stderr ("DESCRIBE failed for " <> path_ <> ": " <> T.pack (show e))
+      AdbcTable.shutdown
+      exitWith (ExitFailure 1)
+    Right qr -> do
+      TIO.putStrLn "column\ttype\tnullable"
+      -- DuckDB DESCRIBE columns: column_name, column_type, null, key, default, extra
+      let nc = Conn.ncols qr
+          colIdx name = V.findIndex (== name) (qr ^. #colNames)
+          nameIx = fromMaybe 0 (colIdx "column_name")
+          typeIx = fromMaybe 1 (colIdx "column_type")
+          nullIx = fromMaybe 2 (colIdx "null")
+      when (nc >= 3) $
+        forM_ [0 .. Conn.nrows qr - 1] $ \i -> do
+          let nm  = Conn.cellStr qr i nameIx
+              ty  = Conn.cellStr qr i typeIx
+              nul = Conn.cellStr qr i nullIx
+          TIO.putStrLn (nm <> "\t" <> ty <> "\t" <> nul)
+      AdbcTable.shutdown
+
+-- | DuckDB COPY option clause for an --emit format keyword.
+emitOpt :: Text -> Maybe Text
+emitOpt "csv"    = Just "(FORMAT CSV, HEADER true)"
+emitOpt "tsv"    = Just "(FORMAT CSV, HEADER true, DELIMITER '\t')"
+emitOpt "json"   = Just "(FORMAT JSON, ARRAY true)"
+emitOpt "ndjson" = Just "(FORMAT JSON)"
+emitOpt _        = Nothing
+
+-- | Execute a PRQL pipeline (or raw path dump) and write results to
+-- stdout in the requested format, then exit. Accepts the same subset of
+-- flags as the main CLI: positional path, -p PRQL, -f FILE.
+runEmit :: Text -> [Text] -> IO ()
+runEmit fmt rest = case emitOpt fmt of
+  Nothing -> do
+    TIO.hPutStrLn stderr
+      ("Error: --emit FMT must be one of csv, tsv, json, ndjson; got " <> fmt)
+    exitWith (ExitFailure 2)
+  Just opt -> do
+    let cli0 = parseArgs rest
+    prqlText <- case (cli0 ^. #prql, cli0 ^. #script) of
+      (Just q, _)        -> pure (Just q)
+      (Nothing, Just f)  -> (Just . T.stripEnd) <$> TIO.readFile (T.unpack f)
+      (Nothing, Nothing) -> pure Nothing
+    let path_ = fromMaybe "" (cli0 ^. #path)
+    when (T.null path_ && isNothing prqlText) $ do
+      TIO.hPutStrLn stderr
+        "Error: --emit needs at least a path or -p PRQL (or -f FILE)"
+      exitWith (ExitFailure 2)
+    -- Local-only: PRQL without a from-clause still needs the file resolved.
+    unless (T.null path_) $ requireLocalFile path_
+    initBackend
+    -- Build the PRQL. If user gave PRQL with its own `from`-clause, use
+    -- it as-is; if they gave `-p ops` with a path, build `from <path> | ops`;
+    -- if no PRQL, raw SELECT * from the file.
+    innerSql <- case prqlText of
+      Nothing ->
+        pure (Right ("SELECT * FROM '" <> escSql path_ <> "'"))
+      Just q -> do
+        let q' = case pathFromPrql q of
+                   Just _  -> q
+                   Nothing -> "from `" <> path_ <> "` | " <> q
+        m <- Prql.compile q'
+        pure $ case m of
+          Just sql -> Right (stripSemi sql)
+          Nothing  -> Left q'
+    case innerSql of
+      Left q' -> do
+        TIO.hPutStrLn stderr ("Error: PRQL compile failed: " <> q')
+        AdbcTable.shutdown
+        exitWith (ExitFailure 1)
+      Right sql -> do
+        hSetBuffering stdout NoBuffering
+        let copySql = "COPY (" <> sql <> ") TO '/dev/stdout' " <> opt
+        r <- try (Conn.query copySql) :: IO (Either SomeException Conn.QueryResult)
+        AdbcTable.shutdown
+        case r of
+          Left e -> do
+            TIO.hPutStrLn stderr ("Error: emit failed: " <> T.pack (show e))
+            exitWith (ExitFailure 1)
+          Right _ -> pure ()
+
+-- | Dump the command menu as TSV: handler, key, viewCtx, hint, label.
+-- Entries with empty label are skipped (those are either internal-only
+-- dispatch targets or key-only bindings without a menu entry).
+dumpCommands :: IO ()
+dumpCommands = do
+  TIO.putStrLn "handler\tkey\tviewCtx\thint\tlabel"
+  let entries = V.map fst Common.commands
+  V.forM_ entries $ \e ->
+    unless (T.null (e ^. #label)) $
+      TIO.putStrLn $ T.intercalate "\t"
+        [ toString (e ^. #cmd)
+        , e ^. #key
+        , e ^. #viewCtx
+        , if e ^. #hint then "1" else "0"
+        , e ^. #label
+        ]
+
 helpText :: Text
 helpText = T.unlines
   [ "tv — terminal viewer for tabular data"
@@ -376,6 +523,16 @@ helpText = T.unlines
   , "  +n                  no-sign mode for S3 and similar anonymous sources."
   , "  -h, --help          Show this help and exit."
   , ""
+  , "Non-interactive (agent/script) flags:"
+  , "  --prql-funcs        Dump the embedded funcs.prql prelude to stdout."
+  , "  --schema PATH       Print column schema (name\\ttype\\tnullable) for a"
+  , "                      local data file; no TUI. Remote URLs not supported."
+  , "  --emit FMT [args]   Run PRQL / raw path and stream results to stdout."
+  , "                      FMT = csv | tsv | json | ndjson. Accepts -p PRQL,"
+  , "                      -f FILE, or a positional path. Local files only."
+  , "  --doc commands      Dump the command menu as TSV"
+  , "                      (handler\\tkey\\tviewCtx\\thint\\tlabel)."
+  , ""
   , "On exit, tv prints a self-contained `tv -p '...'` line on stderr"
   , "(the PRQL carries its own from-clause), so you can copy-paste it"
   , "to rerun the same view, or strip `tv -p '…'` to use the PRQL in"
@@ -388,7 +545,19 @@ helpText = T.unlines
 appMain :: [Text] -> IO ()
 appMain args
   | any (`elem` (["-h", "--help"] :: [Text])) args = TIO.putStr helpText
-  | otherwise = do
+  | otherwise = case args of
+      -- Non-interactive flags first: they exit without ever touching Term.init.
+      -- Keep them strictly positional so help text remains self-describing.
+      ["--prql-funcs"]            -> dumpFuncs >> exitSuccess
+      ["--schema", p]             -> dumpSchema p >> exitSuccess
+      ("--emit" : fmt : rest)     -> runEmit fmt rest >> exitSuccess
+      ["--doc", "commands"]       -> dumpCommands >> exitSuccess
+      _                           -> appMainInteractive args
+
+-- | The original TUI-bound entry path, split out so the new non-interactive
+-- flags can short-circuit without threading through it.
+appMainInteractive :: [Text] -> IO ()
+appMainInteractive args = do
   let cli0 = parseArgs args
   -- -f FILE reads a PRQL script (multi-line, with `let`s) and feeds it
   -- as if -p had been passed verbatim. -p still wins if both given.
