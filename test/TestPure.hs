@@ -255,8 +255,12 @@ matchTests = testGroup "Fzf.Match"
       Match.match "" "anything" @?= Just (0, [])
   , testCase "subsequence match, separator-skipped" $
       (snd <$> Match.match "abc" "a-b-c") @?= Just [0, 2, 4]
-  , testCase "case-insensitive match returns target positions" $
-      (snd <$> Match.match "ABC" "abc") @?= Just [0, 1, 2]
+  , testCase "smartcase: lowercase query matches any case" $
+      (snd <$> Match.match "abc" "ABC") @?= Just [0, 1, 2]
+  , testCase "smartcase: uppercase query is case-sensitive (miss)" $
+      Match.match "ABC" "abc" @?= Nothing
+  , testCase "smartcase: uppercase query matches uppercase target" $
+      (snd <$> Match.match "ABC" "ABCdef") @?= Just [0, 1, 2]
   , testCase "camelCase boundary picked" $
       (snd <$> Match.match "fB" "fooBar") @?= Just [0, 3]
   , testCase "no match returns Nothing" $
