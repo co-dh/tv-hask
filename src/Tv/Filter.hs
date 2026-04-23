@@ -191,9 +191,18 @@ rowFilter :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
 rowFilter tm s = withDistinct s $ \_curCol curName vals -> do
   let typ    = Ops.colType (tbl s) _curCol
       header = filterPrompt curName (toString typ)
+      -- Prepend type-aware PRQL example snippets as first items so the
+      -- user can pick a complete expression instead of typing one. The
+      -- picker treats anything not in `vals` as a literal expression
+      -- (see filterPrql). Skipped in test mode — fzfCore returns the
+      -- first item by default there, and existing filter tests expect
+      -- that to be a column value (not an example).
+      items
+        | tm        = V.toList vals
+        | otherwise = V.toList (filterExamples curName (isNumeric typ)) ++ V.toList vals
   mResult <- Fzf.fzf tm
               (V.fromList ["--print-query", "--header=" <> header, "--prompt=filter > "])
-              (T.intercalate "\n" (V.toList vals))
+              (T.intercalate "\n" items)
   case mResult of
     Nothing -> pure s
     Just result ->
@@ -208,6 +217,31 @@ rowFilter tm s = withDistinct s $ \_curCol curName vals -> do
               grp'   = v ^. #nav % #grp
           v' <- hoistMaybe $ View.rebuild v tbl' curCol grp' 0
           pure $ push s (v' & #disp .~ ("\\" <> curName))
+
+-- | PRQL example snippets shown as picker items in the row-filter
+-- popup, by column type. The strings are complete expressions ready
+-- to commit; pick one and submit, or type your own.
+filterExamples :: Text -> Bool -> Vector Text
+filterExamples col numeric =
+  let c = "this.`" <> col <> "`"
+      common =
+        [ c <> " == null"
+        , c <> " != null"
+        ]
+      numericEgs =
+        [ c <> " > 0"
+        , c <> " >= 10 && " <> c <> " < 100"
+        , c <> " == 0"
+        ]
+      stringEgs =
+        [ c <> " ~= 'pat'"
+        , c <> " == ''"
+        , "text.starts_with 'pre' " <> c
+        , "text.ends_with 'fix' " <> c
+        , "text.contains 'sub' " <> c
+        , "text.lower " <> c <> " == 'value'"
+        ]
+  in V.fromList (common ++ if numeric then numericEgs else stringEgs)
 
 -- | Jump to column by name directly (no fzf). Called by socket/dispatch.
 jumpCol :: ViewStack AdbcTable -> Text -> IO (ViewStack AdbcTable)

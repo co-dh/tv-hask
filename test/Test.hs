@@ -167,68 +167,66 @@ test_sparkline_after_freq_back = do
            ++ show (glyphs fqBack) ++ " vs " ++ show (glyphs baseline))
 
 -- ============================================================================
--- === Scriptability tests (-p flag, recreate cmd at session end) ===
+-- === Scriptability tests (-p flag, recreate hint at session end) ===
 -- ============================================================================
+--
+-- Exit format: a single `tv -p '<full PRQL>'` line on stderr — no `# `
+-- prefix and no separate path argument. The PRQL always carries its
+-- own `from <path>` clause so the line is self-contained (paste into
+-- shell to rerun, or strip `tv -p '…'` to paste into prqlc / psql).
 
--- A vanilla session should print `tv <path>` (no -p segment) on stderr.
+-- A vanilla session prints just `tv -p 'from `<path>`'`.
 test_script_print_no_ops :: Assertion
 test_script_print_no_ops = do
   err <- runHaskErr "" "data/full.csv" []
-  assert (contains err "# recreate: tv data/full.csv")
-         ("expected recreate line for plain session; got: " ++ show err)
+  assert (contains err "tv -p 'from `data/full.csv`'")
+         ("expected vanilla recreate line; got: " ++ show err)
 
--- An interactively-added op (sort via `[`) must show up in -p on stderr.
+-- An interactively-added op (sort via `[`) shows up after a `|`.
 test_script_print_after_sort :: Assertion
 test_script_print_after_sort = do
   err <- runHaskErr "[" "data/full.csv" []
-  assert (contains err "# recreate: tv data/full.csv -p")
-         ("expected -p segment after sort; got: " ++ show err)
-  assert (contains err "sort")
-         "recreate -p segment must mention sort"
+  assert (contains err "tv -p 'from `data/full.csv` | sort")
+         ("expected sort op in recreate; got: " ++ show err)
 
--- `-p "filter ..."` must (a) actually filter the rows on stdout and
--- (b) round-trip back into the printed recreate command on stderr.
--- The PRQL `filter score > 80` has no $/`/\\/" so shellQuote picks
--- double quotes (cleaner than single+escape).
+-- `-p "filter ..."` must (a) filter the rows on stdout and (b) appear
+-- in the recreate line, prefixed by the from-clause.
 test_script_p_flag_filters :: Assertion
 test_script_p_flag_filters = do
   out <- runHask    "" "data/full.csv" ["-p", "filter score > 80"]
   err <- runHaskErr "" "data/full.csv" ["-p", "filter score > 80"]
   assert (contains out "r0/3")
          ("expected -p filter to drop to 3 rows; got: " ++ show (T.takeEnd 300 out))
-  assert (contains err "# recreate: tv data/full.csv -p \"filter score > 80\"")
-         ("expected recreate to round-trip -p in double quotes; got: " ++ show err)
+  -- backticks in `from \`<path>\`` force single quotes (would trigger
+  -- command substitution in double quotes).
+  assert (contains err "tv -p 'from `data/full.csv` | filter score > 80'")
+         ("expected recreate to round-trip -p with from-clause; got: " ++ show err)
 
 -- Initial -p + interactive op should be combined with " | " in the recreate.
--- The interactive sort op renders with backticks (`{this.\`name\`}`),
--- which trip command substitution in double quotes — falls back to
--- single quotes for the whole pipeline.
 test_script_combines_p_and_ops :: Assertion
 test_script_combines_p_and_ops = do
   err <- runHaskErr "[" "data/full.csv" ["-p", "filter score > 80"]
-  assert (contains err "# recreate: tv data/full.csv -p 'filter score > 80 |")
-         ("expected combined -p | sort fallback to single quotes; got: " ++ show err)
+  assert (contains err "tv -p 'from `data/full.csv` | filter score > 80 | sort")
+         ("expected combined recreate; got: " ++ show err)
 
 -- Q (capital) quits the app immediately without popping the stack.
 -- Recreate falls through to the deepest VkTbl when top is derived.
 test_script_Q_quits_from_freq :: Assertion
 test_script_Q_quits_from_freq = do
-  -- Sort original, push Freq, then Q out. The Q must (a) actually quit
-  -- from the freq view (no need to press q twice) and (b) still emit a
-  -- recreate by falling through to the underlying VkTbl, whose sort op
-  -- must reach the printed pipeline.
   err <- runHaskErr "[FQ" "data/full.csv" []
-  assert (contains err "# recreate: tv data/full.csv -p 'sort")
-         ("expected recreate from underlying VkTbl on Q; got: " ++ show err)
+  assert (contains err "tv -p 'from `data/full.csv` | sort")
+         ("expected Q-from-freq to recreate underlying tbl ops; got: " ++ show err)
 
--- The second hint line (# prql:) carries the full pipeline with a
--- leading `from <path>` so it can be pasted into prqlc / psql /
--- anywhere else PRQL is accepted, without tv's CLI involvement.
-test_script_prql_line_has_from :: Assertion
-test_script_prql_line_has_from = do
-  err <- runHaskErr "[" "data/full.csv" []
-  assert (contains err "# prql:     from `data/full.csv` | sort")
-         ("expected # prql: line with from-clause; got: " ++ show err)
+-- The recreate line is meant to be pasted back as a complete shell
+-- command — no positional path needed. parseArgs detects the
+-- from-clause and uses its path. End-to-end: open a sorted view,
+-- capture the recreate, run it, expect the sorted view again.
+test_script_recreate_roundtrips :: Assertion
+test_script_recreate_roundtrips = do
+  out <- runHask "" "data/full.csv" ["-p", "from `data/full.csv` | sort score"]
+  assert (contains out "r0/6")
+         ("expected -p with from-clause to load all 6 rows; got: "
+           ++ show (T.takeEnd 300 out))
 
 -- ============================================================================
 -- === Meta selection tests (M0/M1) ===
@@ -1319,7 +1317,7 @@ ciTests = testGroup "ci"
   , testCase "script_p_flag_filters" test_script_p_flag_filters
   , testCase "script_combines_p_and_ops" test_script_combines_p_and_ops
   , testCase "script_Q_quits_from_freq" test_script_Q_quits_from_freq
-  , testCase "script_prql_line_has_from" test_script_prql_line_has_from
+  , testCase "script_recreate_roundtrips" test_script_recreate_roundtrips
   , testCase "meta_0" test_meta_0
   , testCase "meta_1" test_meta_1
   , testCase "meta_0_enter" test_meta_0_enter

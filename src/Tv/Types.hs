@@ -168,18 +168,29 @@ makeFieldLabelsNoPrefix ''RenderCtx
 -- PRQL keywords/modules (date, text, math, …) still resolve correctly.
 -- Mirrors 'Tv.Data.DuckDB.Prql.ref'; inlined here to keep Types free of
 -- the Prql import cycle.
+--
+-- Selected items that aren't column values (i.e. the example PRQL
+-- snippets the picker prepends — `<col> == null`, `<col> ~= 'pat'`, …)
+-- are treated as raw expressions and pass through verbatim.
 filterPrql :: Text -> Vector Text -> Text -> Bool -> Text
 filterPrql col vals result numeric =
   let lines_ = V.fromList (filter (not . T.null) (T.splitOn "\n" result))
       input = fromMaybe "" (lines_ V.!? 0)
-      fromHints = V.filter (`V.elem` vals) (V.slice 1 (max 0 (V.length lines_ - 1)) lines_)
+      tail_ = V.slice 1 (max 0 (V.length lines_ - 1)) lines_
+      values   = V.filter (`V.elem` vals) tail_
+      examples = V.filter (\l -> not (V.elem l vals)) tail_
       selected =
-        if V.elem input vals && not (V.elem input fromHints)
-          then V.cons input fromHints
-          else fromHints
+        if V.elem input vals && not (V.elem input values)
+          then V.cons input values
+          else values
       q v = if numeric then v else "'" <> v <> "'"
       ref = "this.`" <> col <> "`"
-  in if V.length selected == 1
+  in if V.length examples >= 1
+       -- Picked example is already a complete PRQL expression — use
+       -- the first one verbatim. (Multi-select on examples is rare and
+       -- would need each example to know its own arity to combine.)
+       then fromMaybe "" (examples V.!? 0)
+     else if V.length selected == 1
        then ref <> " == " <> q (fromMaybe "" (selected V.!? 0))
      else if V.length selected > 1
        then "(" <> joinWith (V.map (\v -> ref <> " == " <> q v) selected) " || " <> ")"
