@@ -42,7 +42,10 @@ import qualified Tv.View as View
 pureDispatch :: AppState -> CmdInfo -> Maybe AppState
 pureDispatch a ci
   | ci ^. #ciCmd == CmdStkDup || ci ^. #ciCmd == CmdStkPop || ci ^. #ciCmd == CmdStkSwap =
-      fmap (\(s', _) -> withStk a ci s') (View.updateStack (a ^. #stk) (ci ^. #ciCmd))
+      -- Stack ops swap the visible table; sparklines belong to the
+      -- previous table and would render against wrong column counts.
+      -- resetVS clears them so renderBase recomputes for the new top.
+      fmap (\(s', _) -> resetVS (withStk a ci s')) (View.updateStack (a ^. #stk) (ci ^. #ciCmd))
   | otherwise =
       case View.update (View.cur (a ^. #stk)) (ci ^. #ciCmd) 20 of
         Just (v', e)
