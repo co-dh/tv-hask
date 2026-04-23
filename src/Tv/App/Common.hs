@@ -16,7 +16,7 @@ import Tv.App.Types
 import Tv.App.FeatureCommands (featureCommands)
 import qualified Tv.Util as Clip
 import qualified Tv.CmdConfig as CmdConfig
-import Tv.CmdConfig (Entry(..), CmdInfo(..), mkEntry, hdl)
+import Tv.CmdConfig (Entry(..), CmdInfo(..), mkEntry, hdl, withHint)
 import qualified Tv.Filter as Filter
 import qualified Tv.Freq as Freq
 import qualified Tv.Fzf as Fzf
@@ -112,7 +112,7 @@ renderSnap ref stk' styles_ = do
   tabLine (View.tabNames stk') 0 (View.opsStr (View.cur stk'))
   when (a ^. #info) $ do
     h <- Term.height; w <- Term.width
-    UI.infoRender (fromIntegral h) (fromIntegral w) (View.cur stk' ^. #vkind)
+    UI.infoRender (fromIntegral h) (fromIntegral w) (a ^. #cmdCache) (View.cur stk' ^. #vkind)
   Term.present
 
 freqH :: HandlerFn
@@ -136,7 +136,7 @@ localCmds = V.fromList
               stk' <- Filter.rowSearchLive (a ^. #testMode) (a ^. #stk) preview
               a' <- readIORef ref
               pure $ ActOk $ resetVS (a' & #stk .~ stk'))
-  , hdl (mkEntry CmdTblMenu   ""  " "  "Open command menu"                  False "") (\a _ _ -> runMenu a)
+  , hdl (withHint (mkEntry CmdTblMenu   ""  " "  "Open command menu"                  False "")) (\a _ _ -> runMenu a)
   , hdl (mkEntry CmdStkSwap   "S" "S"  "Swap top two views"                 False "") stkH
   , hdl (mkEntry CmdStkPop    ""  "q"  "Close current view"                 True  "") stkH
   , hdl (mkEntry CmdStkDup    ""  ""   "Duplicate current view"             False "") stkH
@@ -254,7 +254,7 @@ renderBase a0 = do
   let a''' = a'' & #aggCache .~ agg'
   when (a''' ^. #info) $ do
     h <- Term.height; w <- Term.width
-    UI.infoRender (fromIntegral h) (fromIntegral w) (View.cur (a''' ^. #stk) ^. #vkind)
+    UI.infoRender (fromIntegral h) (fromIntegral w) (a''' ^. #cmdCache) (View.cur (a''' ^. #stk) ^. #vkind)
   pure a'''
 
 renderFrame :: Bool -> AppState -> IO AppState

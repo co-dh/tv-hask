@@ -69,7 +69,7 @@ out=$(run "Fq" "basic.csv"); t=$(footer_tab "$out")
 ! contains "$t" "freq" && check "freq_quit" "ok" || check "freq_quit" "$t"
 
 out=$(run "I" "basic.csv")
-(contains "$out" "group by" || contains "$out" "command menu") && check "info" "ok" || check "info" "no hints"
+(contains "$out" "Select/deselect" || contains "$out" "command menu") && check "info" "ok" || check "info" "no hints"
 
 out=$(run 'l!' "basic.csv"); s=$(footer_status "$out")
 ! contains "$s" "filter" && check "key_cursor" "ok" || check "key_cursor" "$s"
