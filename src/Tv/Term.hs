@@ -908,13 +908,13 @@ colWidths nCols texts names inWidths hidBits widthAdj =
       let col = if c < V.length texts then texts V.! c else V.empty
       in V.foldl' (\acc t -> max acc (T.length t)) 1 col
     headerW c = if c < V.length names then T.length (names V.! c) else 0
+    natural c = max (max (dataWV V.! c) (headerW c)) _MIN_HDR_WIDTH + 2
     adjust w = max 3 $ min _MAX_DISP_WIDTH w + fromIntegral widthAdj
     baseWidthsV = V.generate nCols $ \c ->
       if IS.member c hidBits then 0
       else let cached = if c < V.length inWidths
                         then fromIntegral $ inWidths V.! c else 0 :: Int
-               full = max (max (dataWV V.! c) (headerW c)) _MIN_HDR_WIDTH + 2
-           in max full cached
+           in max (natural c) cached
     dataWidthsV = V.generate nCols $ \c ->
       if IS.member c hidBits then 3
       else adjust $ max (dataWV V.! c) _MIN_HDR_WIDTH + 2
@@ -923,8 +923,7 @@ colWidths nCols texts names inWidths hidBits widthAdj =
       else adjust $ baseWidthsV V.! c
     rawWidthsV = V.generate nCols $ \c ->
       if IS.member c hidBits then 3
-      else let natural = max (max (dataWV V.! c) (headerW c)) _MIN_HDR_WIDTH + 2
-           in max 3 (natural + fromIntegral widthAdj)
+      else max 3 (natural c + fromIntegral widthAdj)
 
 -- | Fit columns to screen: one pass, either shrink (overflow) or grow
 -- (underflow) depending on the sign of the slack.
@@ -965,21 +964,28 @@ fitToScreen screenW headerWidthsV dataWidthsV rawWidthsV colIdxs curCol
 
     grow slack0 = V.update headerWidthsV (V.fromList (go slack0 (cursorOutOrder colIdxs curCol) []))
       where
-        ceiling_ = min _MAX_GROW_WIDTH (screenW * 3 `div` 4)
+        -- 75% of screen is the per-column cap on huge terminals so one
+        -- wide column can't push everything else off-screen.
+        growCeiling = min _MAX_GROW_WIDTH (screenW * 3 `div` 4)
         go _     []           acc = acc
         go avail (origIdx:xs) acc
           | avail <= 0 = acc
           | otherwise =
               let h    = headerWidthsV V.! origIdx
-                  r    = min ceiling_ (rawWidthsV V.! origIdx)
+                  r    = min growCeiling (rawWidthsV V.! origIdx)
                   take_ = min avail (r - h)
               in if take_ > 0
                  then go (avail - take_) xs ((origIdx, h + take_) : acc)
                  else go avail xs acc
 
 -- | Order display columns cursor-first: the cursor column, then its
--- neighbours outward. Columns whose orig index equals @curCol@ come
--- first; remaining columns follow in left-to-right order.
+-- neighbours outward — left-neighbour, right-neighbour, left+2, right+2…
+-- If @curCol@ isn't in @colIdxs@, falls back to left-to-right order.
+--
+-- >>> cursorOutOrder (V.fromList [0,1,2,3,4,5]) 2
+-- [2,1,3,0,4,5]
+-- >>> cursorOutOrder (V.fromList [10,11,12]) 11
+-- [11,10,12]
 cursorOutOrder :: Vector Word64 -> Word64 -> [Int]
 cursorOutOrder colIdxs curCol =
   let n     = V.length colIdxs
