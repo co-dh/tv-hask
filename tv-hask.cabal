@@ -6,6 +6,7 @@ license:            MIT
 build-type:         Simple
 
 extra-source-files:
+  cbits/prqlc.h
   src/Tv/Data/DuckDB/funcs.prql
   theme.csv
 
