@@ -303,6 +303,7 @@ table and isn't portable across CLI invocations.
 | `Enter`     | Enter (open file in folder, filter from freq, set key from meta) |
 | `Backspace` | Go to parent directory (folder view)                             |
 | `q`         | Pop view (quit if last)                                          |
+| `Q`         | Quit immediately, skip popping (recreate hint uses underlying VkTbl) |
 | `X`         | Transpose (swap rows and columns)                                |
 | `J`         | Join top 2 views (inner/left/right join, union, set diff)        |
 | `d`         | Diff top 2 views (auto-key, hide same columns, Δ prefix diffs)  |

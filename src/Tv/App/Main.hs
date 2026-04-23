@@ -151,32 +151,39 @@ applyInitialPrql prqlOps v = do
     Nothing   -> pure Nothing
     Just tbl' -> pure (View.rebuild v tbl' 0 V.empty 0)
 
--- | After the session, print a CLI command that recreates the top view.
--- Format: `tv <path> [-p '<prql>']`. The PRQL is the initial -p (if
--- any) concatenated with the ops added interactively during the
--- session. Skipped for derived views (Freq, Meta, etc.) whose query
--- base is a temp table — not portable across CLI invocations.
+-- | After the session, print a CLI command that recreates a view from
+-- the stack. Format: `tv <path> [-p '<prql>']`. The PRQL is the initial
+-- -p (if any) concatenated with the ops added interactively.
+--
+-- Only VkTbl views are scriptable (their query.base is `from <path>`).
+-- Derived views (Freq, Meta, …) live on top of a temp table whose name
+-- isn't portable, so we walk the stack to the deepest VkTbl view and
+-- print that one — typically the original loaded table with its
+-- accumulated filter/sort/derive ops. This makes Q (which quits without
+-- popping) emit something meaningful even when the user is sitting on
+-- a Freq or Meta view.
 printScriptCmd :: Maybe Text -> AppState -> IO ()
 printScriptCmd initialPrql a =
-  let v     = View.cur (a ^. #stk)
-      p     = v ^. #path
-      ops   = Prql.renderOps (v ^. #nav % #tbl % #query)
-      pre   = fromMaybe "" initialPrql
-      prql_ = case (T.null pre, T.null ops) of
-                (True,  True)  -> ""
-                (False, True)  -> pre
-                (True,  False) -> ops
-                (False, False) -> pre <> " | " <> ops
-  in case v ^. #vkind of
-       VkTbl | not (T.null p) -> do
-         let cmd = "tv " <> shellQuote p
+  let s = a ^. #stk
+      stackList = (s ^. #hd) : (s ^. #tl)
+      mTbl = listToMaybe [v | v <- stackList, v ^. #vkind == VkTbl, not (T.null (v ^. #path))]
+  in case mTbl of
+       Just v -> do
+         let p     = v ^. #path
+             ops   = Prql.renderOps (v ^. #nav % #tbl % #query)
+             pre   = fromMaybe "" initialPrql
+             prql_ = case (T.null pre, T.null ops) of
+                       (True,  True)  -> ""
+                       (False, True)  -> pre
+                       (True,  False) -> ops
+                       (False, False) -> pre <> " | " <> ops
+             cmd = "tv " <> shellQuote p
                 <> if T.null prql_ then "" else " -p " <> shellQuote prql_
          -- Stderr so the recreate hint stays out of any pipe consuming
-         -- tv's table dump on stdout (test harness, `tv x | grep …`,
-         -- etc). Terminals merge stderr to the screen, so users still
-         -- see the line.
+         -- tv's table dump on stdout. Terminals merge stderr to the
+         -- screen, so users still see the line.
          TIO.hPutStrLn stderr ("# recreate: " <> cmd)
-       _ -> pure ()
+       Nothing -> pure ()
 
 -- | Single-quote a value for the shell, escaping embedded quotes.
 shellQuote :: Text -> Text
