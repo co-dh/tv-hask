@@ -204,6 +204,18 @@ test_script_combines_p_and_ops = do
   assert (contains err "# recreate: tv data/full.csv -p 'filter score > 80 |")
          ("expected combined -p | sort; got: " ++ show err)
 
+-- Q (capital) quits the app immediately without popping the stack.
+-- Recreate falls through to the deepest VkTbl when top is derived.
+test_script_Q_quits_from_freq :: Assertion
+test_script_Q_quits_from_freq = do
+  -- Sort original, push Freq, then Q out. The Q must (a) actually quit
+  -- from the freq view (no need to press q twice) and (b) still emit a
+  -- recreate by falling through to the underlying VkTbl, whose sort op
+  -- must reach the printed pipeline.
+  err <- runHaskErr "[FQ" "data/full.csv" []
+  assert (contains err "# recreate: tv data/full.csv -p 'sort")
+         ("expected recreate from underlying VkTbl on Q; got: " ++ show err)
+
 -- ============================================================================
 -- === Meta selection tests (M0/M1) ===
 -- ============================================================================
@@ -1292,6 +1304,7 @@ ciTests = testGroup "ci"
   , testCase "script_print_after_sort" test_script_print_after_sort
   , testCase "script_p_flag_filters" test_script_p_flag_filters
   , testCase "script_combines_p_and_ops" test_script_combines_p_and_ops
+  , testCase "script_Q_quits_from_freq" test_script_Q_quits_from_freq
   , testCase "meta_0" test_meta_0
   , testCase "meta_1" test_meta_1
   , testCase "meta_0_enter" test_meta_0_enter

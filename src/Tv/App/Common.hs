@@ -140,7 +140,7 @@ localCmds = V.fromList
   , hdl (mkEntry CmdStkSwap   "S" "S"  "Swap top two views"                 False "") stkH
   , hdl (mkEntry CmdStkPop    ""  "q"  "Close current view"                 True  "") stkH
   , hdl (mkEntry CmdStkDup    ""  ""   "Duplicate current view"             False "") stkH
-  , hdl (mkEntry CmdTblQuit   ""  ""   ""                                   False "") (\_ _ _ -> pure ActQuit)
+  , hdl (mkEntry CmdTblQuit   ""  "Q"  "Quit tv (keep current view as recreate target)" False "") (\_ _ _ -> pure ActQuit)
   , hdl (mkEntry CmdInfoTog   ""  "I"  "Toggle info overlay"                False "")
         (\a ci _ -> pure $ maybe ActUnhandled (\i' -> ActOk (a & #info .~ i'))
                                  (UI.infoUpdate (a ^. #info) (ci ^. #ciCmd)))

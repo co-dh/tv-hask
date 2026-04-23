@@ -12,6 +12,7 @@ module Tv.Render where
 
 import Prelude hiding (init, print)
 import Tv.Prelude
+import Data.Bits ((.|.))
 import qualified Data.Text as T
 import qualified Data.Vector as V
 
@@ -168,9 +169,11 @@ statusLine nav vkind styles_ prec_ widthAdj_ curColIdx_ w h = do
 tabLine :: Vector Text -> Int -> Text -> IO ()
 tabLine tabs curIdx replay = do
   s <- Theme.getStyles
-  let fg  = Theme.styleFg s Theme.sBar
+  let -- Bold the tab-line foreground so the file header reads as a header,
+      -- not as another data row. Same _TB_BOLD bit drawHeader uses.
+      fg  = Theme.styleFg s Theme.sBar    .|. 0x01000000
       bg  = Theme.styleBg s Theme.sBar
-      dfg = Theme.styleFg s Theme.sBarDim
+      dfg = Theme.styleFg s Theme.sBarDim .|. 0x01000000
       dbg = Theme.styleBg s Theme.sBarDim
   h <- Term.height
   w <- Term.width
