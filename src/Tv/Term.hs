@@ -765,10 +765,17 @@ printPadBuf buf w h x y padW fg bg s right_ =
         | otherwise = do
             setCell buf w h cx y spW fg bg
             writeSpaces (cx + 1) (n - 1)
+      -- Sanitize control chars to space — a raw \n/\r/\t in cell text
+      -- (common in DB columns holding markdown/source) would otherwise
+      -- be emitted verbatim by `present`, moving the terminal cursor and
+      -- shifting every following cell on the row out of place.
+      safeCh c
+        | c < ' ' || c == '\DEL' = fromIntegral (fromEnum ' ') :: Word32
+        | otherwise              = fromIntegral (fromEnum c)
       writeText !cx !n cs0 = goT 0 cs0
         where
           goT !i (c:cs) | i < n = do
-            setCell buf w h (cx + i) y (fromIntegral $ fromEnum c) fg bg
+            setCell buf w h (cx + i) y (safeCh c) fg bg
             goT (i + 1) cs
           goT _ _ = pure ()
   in do
