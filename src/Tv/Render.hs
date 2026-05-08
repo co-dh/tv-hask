@@ -161,8 +161,8 @@ statusLine nav vkind styles_ prec_ widthAdj_ curColIdx_ w h = do
         <> " grp=" <> T.pack (show (V.length (nav ^. #grp)))
         <> " sel=" <> T.pack (show (V.length (nav ^. #row % #sels)))
         <> adj
-        <> " r" <> T.pack (show (nav ^. #row % #cur))
-        <> "/" <> T.pack (show total)
+        <> " r" <> Conn.fmtIntComma (fromIntegral (nav ^. #row % #cur))
+        <> "/" <> Conn.fmtIntComma (fromIntegral total)
       pad = fromIntegral w - T.length colName - T.length right
   Term.print 0 (h - 1)
     (Theme.styleFg styles_ Theme.sStatus)

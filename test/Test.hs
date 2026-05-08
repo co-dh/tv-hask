@@ -1178,6 +1178,24 @@ test_prec_comma_col = do
   assert (contains out "1000000")  "id col loses commas"
   assert (contains out "1,500,000") "amount col keeps commas"
 
+-- Status-bar row counter is unconditionally comma-formatted: r{cur}/{total}
+-- uses `fmtIntComma` regardless of `prec.commas`, so totals ≥1000 read
+-- as "1,500", not "1500". Both `cur` and `total` go through the same
+-- `Conn.fmtIntComma` call site, so a single positive case at the total
+-- proves the wiring without needing to cap-bust the visible row window.
+test_status_bar_row_commas :: Assertion
+test_status_bar_row_commas = do
+  p <- Tmp.threadPath "status_commas.csv"
+  let n = 1500 :: Int
+      body = T.unlines ("v" : [T.pack (show i) | i <- [1 .. n]])
+  TIO.writeFile p body
+  out <- run "" p
+  let (_, status) = footer out
+  assert (contains status "r0/1,500") $
+    "expected r0/1,500 in status; got: " ++ show (T.takeEnd 200 status)
+  assert (not (contains status "/1500")) $
+    "status must not show comma-less total; got: " ++ show (T.takeEnd 200 status)
+
 -- When osqueryi is not installed, `tv osquery://` must not crash with a
 -- raw DuckDB "database does not exist" message — the user needs a clear
 -- pointer to the missing dependency.
@@ -1431,6 +1449,7 @@ ciTests = testGroup "ci"
   , testCase "diff_show_same" test_diff_show_same
   , testCase "prec_comma_global" test_prec_comma_global
   , testCase "prec_comma_col" test_prec_comma_col
+  , testCase "status_bar_row_commas" test_status_bar_row_commas
   , testCase "plot_key_dispatch" test_plot_key_dispatch
   , testCase "plot_export_string_col" test_plot_export_string_col
   , testCase "plot_export_data" test_plot_export_data

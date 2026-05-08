@@ -129,6 +129,7 @@ library
     unix >= 2.7,
     unordered-containers >= 0.2,
     vector >= 0.13,
+    vector-algorithms >= 0.9,
     zlib >= 0.6
   c-sources: cbits/prqlc_shim.c
   include-dirs: cbits
@@ -245,3 +246,33 @@ test-suite doctest
     base >= 4.16 && < 5,
     tv-hask,
     doctest-parallel >= 0.4
+
+executable picker-bench
+  import: shared
+  main-is: PickerBench.hs
+  hs-source-dirs: bench
+  ghc-options: -O2 -threaded -rtsopts "-with-rtsopts=-T"
+  -- Imports only Tv.Fzf.Match (no Term/DuckDB FFI), but still pulls
+  -- tv-hask transitively, so mirror the test-suite's link line.
+  extra-lib-dirs: vendor/lib, vendor/duckdb
+  ld-options: -Wl,--push-state,--whole-archive -lprqlc_c -Wl,--pop-state
+  ld-options: -Wl,-Bstatic,--start-group
+              -lduckdb
+              -lcore_functions_extension -lparquet_extension -licu_extension
+              -ljson_extension
+              -lduckdb_re2 -lduckdb_fmt -lduckdb_pg_query -lduckdb_zstd
+              -lduckdb_utf8proc -lduckdb_yyjson -lduckdb_mbedtls
+              -lduckdb_miniz -lduckdb_hyperloglog -lduckdb_fastpforlib
+              -lduckdb_fsst -lduckdb_skiplistlib
+              -lduckdb_generated_extension_loader
+              -Wl,--end-group,-Bdynamic
+  ld-options: -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic
+  extra-libraries: pthread, dl, m, atomic
+  build-depends:
+    base >= 4.16 && < 5,
+    tv-hask,
+    deepseq >= 1.4,
+    text >= 2.0,
+    time >= 1.11,
+    vector >= 0.13,
+    vector-algorithms >= 0.9

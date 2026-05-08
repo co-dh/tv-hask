@@ -18,24 +18,6 @@ import Data.Char (isUpper, isLower, isAlphaNum, toLower)
 import qualified Data.IntSet as IS
 import qualified Data.Text as T
 
--- | Word-boundary start: position 0, or prior char is a non-alnum separator,
--- or a lower→Upper camel transition.
-wordStart :: Text -> Int -> Bool
-wordStart t i
-  | i <= 0               = True
-  | not (isAlphaNum cur) = False
-  | otherwise            = not (isAlphaNum prev) || (isLower prev && isUpper cur)
-  where
-    cur  = T.index t i
-    prev = T.index t (i - 1)
-
--- | Per-position bonus. prev == -1 means "no previous match yet".
-bonus :: Text -> Int -> Int -> Int
-bonus t i prev
-  | prev >= 0 && prev + 1 == i = 15
-  | wordStart t i              = if i == 0 then 20 else 10
-  | otherwise                  = 0
-
 -- | Case-insensitive char equality.
 eqCI :: Char -> Char -> Bool
 eqCI a b = toLower a == toLower b
@@ -49,6 +31,13 @@ eqCI a b = toLower a == toLower b
 --
 -- Smartcase: lowercase-only query is case-insensitive; any uppercase
 -- char in the query makes the whole match case-sensitive.
+--
+-- Walks @target@ exactly once via @T.uncons@, advancing the query pointer
+-- each time the current target char matches. The previous code indexed
+-- the target with @T.index@ at every probe — O(L) per probe in @text@-2.x
+-- (UTF-8 internal), so a target of length L cost O(L²) per match call.
+-- The single-pass walk is O(L+Q), giving the picker an order-of-magnitude
+-- speedup at large item counts (see bench/PickerBench.hs).
 --
 -- >>> snd <$> match "abc" "a-b-c"
 -- Just [0,2,4]
@@ -71,13 +60,7 @@ eqCI a b = toLower a == toLower b
 match :: Text -> Text -> Maybe (Int, [Int])
 match query0 target
   | T.null query = Just (0, [])
-  | otherwise    = do
-      r@(_, poses) <- go 0 (-1) 0 []
-      if endAnchor
-        then case reverse poses of
-               (p : _) | p == T.length target - 1 -> Just r
-               _ -> Nothing
-        else Just r
+  | otherwise    = walk target qChars 0 '\0' [] (-1) 0
   where
     (startAnchor, afterCaret) = case T.uncons query0 of
       Just ('^', rest) -> (True, rest)
@@ -88,23 +71,37 @@ match query0 target
         else (False, afterCaret)
     -- Smartcase: query has any uppercase → exact match; else case-insensitive.
     eq = if T.any isUpper query then (==) else eqCI
-    qn = T.length query
-    tn = T.length target
-    go !qi !prev !acc !poses
-      | qi >= qn = Just (acc, reverse poses)
-      | otherwise =
-          case findFrom qi (prev + 1) of
+    -- Query is short (≤ ~20 chars typically); unpacking once per call
+    -- gives us O(1) head access during the walk.
+    qChars = T.unpack query
+
+    -- Walk arguments: remaining target, remaining query chars, score,
+    -- previous target char (carried so the wordStart check is O(1)),
+    -- match positions in reverse order, index of previous match (-1 = none),
+    -- current target index. Bang-patterns keep the loop strict — the
+    -- accumulators escape into the result, so a thunk leak here would
+    -- defeat the whole point.
+    walk !rest !qs !score !prev !poses !prevTi !ti
+      | startAnchor && null poses && ti > 0 = Nothing
+      | otherwise = case qs of
+          []
+            | endAnchor && not (T.null rest) -> Nothing
+            | otherwise                       -> Just (score, reverse poses)
+          (qc : qs') -> case T.uncons rest of
             Nothing -> Nothing
-            Just ti
-              | startAnchor && null poses && ti /= 0 -> Nothing
+            Just (c, rest')
+              | eq qc c ->
+                  let isWS  = ti == 0
+                           || (isAlphaNum c
+                               && (not (isAlphaNum prev)
+                                   || (isLower prev && isUpper c)))
+                      b | prevTi >= 0 && prevTi + 1 == ti = 15
+                        | isWS                            = if ti == 0 then 20 else 10
+                        | otherwise                       = 0
+                      exact = if qc == c then 2 else 0
+                  in walk rest' qs' (score + 1 + b + exact) c (ti : poses) ti (ti + 1)
               | otherwise ->
-                  let b     = bonus target ti prev
-                      exact = if T.index target ti == T.index query qi then 2 else 0
-                  in go (qi + 1) ti (acc + 1 + b + exact) (ti : poses)
-    findFrom qi fromIdx
-      | fromIdx >= tn                                = Nothing
-      | eq (T.index query qi) (T.index target fromIdx) = Just fromIdx
-      | otherwise                                    = findFrom qi (fromIdx + 1)
+                  walk rest' qs score c poses prevTi (ti + 1)
 
 -- | Parse a multi-term query into @(negated, stripped)@ pairs.
 -- Empty-after-strip terms (bare @!@, double spaces) are dropped.

@@ -16,7 +16,7 @@ import Control.Monad.Trans.Maybe (MaybeT(..), runMaybeT, hoistMaybe)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Text as T
 import qualified Data.Vector as V
-import qualified Data.List as L
+import qualified Data.Vector.Algorithms.Intro as VAI
 import Text.Read (readMaybe)
 
 import Tv.App.Types (HandlerFn, onStk, stackIO)
@@ -67,18 +67,35 @@ colSearch tm s = orKeep s $ do
                     (Nav.dispNames (cur s ^. #nav))
   pure $ moveTo s idx
 
--- | Shared: resolve current column, fetch sorted distinct values
+-- | Shared: resolve current column, fetch sorted distinct values.
+-- Capped at 'distinctCap' — past that the picker is useless anyway
+-- (typing helps narrow, but you can't usefully scroll a million rows)
+-- and DuckDB would otherwise build a hash set sized by the full
+-- cardinality, which on a 300M-row timestamp column eats gigabytes.
+-- The continuation receives @(curCol, curName, vals, capped)@; @capped@
+-- means @vals@ is a truncated, scan-order subset and the caller should
+-- nudge the user toward typing a PRQL expression.
 withDistinct
   :: ViewStack AdbcTable
-  -> (Int -> Text -> Vector Text -> IO (ViewStack AdbcTable))
+  -> (Int -> Text -> Vector Text -> Bool -> IO (ViewStack AdbcTable))
   -> IO (ViewStack AdbcTable)
 withDistinct s f = do
   let v       = cur s
       curCol  = Nav.colIdx (v ^. #nav)
       curName = Nav.colName (v ^. #nav)
-  vals <- Table.distinct (v ^. #nav % #tbl) curCol
-  let sorted = V.fromList (L.sort (V.toList vals))
-  f curCol curName sorted
+  (vals, capped) <- Table.distinctCapped distinctCap (v ^. #nav % #tbl) curCol
+  -- Sort in place via vector-algorithms — replaces V.toList → L.sort →
+  -- V.fromList round-trip, which allocated 2× the vector size as cons
+  -- cells just to reach the sorted form.
+  let sorted = V.modify VAI.sort vals
+  f curCol curName sorted capped
+
+-- | Cap on enumerated distinct values fed into the picker. 50K is
+-- comfortably above what's useful to scroll, comfortably below the
+-- point where DuckDB's hash distinct or the picker's per-keystroke
+-- scan starts to feel slow.
+distinctCap :: Int
+distinctCap = 50000
 
 -- | findRow with cache: the picker fires onFocus on every arrow key,
 -- so without caching each fires a SQL query causing visible lag.
@@ -132,7 +149,7 @@ searchFocus tbl_ curCol vals sRef preview = do
 -- picker results. Picker onFocus → findRow → re-render.
 rowSearchLive
   :: Bool -> ViewStack AdbcTable -> (ViewStack AdbcTable -> IO ()) -> IO (ViewStack AdbcTable)
-rowSearchLive tm s preview = withDistinct s $ \curCol curName vals ->
+rowSearchLive tm s preview = withDistinct s $ \curCol curName vals _capped ->
   if tm
     then let result = fromMaybe "" (vals V.!? 0)
          in if T.null result then pure s
@@ -188,9 +205,16 @@ searchDir s fwd = orKeep s $ do
 -- If the user's expression trips 'exprError' (lone @=@, etc.) the filter
 -- is aborted with a popup message instead of silently failing in PRQL.
 rowFilter :: Bool -> ViewStack AdbcTable -> IO (ViewStack AdbcTable)
-rowFilter tm s = withDistinct s $ \_curCol curName vals -> do
-  let typ    = Ops.colType (tbl s) _curCol
-      header = filterPrompt curName (toString typ)
+rowFilter tm s = withDistinct s $ \_curCol curName vals capped -> do
+  let typ      = Ops.colType (tbl s) _curCol
+      -- When the distinct list got capped, the picker can't show a
+      -- complete value list — flag that in the header so the user knows
+      -- to type a PRQL expression for values outside the truncation.
+      header   = filterPrompt curName (toString typ)
+              <> if capped
+                   then "  [first " <> T.pack (show distinctCap)
+                                    <> " of many — type expression]"
+                   else ""
       -- Prepend type-aware PRQL example snippets as first items so the
       -- user can pick a complete expression instead of typing one. The
       -- picker treats anything not in `vals` as a literal expression

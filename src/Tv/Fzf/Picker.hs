@@ -31,10 +31,10 @@ module Tv.Fzf.Picker where
 import Tv.Prelude
 import Data.Char (chr)
 import qualified Data.IntSet as IS
-import Data.List (sortOn)
-import Data.Ord (Down(..))
 import qualified Data.Text as T
 import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as MV
+import qualified Data.Vector.Algorithms.Intro as VAI
 
 import Tv.Fzf.Match (matchParsed, parseQuery)
 import qualified Tv.Term as Term
@@ -76,9 +76,35 @@ data PickerState = PickerState
   , psCaret  :: !Int    -- ^ cursor index into psQuery (0..T.length)
   , psCur    :: !Int
   , psMatch  :: !(Vector (Int, Int, [Int]))
+    -- ^ Sorted top-K matches for display + navigation (length ≤ topK).
+    -- Only the top-K are retained between keystrokes — the picker only
+    -- needs a screenful, so holding every match (which can be hundreds
+    -- of thousands of @Text@ refs on a big distinct-values list) is
+    -- pure overhead.
+  , psTotal  :: !Int
+    -- ^ True count of items that matched the current query. Equal to
+    -- @V.length psMatch@ when total ≤ topK, larger when truncated. Used
+    -- for the bottom-border @matched/total@ readout.
   , psBox    :: !Box
   }
 makeFieldLabelsNoPrefix ''PickerState
+
+-- | How many top-scored matches to keep for navigation. The picker shows
+-- ~12 visible rows; keeping a few hundred gives PgDn/End headroom while
+-- bounding the per-keystroke sort cost to O(N log topK) on huge inputs.
+-- 256 is a comfortable middle: above the visible window, well below where
+-- the sort cost matters.
+topK :: Int
+topK = 256
+
+-- | Streaming match buffer size. The match loop fills a buffer of this
+-- many entries; when full, partial-sorts to keep top-K at the front and
+-- discards the back. So peak per-keystroke allocation is O(chunkCap)
+-- regardless of how many items match — a memory-bounded fzf-style scan.
+-- 4× topK is the standard tradeoff: bigger means fewer partial sorts
+-- (less CPU) but more peak memory; smaller flips the tradeoff.
+chunkCap :: Int
+chunkCap = 4 * topK
 
 -- | Palette snapshot for one frame — read once from 'Theme.stylesRef' so a
 -- mid-frame theme change can't split one popup across two colour schemes.
@@ -111,9 +137,9 @@ runPicker opts@PickerOpts{items, header, initial} = do
       boxX    = max 0 ((sw - boxW) `div` 2)
       boxY    = max 0 ((sh - boxH) `div` 2)
       box     = Box { bx = boxX, by = boxY, bw = boxW, bh = boxH }
-      ms0     = computeMatches initial its
-      st0     = PickerState { psQuery = initial, psCaret = T.length initial, psCur = 0
-                            , psMatch = ms0, psBox = box }
+  (ms0, total0) <- computeMatches initial its
+  let st0 = PickerState { psQuery = initial, psCaret = T.length initial, psCur = 0
+                        , psMatch = ms0, psTotal = total0, psBox = box }
   drawFrame opts st0
   -- fireFocus instead of inlining: it does the redraw-after-callback
   -- dance so the initial popup stays visible if onFocus repaints the
@@ -269,8 +295,9 @@ typed opts st q' caret'
       when (st ^. #psCaret /= caret') (drawFrame opts st')
       pure st'
   | otherwise = do
-      let ms'     = computeMatches q' (opts ^. #items)
-          st'     = st { psQuery = q', psCaret = caret', psMatch = ms', psCur = 0 }
+      (ms', total') <- computeMatches q' (opts ^. #items)
+      let st'     = st { psQuery = q', psCaret = caret', psMatch = ms'
+                       , psTotal = total', psCur = 0 }
           prevTop = (\(i,_,_) -> i) <$> ((st ^. #psMatch) V.!? (st ^. #psCur))
           newTop  = (\(i,_,_) -> i) <$> (ms' V.!? 0)
       drawFrame opts st'
@@ -315,17 +342,53 @@ currentDisplay opts st = case (st ^. #psMatch) V.!? (st ^. #psCur) of
   Just (i, _, _) -> display (opts ^. #withNth) ((opts ^. #items) V.! i)
   Nothing        -> st ^. #psQuery
 
--- | Re-run fuzzy filter. Empty query → all items in original order.
--- Parses the multi-term query once (space-separated AND, @!@ negates)
--- and reuses it across items.
-computeMatches :: Text -> Vector Text -> Vector (Int, Int, [Int])
+-- | Re-run fuzzy filter. Streams items into a bounded buffer of
+-- 'chunkCap' entries; whenever the buffer fills, partial-sorts top-K
+-- to the front and discards the back. So peak per-keystroke allocation
+-- is O('chunkCap'), independent of how many items match — the picker
+-- holds only a screenful's worth of state across keystrokes, not the
+-- entire match set, even when scanning millions of items.
+--
+-- Returns @(topMatches, total)@: the first vector is at most 'topK'
+-- entries sorted by score descending (used for display + navigation);
+-- the integer is the true count of items that matched, used only for
+-- the @matched/total@ readout.
+--
+-- Empty query is short-circuited: matches are just the items in
+-- original order, and we synthesize the top-K identity slice without
+-- allocating per-item entries beyond it.
+computeMatches :: Text -> Vector Text -> IO (Vector (Int, Int, [Int]), Int)
 computeMatches q its
-  | T.null q  = V.generate (V.length its) (, 0, [])
-  | otherwise =
-      let terms         = parseQuery q
-          scoreOne i ln = (\(s, ps) -> (i, s, ps)) <$> matchParsed terms ln
-      in V.fromList $ sortOn (\(_, s, _) -> Down s)
-                    $ V.toList $ V.imapMaybe scoreOne its
+  | T.null q  =
+      let n = V.length its
+      in pure (V.generate (min topK n) (, 0, []), n)
+  | otherwise = do
+      let terms = parseQuery q
+          cmp (_, a, _) (_, b, _) = compare b a
+      buf <- MV.unsafeNew chunkCap
+      total <- newIORef (0 :: Int)
+      filled <- newIORef (0 :: Int)
+      -- Streaming scan: score each item, push to buffer; when buffer
+      -- fills, partial-sort top-K to front and reset filled to topK.
+      V.iforM_ its $ \i ln -> case matchParsed terms ln of
+        Nothing      -> pure ()
+        Just (s, ps) -> do
+          modifyIORef' total (+ 1)
+          f <- readIORef filled
+          MV.unsafeWrite buf f (i, s, ps)
+          let f' = f + 1
+          if f' == chunkCap
+            then do
+              VAI.partialSortBy cmp buf topK
+              writeIORef filled topK
+            else writeIORef filled f'
+      f       <- readIORef filled
+      tot     <- readIORef total
+      let k    = min topK f
+      -- Final sort: top-K of whatever remains in the buffer.
+      VAI.partialSortBy cmp (MV.unsafeSlice 0 f buf) k
+      result  <- V.unsafeFreeze (MV.unsafeSlice 0 k buf)
+      pure (result, tot)
 
 -- Rendering --------------------------------------------------------------
 
@@ -364,7 +427,7 @@ drawFrame opts st = do
       scroll   = scrollOff (st ^. #psCur) nRows
       promptLn = (opts ^. #prompt) <> (st ^. #psQuery)
       total    = V.length (opts ^. #items)
-      matched  = V.length (st ^. #psMatch)
+      matched  = st ^. #psTotal
       countTxt = T.pack (show matched) <> "/" <> T.pack (show total)
   drawBorder pal bx by bw bh countTxt
   drawLine bx promptY innerW promptLn (pal ^. #fgPrompt) (pal ^. #bgPanel)

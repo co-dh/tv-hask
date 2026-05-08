@@ -455,12 +455,52 @@ filter t expr = do
 
 -- | Distinct: use SQL DISTINCT
 distinct :: AdbcTable -> Int -> IO (Vector Text)
-distinct t col = do
-  let cName = fromMaybe "" ((t ^. #colNames) V.!? col)
-  m <- prqlQuery (Prql.queryRender (t ^. #query) <> " | uniq " <> Prql.ref cName)
-  case m of
-    Nothing -> pure V.empty
-    Just qr_ -> pure $ V.generate (Conn.nrows qr_) $ \i -> Conn.cellStr qr_ i 0
+distinct t col = fst <$> distinctCapped maxBound t col
+
+-- | Distinct values, gated by an approximate-cardinality probe.
+-- Returns @(values, tooMany)@:
+--
+--   * @tooMany = True@ — the column has more than @lim@ distinct values
+--     (per @approx_count_distinct@). We don't enumerate at all: a
+--     truncated, scan-order @LIMIT@ subset is misleading because typing
+--     into the picker only narrows what's loaded, not what's in the
+--     source. @values@ is empty and the caller is expected to switch to
+--     free-text PRQL entry.
+--   * @tooMany = False@ — full distinct list is returned, no truncation.
+--
+-- The probe uses HyperLogLog (DuckDB's @approx_count_distinct@), which
+-- is sub-second on a 304M-row parquet — orders of magnitude cheaper
+-- than running the full DISTINCT just to find out it would be huge.
+distinctCapped :: Int -> AdbcTable -> Int -> IO (Vector Text, Bool)
+distinctCapped lim t col = do
+  let cName  = fromMaybe "" ((t ^. #colNames) V.!? col)
+      baseR  = Prql.queryRender (t ^. #query)
+      -- DuckDB identifier with embedded "" escaping for any literal
+      -- double-quotes in the column name. Fed into a PRQL s-string
+      -- (single-quoted outer) so the inner SQL stays raw.
+      ident  = "\"" <> T.replace "\"" "\"\"" cName <> "\""
+      probeQ = baseR <> " | aggregate {n = s'approx_count_distinct("
+            <> ident <> ")'}"
+  est <- approxFromQR <$> prqlQuery probeQ
+  if est > lim
+    then pure (V.empty, True)
+    else do
+      m <- prqlQuery (baseR <> " | uniq " <> Prql.ref cName)
+      case m of
+        Nothing  -> pure (V.empty, False)
+        Just qr_ ->
+          let n    = Conn.nrows qr_
+              vals = V.generate n $ \i -> Conn.cellStr qr_ i 0
+          in pure (vals, False)
+  where
+    -- approx_count_distinct returns BIGINT; if the probe failed, treat
+    -- as "huge" so we never try to enumerate something we can't measure.
+    approxFromQR Nothing    = maxBound :: Int
+    approxFromQR (Just qr_)
+      | Conn.nrows qr_ == 0 = maxBound
+      | otherwise           = case TR.decimal (Conn.cellStr qr_ 0 0) of
+                                Right (n, _) -> n
+                                Left _       -> maxBound
 
 -- | Find row from starting position, forward or backward (with wrap).
 --   PRQL row_number is 1-based; we subtract 1 here for 0-based indexing.
